@@ -32,6 +32,8 @@ VIEWER = os.environ.get("VIEWER", "http://127.0.0.1:8765")
 W, H = 320, 180          # compare at this size: averages away sensor noise, keeps pencil lines
 PIXEL = 20               # brightness step (0-255) that counts as a changed pixel
 NEW_PX = 15              # changed pixels that count: vs the still picture = movement, vs the last sheet = new
+INK_R = 2                # new ink must be this far (thumb px) from ink already there
+SLIDE = 5                # how far (thumb px, ×6 at 1080p) the paper may slide and still be the same sheet
 BIG = 0.04               # share changed that is a big change, not drawing
 STILL_S, BIG_S, EVERY_S = 3.0, 8.0, 0.5
 MAX_BYTES = 20 << 20
@@ -68,56 +70,103 @@ def small(data):
     return [p - m for p in px]
 
 
-def envelope(thumb):
-    """Darkest and brightest value around each pixel (3×3), so a camera that shifts by a
-    pixel doesn't make the lines already on the sheet look new."""
-    def pool(f):
+def envelope(thumb, ink=INK_R):
+    """Darkest value within `ink` px and brightest within 1 px of each pixel, so lines already
+    on the sheet that moved a little (camera wobble, paper slightly turned) don't look new."""
+    def pool(f, r):
+        n = 2 * r + 1
         rows = []
         for y in range(H):
-            r = thumb[y * W:(y + 1) * W]
-            r = [r[0]] + r + [r[-1]]
-            rows.append(list(map(f, r, r[1:], r[2:])))
-        rows = [rows[0]] + rows + [rows[-1]]
-        return [v for a, b, c in zip(rows, rows[1:], rows[2:]) for v in map(f, a, b, c)]
-    return pool(min), pool(max)
+            row = thumb[y * W:(y + 1) * W]
+            row = [row[0]] * r + row + [row[-1]] * r
+            rows.append(list(map(f, *(row[k:k + W] for k in range(n)))))
+        rows = [rows[0]] * r + rows + [rows[-1]] * r
+        return [v for group in zip(*(rows[k:k + H] for k in range(n))) for v in map(f, *group)]
+    return pool(min, ink), pool(max, 1)
 
 
 def new_marks(thumb, env):
-    return [i for i, (x, lo, hi) in enumerate(zip(thumb, *env)) if x < lo - PIXEL or x > hi + PIXEL]
+    """Pixels that changed, without lone specks and without the frame's outer edge (where the
+    table shows when the paper slides)."""
+    hit = {i for i, (x, lo, hi) in enumerate(zip(thumb, *env)) if x < lo - PIXEL or x > hi + PIXEL}
+    m = 2 * SLIDE
+    return [i for i in sorted(hit) if m <= i % W < W - m and m <= i // W < H - m
+            and sum(j in hit for j in (i - 1, i + 1, i - W, i + W, i - W - 1, i - W + 1, i + W - 1, i + W + 1)) >= 2]
+
+
+def paper_shift(thumb, base):
+    """How far (dx, dy) the sheet slid since `base`: the offset that fits best, up to SLIDE px."""
+    pts = [(x, y) for y in range(SLIDE, H - SLIDE, 3) for x in range(SLIDE, W - SLIDE, 3)]
+    cost = lambda d: sum(abs(thumb[(y + d[1]) * W + x + d[0]] - base[y * W + x]) for x, y in pts)
+    return min(((dx, dy) for dy in range(-SLIDE, SLIDE + 1) for dx in range(-SLIDE, SLIDE + 1)),
+               key=lambda d: (cost(d), abs(d[0]) + abs(d[1])))
+
+
+def moved(thumb, d):
+    """`thumb` slid back by d, so it lines up with the picture it was compared with."""
+    dx, dy = d
+    return [thumb[min(max(y + dy, 0), H - 1) * W + min(max(x + dx, 0), W - 1)] for y in range(H) for x in range(W)]
 
 
 class Detector:
     """Feed it snapshots; it returns (reason, changed_indices) when a new sheet has settled.
 
     Stillness is measured against the picture at the start of the still spell (the anchor),
-    not the previous sample, so slow drawing or a creeping shadow also restarts the wait."""
+    not the previous sample, so slow drawing or a creeping shadow also restarts the wait.
+    Before comparing with the last sheet handed on, the picture is lined up with it, so paper
+    that slid a little isn't news."""
 
     def __init__(self, baseline=None):
+        self.base = baseline
         self.baseline = baseline and envelope(baseline)
-        self.anchor = self.still_since = None
+        self.anchor = self.still_since = self.shift = None
 
     def feed(self, thumb, t):
         if self.anchor is None or len(new_marks(thumb, self.anchor)) >= NEW_PX:
-            self.anchor, self.still_since = envelope(thumb), t
+            self.anchor, self.still_since, self.shift = envelope(thumb, 1), t, None
             return None
         if self.baseline is None:
-            diff = list(range(W * H))
+            diff, self.shift = list(range(W * H)), (0, 0)
         else:
-            diff = new_marks(thumb, self.baseline)
+            if self.shift is None:
+                self.shift = paper_shift(thumb, self.base)
+            diff = new_marks(moved(thumb, self.shift), self.baseline)
             if len(diff) < NEW_PX:
                 return None
         big = len(diff) > BIG * W * H
         if t - self.still_since < (BIG_S if big else STILL_S):
             return None
-        self.baseline, self.still_since = self.anchor, t
+        dx, dy = self.shift                  # report where the change is in the new picture
+        self.base, self.baseline, self.still_since, self.shift = thumb, envelope(thumb), t, (0, 0)
+        diff = [min(max(i // W + dy, 0), H - 1) * W + min(max(i % W + dx, 0), W - 1) for i in diff]
         return ("big-change" if big else "drawn"), diff
 
 
 def box(diff, size):
-    xs, ys = [i % W for i in diff], [i // W for i in diff]
+    """Where the change is, in picture px, padded by 2 thumb px. For a drawing, only clumps of
+    marks at least a tenth the size of the biggest count, so stray specks don't stretch it."""
+    keep = diff
+    if len(diff) <= 3000:
+        left, clumps = set(diff), []
+        while left:
+            todo = [left.pop()]
+            clump = list(todo)
+            while todo:
+                i = todo.pop()
+                for dy in range(-3, 4):
+                    for dx in range(-3, 4):
+                        j = i + dy * W + dx
+                        if j in left and abs(j % W - i % W) <= 3:
+                            left.remove(j)
+                            todo.append(j)
+                            clump.append(j)
+            clumps.append(clump)
+        big = max(map(len, clumps))
+        keep = [i for c in clumps if len(c) * 10 >= big for i in c]
+    xs, ys = [i % W for i in keep], [i // W for i in keep]
+    x0, x1, y0, y1 = max(min(xs) - 2, 0), min(max(xs) + 3, W), max(min(ys) - 2, 0), min(max(ys) + 3, H)
     sx, sy = size[0] / W, size[1] / H
-    x0, y0 = int(min(xs) * sx), int(min(ys) * sy)
-    return [x0, y0, int((max(xs) + 1) * sx) - x0, int((max(ys) + 1) * sy) - y0]
+    return [int(x0 * sx), int(y0 * sy), int(x1 * sx) - int(x0 * sx), int(y1 * sy) - int(y0 * sy)]
 
 
 def camera():
