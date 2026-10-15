@@ -468,6 +468,8 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
     },
     // drawn things that hold actors (a jail around the spider): [{ actor: id, x, z, r }]; the actor only
     // walks inside its circle and is brought in if it is outside. Actors no longer held walk free again.
+    // something new appeared at (x, z): curious characters nearby go and look
+    inspect(x, z) { X.inspect?.(x, z, null, api); },
     setHolds(list) {
       for (const a of actors) {
         const h = list.find(x => x.actor === a.id) || null;

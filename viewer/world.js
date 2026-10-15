@@ -130,7 +130,10 @@ export async function build(api, prevState = null) {
     try { place(file, entry, m?.meta, live); } catch (e) { report(`things/${file}: placing: ${e.message}`); }
     bakeAO(THREE, entry.box);
     if (entry.free) bakeAO(THREE, entry.free);
-    if (live) api.arrived?.(entry.box, entry.free);
+    if (live) {                           // a drawing comes alive: the engine celebrates, the others come to look
+      api.arrived?.(entry.box, m?.meta?.name, entry.foot);
+      if (entry.foot) brain?.inspect?.(entry.foot.x, entry.foot.z);
+    }
     const dropped = api.mood?.set(file, entry.light, entry.box);
     if (dropped) report(`things/${file}: ${dropped} lamp(s) left dark (at most 3 per thing, 8 in all)`);
     loaded.set(file, entry);

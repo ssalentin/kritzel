@@ -30,6 +30,13 @@
   #status.calm .text, #status.calm img { display: none; }
   @keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
   @media (max-width: 560px) { #status { top: auto; bottom: 52px; max-width: calc(100vw - 32px); } }
+  /* the name of a drawing that just came alive, big for a moment (status.js) */
+  #arrive { position: fixed; left: 50%; top: 16%; transform: translate(-50%, 0) scale(.6); opacity: 0; pointer-events: none;
+    font: 800 clamp(30px, 7vw, 64px)/1.1 system-ui, sans-serif; color: #fff; white-space: nowrap;
+    text-shadow: 0 3px 0 rgba(0,0,0,.18), 0 0 24px rgba(255,200,120,.75); }
+  #arrive.on { animation: arrive 2.4s ease-out; }
+  @keyframes arrive { 0% { opacity: 0; transform: translate(-50%, 10px) scale(.6); } 12% { opacity: 1; transform: translate(-50%, 0) scale(1.08); }
+    20% { transform: translate(-50%, 0) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -12px) scale(1); } }
   #hint { position: fixed; left: 16px; bottom: 12px; opacity: .6; color: var(--ink); font-size: 13px; pointer-events: none; }
   #card { position: fixed; right: 16px; bottom: 12px; max-width: min(280px, calc(100vw - 32px)); display: none;
     background: var(--panel); border-radius: 10px; padding: 8px 12px; }
@@ -66,6 +73,7 @@
 </head>
 <body>
 <div id="hud"><div id="err"></div></div>
+<div id="arrive" aria-live="polite"></div>
 <div id="status" data-tone="ok"><span class="dot"></span><img alt="" hidden><span class="text"></span><span class="gen" hidden>⚠ Generator aus</span></div>
 <div id="veil"><div><span class="pen">✏️</span> Neue Welt wird gemalt<span class="dots"></span></div></div>
 <div id="hint">Tippe eine Figur an, um ihr mit der Kamera zu folgen · Esc beendet <span id="ver"></span></div>
@@ -299,11 +307,12 @@ function shadowAll(obj) {
 
 const errEl = document.getElementById('err');
 // what capture and generate are doing, and a glowing light where a new drawing will appear
-const status = createStatus({ THREE, scene, el: document.getElementById('status'), world: () => current });
+const status = createStatus({ THREE, scene, el: document.getElementById('status'), world: () => current,
+  banner: document.getElementById('arrive') });
 
 const api = { THREE, scene, world, camera, controls, bubble, shadowAll, mood: lighting,
   reserved: () => status.reserved(), claimSpot: () => status.claimSpot(),
-  arrived: box => { status.arrived(box); sound?.fx('plopp', box); },
+  arrived: (box, name, foot) => { status.arrived(box, name, foot); sound?.fx('plopp', box); },
   report: msg => { errEl.textContent += (errEl.textContent ? '\n' : '') + msg; } };
 const err = document.getElementById('err');
 let current = null;

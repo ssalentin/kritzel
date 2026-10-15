@@ -19,12 +19,29 @@ function glowTexture(THREE) {
   return tex;
 }
 
-export function createStatus({ THREE, scene, el, world }) {
+export function createStatus({ THREE, scene, el, world, banner }) {
   const dot = el.querySelector('.dot'), text = el.querySelector('.text'), img = el.querySelector('img'), gen = el.querySelector('.gen');
   let st = null, lastView = '', viewSince = 0, prevCap = null, connectedAt = 0;
   const lights = new Map();          // frame → { g, light, orb, halo, sparks, spot, born, dying, claimed }
   const glow = glowTexture(THREE);
   const growing = [];                // things that just arrived, growing out of their light
+  const bursts = [];                 // paper confetti flying out of them
+  let lastTick = performance.now();
+
+  // a burst of little paper snippets in pastel colours, flying up and fluttering down
+  function confetti(x, y, z) {
+    const n = 70, cols = [0xff8fa3, 0xffd36e, 0x8fd6ff, 0xa6e3a1, 0xc9a7ff, 0xffffff];
+    const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.13, 0.09), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true }), n);
+    const parts = [];
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, s = 1.5 + Math.random() * 2.5;
+      parts.push({ p: new THREE.Vector3(x, y, z), v: new THREE.Vector3(Math.cos(a) * s * 0.6, 3 + Math.random() * 3.5, Math.sin(a) * s * 0.6),
+        r: new THREE.Euler(Math.random() * 6, Math.random() * 6, 0), spin: (Math.random() - 0.5) * 14 });
+      mesh.setColorAt(i, new THREE.Color(cols[i % cols.length]));
+    }
+    scene.add(mesh);
+    bursts.push({ mesh, parts, born: performance.now() });
+  }
 
   // where generate puts a thing for this changed_box (same mapping as generate/generate.mjs cropOf),
   // and roughly how much room it will need
@@ -131,8 +148,11 @@ export function createStatus({ THREE, scene, el, world }) {
       return { x: l.spot.x, z: l.spot.z };
     },
     // …and grows out of it, while the light fades
-    arrived(box) {
+    arrived(box, name, foot) {
       for (const [f, l] of lights) if (l.claimed && !l.dying) retire(f);
+      const b = new THREE.Box3().setFromObject(box);
+      if (!b.isEmpty()) confetti(foot?.x ?? (b.min.x + b.max.x) / 2, Math.min(b.max.y, 3), foot?.z ?? (b.min.z + b.max.z) / 2);
+      if (banner && name) { banner.textContent = `${name}!`; banner.classList.remove('on'); void banner.offsetWidth; banner.classList.add('on'); }
       const kids = box.children.map(o => [o, o.scale.clone()]);
       for (const [o] of kids) o.scale.multiplyScalar(0.001);
       growing.push({ kids, born: performance.now() });
@@ -140,7 +160,22 @@ export function createStatus({ THREE, scene, el, world }) {
     // every frame: the pill's seconds counter, lights pulsing and fading, new things growing
     tick(camera) {
       render();
-      const now = performance.now(), t = now / 1000;
+      const now = performance.now(), t = now / 1000, dt = Math.min(0.05, (now - lastTick) / 1000);
+      lastTick = now;
+      const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
+      for (let i = bursts.length - 1; i >= 0; i--) {
+        const bu = bursts[i], age = (now - bu.born) / 1000;
+        bu.parts.forEach((pa, j) => {
+          pa.v.y -= 7 * dt; pa.v.multiplyScalar(pa.v.y < 0 ? 1 - 2.5 * dt : 1);   // paper: falls slowly, flutters
+          pa.p.addScaledVector(pa.v, dt);
+          if (pa.p.y < 0.03) { pa.p.y = 0.03; pa.v.set(0, 0, 0); }
+          pa.r.x += pa.spin * dt; pa.r.y += pa.spin * 0.7 * dt;
+          bu.mesh.setMatrixAt(j, m4.compose(pa.p, q.setFromEuler(pa.r), one));
+        });
+        bu.mesh.instanceMatrix.needsUpdate = true;
+        bu.mesh.material.opacity = Math.min(1, (3.2 - age) / 0.8);
+        if (age > 3.2) { scene.remove(bu.mesh); bu.mesh.geometry.dispose(); bu.mesh.material.dispose(); bu.mesh.dispose(); bursts.splice(i, 1); }
+      }
       for (const [frame, l] of lights) {
         if (now - l.born > LIGHT_MAX_S * 1000 && st?.generate?.alive) retire(frame);
         const pop = Math.min(1, (now - l.born) / 500);
