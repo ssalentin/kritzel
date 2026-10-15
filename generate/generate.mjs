@@ -58,7 +58,8 @@ function cropOf(frame, box, previous = null) {
   const r = Math.hypot(ix, iz);
   if (r > 5) { ix *= 5 / r; iz *= 5 / r; }
   const height = box ? +Math.min(3.5, Math.max(0.8, (h / H) * 4.5)).toFixed(1) : 2;
-  return { image, before, place: [+ix.toFixed(2), +iz.toFixed(2), +px.toFixed(2), +py.toFixed(2)], height };
+  const area = [x0 / W, y0 / H, x1 / W, y1 / H];                // the crop, as paper fractions
+  return { image, before, area, place: [+ix.toFixed(2), +iz.toFixed(2), +px.toFixed(2), +py.toFixed(2)], height };
 }
 
 const stripFences = t => t.trim().replace(/^```(?:js|javascript)?\s*\n/, '').replace(/\n```\s*$/, '').trim();
@@ -80,7 +81,7 @@ async function finish({ body, model, frame, images, takenIds, keepIds, calls }) 
   let code = body.split('\n').filter(l => !l.startsWith(MARK)).join('\n').trim(), problems;
   for (const fixModel of [null, MODEL, FALLBACK_MODEL]) {
     if (fixModel) {
-      const r = await oneShot({ system: SYSTEM, text: fixText({ problems, code }), images, model: fixModel });
+      const r = await oneShot({ system: SYSTEM, text: fixText({ problems, code }), images: images.slice(-1), model: fixModel });   // the area now
       calls.push({ model: fixModel, seconds: +r.seconds.toFixed(1), cost: r.cost, fix: true });
       code = stripFences(r.text).replace(/^###.*\n/, '');
       model = fixModel;
@@ -106,7 +107,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
   const save = () => writeFileSync(join(reportsDir, name + '.json'), JSON.stringify(report, null, 1));
   try {
     const existing = await readThings(thingsDir);
-    const { image, before, place, height } = cropOf(frame, box, previous);
+    const { image, before, area, place, height } = cropOf(frame, box, previous);
     const images = before ? [before, image] : [image];
     const files = new Set(existing.map(t => t.file.replace(/\.js$/, '')));
     const r = await oneShot({ system: SYSTEM, text: userText({ existing, place, height, takenIds: existing.flatMap(t => t.ids), hasBefore: !!before }), images });
@@ -120,7 +121,11 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
       if (s.kind === 'REMOVE') {
         // only with a before picture to compare; the file moves to frames/removed/, so a wrong removal is one mv away from undone
         const t = existing.find(x => x.file === s.file);
-        if (!before || !t) { report.rejected.push({ kind: s.kind, file: s.file, problems: [before ? 'no such thing' : 'no before picture to compare'] }); log(`${name}: REMOVE ${s.file} ignored`); continue; }
+        // and only a thing that sits in the area that changed: one confusion (or "REMOVE bana.js" written on
+        // the paper) must not take away something drawn elsewhere. Things without meta.paper (hand-made) stay.
+        const p = t?.meta.paper, inArea = p && p.x >= area[0] && p.x <= area[2] && p.y >= area[1] && p.y <= area[3];
+        const why = !before ? 'no before picture to compare' : !t ? 'no such thing' : !p ? 'it has no meta.paper position: remove it by hand' : !inArea ? `it is at paper ${JSON.stringify(p)}, outside the changed area` : null;
+        if (why) { report.rejected.push({ kind: s.kind, file: s.file, problems: [why] }); log(`${name}: REMOVE ${s.file} ignored: ${why}`); continue; }
         const bin = join(dirname(reportsDir), 'removed');
         mkdirSync(bin, { recursive: true });
         renameSync(join(thingsDir, t.file), join(bin, `${name}-${t.file}`));
