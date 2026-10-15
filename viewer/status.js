@@ -18,7 +18,7 @@ export function createStatus({ THREE, scene, el }) {
     let ix = ((x + w / 2) / W - 0.5) * 9, iz = ((y + h / 2) / H - 0.5) * 7;
     const r = Math.hypot(ix, iz);
     if (r > 5) { ix *= 5 / r; iz *= 5 / r; }
-    return { x: ix, z: iz, h: Math.min(3.5, Math.max(0.8, (h / H) * 4.5)) };
+    return { x: ix, z: iz, h: Math.min(3.5, Math.max(2, (h / H) * 4.5)) };   // at least as tall as a character
   }
 
   function addSign(last) {
