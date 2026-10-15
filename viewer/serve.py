@@ -8,7 +8,9 @@ Camera selection (see scripts/camera_server.py for the remote side):
 
 HOST / PORT env vars change the listen address (default 127.0.0.1:8765).
 """
+import base64
 import functools
+import hashlib
 import http.server
 import json
 import os
@@ -74,7 +76,27 @@ def clean_choice(c):
 class Handler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header("Cache-Control", "no-store, must-revalidate")
+        self.send_header("Content-Security-Policy", self.csp())
         super().end_headers()
+
+    # things/*.js are written by a model from a camera picture anyone can draw on, and they run in
+    # this page. The policy keeps whatever they do inside it: code only from here, the page's own
+    # inline scripts (by hash) and the two pinned CDN packages; requests and images only to here.
+    CDN = "https://cdn.jsdelivr.net/npm/three@0.160.0/ https://cdn.jsdelivr.net/npm/rot-js@2.2.1/"
+
+    def csp(self):
+        hashes = ""
+        try:
+            f = Path(self.translate_path(self.path))
+            f = f / "index.html" if f.is_dir() else f
+            if f.suffix == ".html":
+                for script in re.findall(r"<script[^>]*>(.*?)</script>", f.read_text(), re.S):
+                    hashes += " 'sha256-%s'" % base64.b64encode(hashlib.sha256(script.encode()).digest()).decode()
+        except OSError:
+            pass
+        return (f"default-src 'self'; script-src 'self'{hashes} {self.CDN}; style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; "
+                "object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'")
 
     def json(self, obj, code=200):
         body = json.dumps(obj).encode()
