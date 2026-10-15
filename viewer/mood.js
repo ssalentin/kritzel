@@ -61,7 +61,7 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
   function top(anchor) {
     if (!anchor) return null;
     const box = new THREE.Box3().setFromObject(anchor), o = new THREE.Object3D();
-    if (!box.isEmpty()) { box.getCenter(o.position); o.position.y = box.max.y; }
+    if (!box.isEmpty()) { box.getCenter(o.position); o.position.y = box.max.y; anchor.worldToLocal(o.position); }
     anchor.add(o);
     return o;
   }

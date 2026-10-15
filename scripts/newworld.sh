@@ -11,4 +11,5 @@ for f in index.html world.js sim.js sim-extra.js island.js characters.js sound.j
 done
 cp -r "$root/viewer/things" "$dest/things"
 rm -f "$root"/viewer/things/*.js     # the live page notices the empty things/ and plays the new-world animation
+rm -f "$root"/viewer/things/placement.json   # where the old things stood (archived with them)
 echo "archived to worlds/$name"

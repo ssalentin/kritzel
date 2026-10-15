@@ -173,14 +173,15 @@ slides or turns a little is aligned first and doesn't count as new.
 Capture and generate each keep a small status file, `frames/status/capture.json` and
 `frames/status/generate.json` (`state`, `since`, `beat`, `detail`; rewritten at least every
 few seconds). `GET /api/status` serves both, with `alive: false` for a stage whose file is
-older than 10 s. Capture also writes `frames/status/cutout.png`, the newest drawing as a
-paper cut-out (`GET /api/status/cutout.png`).
+older than 10 s. Capture also writes `frames/status/cutout.png`, the newest drawing's ink
+(`GET /api/status/cutout.png`), which the pill shows as a thumbnail.
 
 The viewer shows this as a pill in the top-left corner (at the bottom on a phone): camera
 off or connected, watching the paper, movement, a new drawing (with its cut-out), building
 (with a seconds counter), the result, and a warning when a stage isn't running. When nothing
-happens it folds to a dot. The moment a drawing is seen, its cut-out stands on the island
-where the 3D thing will appear, and folds away when the thing arrives.
+happens it folds to a dot. The moment a drawing is seen, a warm glowing light with rising
+sparks appears on the free spot of the island where its thing will stand; the thing grows
+out of it (with a "plopp") and the light fades.
 
 ### Starting a new sheet
 
@@ -197,7 +198,7 @@ plays the new-world animation, and waits for the first new drawing.
 Each drawn object is one ES module in `viewer/things/`:
 
 ```js
-export const meta = { name: 'Haus', drawing: 'a small house with a red roof' };
+export const meta = { name: 'Haus', drawing: 'a small house with a red roof', paper: { x: 0.4, y: 0.6 } };
 
 export function build(ctx) {
   const { THREE, world, mat, makePerson, bubble, shadowAll, sound } = ctx;
@@ -240,6 +241,14 @@ again when the holding thing is gone.
 (6.9) and `env` (`env.actors` lists who is around, `env.night` goes from 0 by day to 1
 at night, `env.lamps` lists where lamps and fires stand). A thing that throws is reported in
 the on-screen error box; the rest of the world keeps running.
+
+**Where a new thing stands.** The engine, not the model, has the last word: a thing that
+appears while the page is open is moved to the free spot nearest to `meta.paper` (where it
+sits on the paper, 0–1 of the frame) — on the island, off other things, their obstacles and
+the characters. Its obstacles, spots, holds and characters' start move with it; things
+floating high up (sun, moon, clouds) stay where they are. The spot is kept in
+`viewer/things/placement.json` (via `PUT /api/placement`), so a reload or a second viewer
+shows it in the same place; things already standing never move.
 
 ## Generation
 

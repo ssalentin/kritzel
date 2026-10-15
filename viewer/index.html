@@ -298,15 +298,18 @@ function shadowAll(obj) {
 }
 
 const errEl = document.getElementById('err');
-// what capture and generate are doing, and the new drawing as a paper cut-out until its thing arrives
-const status = createStatus({ THREE, scene, el: document.getElementById('status') });
+// what capture and generate are doing, and a glowing light where a new drawing will appear
+const status = createStatus({ THREE, scene, el: document.getElementById('status'), world: () => current });
 
 const api = { THREE, scene, world, camera, controls, bubble, shadowAll, mood: lighting,
+  reserved: () => status.reserved(), claimSpot: () => status.claimSpot(),
+  arrived: box => { status.arrived(box); sound?.fx('plopp', box); },
   report: msg => { errEl.textContent += (errEl.textContent ? '\n' : '') + msg; } };
 const err = document.getElementById('err');
 let current = null;
 window.__paperWorld = () => current;      // debug handles (inspection from devtools / tests)
 window.__lighting = () => lighting;
+window.__status = status;
 
 function clearWorld() {
   world.traverse(o => {
