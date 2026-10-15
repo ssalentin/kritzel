@@ -218,6 +218,7 @@ async function watch(dir, opts) {
   log(`watching ${dir} → ${opts.thingsDir} (model ${MODEL}, fallback ${FALLBACK_MODEL}); handled up to ${last || '(nothing)'}`);
   const sleep = ms => new Promise(ok => setTimeout(ok, ms));
   let tries = 0, triesFor = null;           // failed attempts, and for which frame
+  let lastGenerated = last;                 // the last frame processFrame really ran on (skipped frames don't count)
   for (;;) {
     const newest = list().at(-1);
     if (newest && newest !== last) {
@@ -230,16 +231,17 @@ async function watch(dir, opts) {
         last = newest;
         continue;
       }
-      const box = side.previous && side.previous === last ? side.changed_box : null;
+      // capture's changed_box is only trusted if it was measured against the frame we last generated
+      // from; otherwise (frames skipped, a big change in between) the whole sheet is compared with that
+      // frame, so a scribble that appeared in a skipped frame is still seen
+      const box = side.previous && side.previous === lastGenerated ? side.changed_box : null;
       status('building', newest);
-      // without a trusted box (frames skipped, paper moved) the whole sheet is compared with the last
-      // handled frame, so erasing or scribbling done meanwhile is still seen
-      const r = await processFrame(join(dir, newest), { ...opts, box, previous: last ? join(dir, last) : null });
+      const r = await processFrame(join(dir, newest), { ...opts, box, previous: lastGenerated ? join(dir, lastGenerated) : null });
       const names = r.written.map(w => w.name).join(', ');
       if (r.error) status('failed', newest, r.error.slice(0, 80));
       else if (r.written.length) status(r.written.every(w => w.kind === 'UPDATE') ? 'changed' : 'new', newest, names);
       else status(r.removed.length ? 'changed' : 'unclear', newest, r.removed.length ? 'entfernt' : '');
-      if (!r.error) { last = newest; tries = 0; continue; }
+      if (!r.error) { last = lastGenerated = newest; tries = 0; continue; }
       // claude missing for a moment: Claude Code updates itself in place (the binary is replaced), so
       // pinning its path at startup would not help; wait and try the same frame again, not counted
       if (/ENOENT/.test(r.error)) { await sleep(30_000); continue; }
