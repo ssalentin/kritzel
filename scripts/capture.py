@@ -390,6 +390,7 @@ def main():
                 data = r.read(MAX_BYTES + 1)
         except OSError as e:
             print(f"camera snapshot: {e}", file=sys.stderr, flush=True)
+            det.undo(t)                       # don't lose the drawing: let it settle and try again
             continue
         size = jpeg_size(data)
         snap = size and small(data)
