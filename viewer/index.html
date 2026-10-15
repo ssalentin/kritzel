@@ -22,7 +22,7 @@
   #camBtn { position: fixed; right: 124px; top: 12px; font: 13px system-ui, sans-serif; color: var(--fg); background: var(--panel);
     border: 0; border-radius: 10px; padding: 6px 10px; cursor: pointer; opacity: .8; }
   #cam { position: fixed; right: 16px; top: 48px; width: min(300px, calc(100vw - 32px)); box-sizing: border-box;
-    background: var(--panel); border-radius: 10px; padding: 8px; display: grid; gap: 6px; }
+    background: var(--panel); border-radius: 10px; padding: 8px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
   #cam[hidden] { display: none; }
   #cam .row { display: flex; gap: 6px; }
   #cam select { flex: 1; min-width: 0; font: inherit; }

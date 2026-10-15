@@ -44,7 +44,7 @@ export function cameraPicker({ button, panel }) {
     select.value = options.some(c => keyOf(c) === want) ? want : '';
     note.textContent = [local.why, remote.length ? '' : 'Keine Netzwerk-Kamera gefunden (scripts/camera_server.py starten).']
       .filter(Boolean).join(' ');
-    if (saved && !select.value) note.textContent = `Gespeicherte Kamera nicht erreichbar: ${saved.label || saved.name}. ` + note.textContent;
+    if ((saved?.kind === 'local' || saved?.kind === 'remote') && !select.value) note.textContent = `Gespeicherte Kamera nicht erreichbar: ${saved.label || saved.name}. ` + note.textContent;
     await show(options.find(c => keyOf(c) === select.value));
   }
 
@@ -61,7 +61,7 @@ export function cameraPicker({ button, panel }) {
         video.hidden = false;
       } catch (e) { note.textContent = 'Kamera lässt sich nicht öffnen: ' + e.message; }
     } else {
-      img.onerror = () => { note.textContent = `${cam.name} (${cam.host}) sendet kein Bild.`; };
+      img.onerror = () => { img.hidden = true; note.textContent = `${cam.name} (${cam.host}) sendet kein Bild.`; };
       img.src = cam.stream + '?t=' + Date.now();
       img.hidden = false;
     }
