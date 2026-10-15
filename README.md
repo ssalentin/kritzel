@@ -132,6 +132,10 @@ export function build(ctx) {
 }
 ```
 
+A thing drawn around a character (a jail, a fence) can keep it inside: `holds: [{ actor, x, z, r }]`
+lets that actor walk only within the circle; it is brought in if it is outside, and walks free
+again when the holding thing is gone.
+
 `ctx` also carries `rand` (seeded), `limb`, `pond`, `trees`, `SUN_POS`, `islandR`
 (6.9) and `env` (`env.actors` lists who is around). A thing that throws is reported in
 the on-screen error box; the rest of the world keeps running.

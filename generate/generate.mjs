@@ -55,12 +55,18 @@ function cropOf(frame, box, previous = null) {
   const crop = f => execFileSync('convert', [f, '-crop', `${x1 - x0}x${y1 - y0}+${x0}+${y0}`, '+repage', '-resize', box ? '768x768>' : '1568x1568>', '-quality', '85', 'jpg:-'], { maxBuffer: 20e6 });
   const image = crop(frame), before = previous && existsSync(previous) ? crop(previous) : null;
   const px = (x + w / 2) / W, py = (y + h / 2) / H;           // frame ≈ paper: no paper detection yet
-  let ix = (px - 0.5) * 9, iz = (py - 0.5) * 7;               // paper top = island back (-z)
-  const r = Math.hypot(ix, iz);
-  if (r > 5) { ix *= 5 / r; iz *= 5 / r; }
+  const [ix, iz] = islandOf(px, py);
   const height = box ? +Math.min(3.5, Math.max(0.8, (h / H) * 4.5)).toFixed(1) : 2;
   const area = [x0 / W, y0 / H, x1 / W, y1 / H];                // the crop, as paper fractions
   return { image, before, area, place: [+ix.toFixed(2), +iz.toFixed(2), +px.toFixed(2), +py.toFixed(2)], height };
+}
+
+// paper position (0..1, top-left origin) → island (x, z): the paper's top is the island's back (-z)
+export function islandOf(px, py) {
+  let ix = (px - 0.5) * 9, iz = (py - 0.5) * 7;
+  const r = Math.hypot(ix, iz);
+  if (r > 5) { ix *= 5 / r; iz *= 5 / r; }
+  return [+ix.toFixed(2), +iz.toFixed(2)];
 }
 
 const stripFences = t => t.trim().replace(/^```(?:js|javascript)?\s*\n/, '').replace(/\n```\s*$/, '').trim();
