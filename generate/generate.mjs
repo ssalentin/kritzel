@@ -184,7 +184,18 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
 // sheet); its changed_box is only trusted if it was measured against the frame we last handled.
 // A failing frame gets ATTEMPTS tries with backoff, then is marked failed; not logged in waits long.
 const ATTEMPTS = 3;
+// frames/status/generate.json for the viewer's status pill: { state, since, beat, detail, frame },
+// state idle|building|new|changed|unclear|failed; rewritten every 2 s so the viewer knows we run
+function statusFile(file) {
+  let st = { state: 'idle', since: Date.now() / 1000, detail: '', frame: '' };
+  const write = () => { try { mkdirSync(dirname(file), { recursive: true }); atomicWrite(file, JSON.stringify({ ...st, beat: Date.now() / 1000 })); } catch {} };
+  setInterval(write, 2000).unref();
+  write();
+  return (state, frame, detail = '') => { st = { state, since: Date.now() / 1000, detail, frame: frame.replace(/\.jpg$/, '') }; write(); };
+}
+
 async function watch(dir, opts) {
+  const status = statusFile(join(ROOT, 'frames', 'status', 'generate.json'));
   const list = () => existsSync(dir) ? readdirSync(dir).filter(f => /^\d{8}-\d{6}\.jpg$/.test(f)).sort() : [];
   const done = f => { try { return !JSON.parse(readFileSync(join(opts.reportsDir, f.replace('.jpg', '.json')), 'utf8')).error; } catch { return false; } };
   const frames = list();
@@ -201,11 +212,17 @@ async function watch(dir, opts) {
       if (side.reason === 'big-change' && (side.changed ?? 1) > 0.5) {
         log(`${newest}: big change (new sheet or moved paper?): nothing generated; archiving the old world is scripts/newworld.sh's call`);
         writeFileSync(join(opts.reportsDir, newest.replace('.jpg', '.json')), JSON.stringify({ frame: newest, skipped: 'big-change', side }, null, 1));
+        status('idle', newest);
         last = newest;
         continue;
       }
       const box = side.previous && side.previous === last ? side.changed_box : null;
+      status('building', newest);
       const r = await processFrame(join(dir, newest), { ...opts, box, previous: box ? join(dir, last) : null });
+      const names = r.written.map(w => w.name).join(', ');
+      if (r.error) status('failed', newest, r.error.slice(0, 80));
+      else if (r.written.length) status(r.written.every(w => w.kind === 'UPDATE') ? 'changed' : 'new', newest, names);
+      else status(r.removed.length ? 'changed' : 'unclear', newest, r.removed.length ? 'entfernt' : '');
       if (!r.error) { last = newest; tries = 0; continue; }
       // claude missing for a moment: Claude Code updates itself in place (the binary is replaced), so
       // pinning its path at startup would not help; wait and try the same frame again, not counted
