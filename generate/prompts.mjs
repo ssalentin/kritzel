@@ -10,6 +10,8 @@ Reply NOTHING if nothing changed that matters (blank paper, or only drawings alr
 <the complete ES module for one new drawing>
 ### UPDATE <file>
 <the complete new version of that existing module: something was added to or changed in its drawing>
+### REMOVE <file>
+<one line: what was erased> (only when you are shown a before picture: the thing's drawing is in it and is gone now, erased or crossed out)
 ### UNCLEAR
 <what you see> | <what it could be>
 Use UNCLEAR for a mark that could be many things (a bare outline, a scribble, a lone line). Do not guess: a wrong thing on the island is worse than none. A part drawn onto an existing drawing (clothes, a hat, a door) is an UPDATE of that thing, not a NEW thing. Writing next to a figure (a speech bubble, "Hallo") belongs to that figure: use it in its lines. Modules are plain JavaScript: no markdown fences, nothing outside the sections.
@@ -30,10 +32,12 @@ ${example}`;
 const MAX_CODE = 9000;
 
 // place: the changed area's centre on the island and on the paper; height: its drawn height in island units
-export function userText({ existing, place, height, takenIds }) {
+export function userText({ existing, place, height, takenIds, hasBefore = false }) {
   const things = existing.map(t => `--- ${t.file}: ${t.meta.name} (${t.meta.drawing})\n` +
     (t.code.length <= MAX_CODE ? t.code : '(code too long to show; an UPDATE must be a complete new module)')).join('\n');
-  return `This image is the part of the paper that just changed.
+  return (hasBefore
+    ? 'The first image is this part of the paper before, the second is the same part now. Compare them: what was added, changed or erased?'
+    : 'This image is the part of the paper that just changed. (No before picture: do not REMOVE anything.)') + `
 Things already on the island, with their modules:
 ${things || '(nothing yet)'}
 

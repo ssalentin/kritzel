@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { staticCheck, buildCheck } from './check.mjs';
+import { parseReply } from './generate.mjs';
 
 const example = f => readFileSync(new URL('./examples/' + f, import.meta.url), 'utf8');
 const thing = body => `export const meta = { name: 'x', drawing: 'y' };\nexport function build(ctx) {\n${body}\n}\n`;
@@ -47,4 +48,12 @@ test('model code runs sandboxed: no file writes, no network, endless loops are k
   const loop = thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(1, 1, 1), ctx.mat(1))); ctx.world.add(g);
     return { update(t) { if (t > 5) for (;;) {} } };`);
   assert.match((await buildCheck(loop)).problems.join(), /did not finish/);
+});
+
+test('replies are split into NEW / UPDATE / REMOVE / UNCLEAR sections', () => {
+  assert.deepEqual(parseReply('NOTHING'), []);
+  const r = parseReply('### NEW\n```js\nexport const meta = {};\n```\n### UPDATE bana.js\ncode2\n### REMOVE wolke.js\nthe cloud was erased\n### UNCLEAR\na line | anything');
+  assert.deepEqual(r.map(s => [s.kind, s.file]), [['NEW', null], ['UPDATE', 'bana.js'], ['REMOVE', 'wolke.js'], ['UNCLEAR', null]]);
+  assert.equal(r[0].body, 'export const meta = {};');
+  assert.throws(() => parseReply('export const meta = {};'), /no ### sections/);
 });

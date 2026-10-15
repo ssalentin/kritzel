@@ -158,7 +158,10 @@ For each frame:
    and one example (`generate/examples/`). The existing modules' code is in the request. The
    reply is `NOTHING`, or one section per change: `### NEW` (a module), `### UPDATE <file>`
    (the new version of a thing whose drawing changed; it keeps its file and actor id, so the
-   sim keeps its friendships), or `### UNCLEAR` for a mark that could be many things. Unclear
+   sim keeps its friendships), `### REMOVE <file>` (its drawing was erased), or `### UNCLEAR`
+   for a mark that could be many things. The model sees the changed area before and now, so
+   it can tell what was erased; without a before picture nothing is removed. A removed module
+   is moved to `frames/removed/`, so undoing a wrong removal is one `mv`. Unclear
    marks produce nothing, because a wrong thing on the island is worse than none. Text on the
    paper is treated as part of the drawing.
 2. **Checks.** A static check catches the model reaching outside `ctx` (imports, network,
@@ -176,9 +179,8 @@ model, seconds and cost, what was written or rejected and why, and the seconds f
 settled frame to the written file. The watcher resumes after the newest frame with a
 finished report. A failing frame gets 3 tries with backoff, then it is marked failed.
 
-Not automatic yet: removing a thing whose drawing was erased, and archiving the world when a
-new sheet appears (it is only reported). Placement uses the camera frame, not a detected
-paper outline.
+Not automatic yet: archiving the world when a new sheet appears (it is only reported).
+Placement uses the camera frame, not a detected paper outline.
 
 ## Repository layout
 
