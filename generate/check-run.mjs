@@ -94,7 +94,7 @@ async function buildCheck(file, takenIds) {
       if (!['sun', 'moon', 'lamp'].includes(l?.kind)) { problems.push(`light.kind must be 'sun', 'moon' or 'lamp' (got ${JSON.stringify(l?.kind)})`); continue; }
       if (l.object3D != null && !l.object3D.isObject3D) problems.push(`${l.kind} light: object3D must be a mesh or group of this thing`);
       if (l.intensity != null && !(num(l.intensity) && l.intensity >= 0 && l.intensity <= 5)) problems.push(`${l.kind} light: intensity must be 0-5`);
-      if (l.range != null && !(num(l.range) && l.range > 0)) problems.push(`${l.kind} light: range must be a positive number`);
+      if (l.range != null && !(num(l.range) && l.range > 0 && l.range <= 20)) problems.push(`${l.kind} light: range must be 0-20 (the island is 14 across)`);
     }
     const lamps = lights.filter(l => l?.kind === 'lamp').length;
     if (lamps > 3) problems.push(`${lamps} lamps: at most 3 per thing (the engine lights only that many; make the others glow with an emissive material instead)`);

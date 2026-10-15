@@ -69,4 +69,6 @@ test('light: shape is checked, at most 3 lamps per thing', async () => {
   const moon = thing(`const g = new ctx.THREE.Group(); const d = new ctx.THREE.Mesh(new ctx.THREE.SphereGeometry(0.5), ctx.mat(0xffffcc)); g.add(d); g.position.y = 4; ctx.world.add(g);
     return { light: { kind: 'moon', object3D: d } };`);
   assert.deepEqual((await buildCheck(moon)).problems, []);
+  const far = withLights(1).replace("intensity: 1,", "intensity: 1, range: 50,");
+  assert.ok((await buildCheck(far)).problems.some(p => p.includes('range must be 0-20')));
 });
