@@ -6,13 +6,15 @@
 <title>Paper World</title>
 <style>
   :root { --bg: #bfe3dd; --fg: #10202e; --panel: rgba(255,255,255,.78); }
-  html, body { margin: 0; height: 100%; background: radial-gradient(ellipse at 50% 42%, #d9f1ec 0%, var(--bg) 55%, #a8d4cc 100%); color: var(--fg); overflow: hidden;
+  /* --sky0..2 and --ink follow the time of day (mood.js) */
+  :root { --sky0: #e8ad8a; --sky1: #6e5d8c; --sky2: #2c2848; --ink: #fff4ea; }
+  html, body { margin: 0; height: 100%; background: radial-gradient(ellipse at 50% 42%, var(--sky0) 0%, var(--sky1) 55%, var(--sky2) 100%); color: var(--fg); overflow: hidden;
     font: 14px/1.45 system-ui, sans-serif; }
   #hud { position: fixed; left: 16px; top: 12px; max-width: min(560px, calc(100vw - 32px));
     background: var(--panel); border-radius: 10px; padding: 8px 12px; pointer-events: none; }
   #hud:has(#err:empty) { display: none; }
   #err { color: #b3261e; white-space: pre-wrap; }
-  #hint { position: fixed; left: 16px; bottom: 12px; opacity: .6; font-size: 13px; pointer-events: none; }
+  #hint { position: fixed; left: 16px; bottom: 12px; opacity: .6; color: var(--ink); font-size: 13px; pointer-events: none; }
   #card { position: fixed; right: 16px; bottom: 12px; max-width: min(280px, calc(100vw - 32px)); display: none;
     background: var(--panel); border-radius: 10px; padding: 8px 12px; }
   #card b { display: block; font-size: 15px; }
@@ -66,6 +68,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { createMood } from './mood.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(devicePixelRatio);
@@ -77,10 +80,9 @@ renderer.toneMapping = THREE.NoToneMapping;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-// Fixed style, modelled on the three.js "Littlest Tokyo" keyframes example:
-// a floating low-poly diorama on a soft mint backdrop, lit by a room environment.
-// (the mint backdrop is a soft CSS gradient behind the transparent canvas)
-scene.background = new THREE.Color(0xbfe3dd);   // the example's flat mint backdrop
+// Style modelled on the three.js "Littlest Tokyo" keyframes example: a floating low-poly
+// diorama lit by a room environment. The backdrop is a soft CSS gradient behind the
+// transparent canvas; its colours follow the time of day (mood.js).
 scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
 
 const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 300);
@@ -98,7 +100,8 @@ const camQ = new URLSearchParams(location.search).get('cam')?.split(',').map(Num
 if (camQ?.length === 6) { camera.position.set(...camQ.slice(0, 3)); controls.target.set(...camQ.slice(3)); controls.autoRotate = false; }
 
 // light comes mostly from the room environment (as in the example); the sun only adds soft shadows
-scene.add(new THREE.HemisphereLight(0xfff4e6, 0x9cc7b8, 0.15));
+const hemi = new THREE.HemisphereLight(0xfff4e6, 0x9cc7b8, 0.15);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff1dc, 0.9);
 sun.position.set(8, 14, 6);
 sun.castShadow = true;
@@ -113,6 +116,8 @@ scene.add(sun);
 const bounce = new THREE.DirectionalLight(0xf2ead8, 0.25);
 bounce.position.set(-3, -10, 5);
 scene.add(bounce);
+// drawn suns, moons and lamps set the time of day and light their surroundings
+const lighting = createMood({ THREE, scene, key: sun, hemi, bounce });
 
 // the floating island itself is built by island.js (part of the world, hot reloaded)
 
@@ -165,11 +170,12 @@ function shadowAll(obj) {
 }
 
 const errEl = document.getElementById('err');
-const api = { THREE, scene, world, camera, controls, bubble, shadowAll,
+const api = { THREE, scene, world, camera, controls, bubble, shadowAll, mood: lighting,
   report: msg => { errEl.textContent += (errEl.textContent ? '\n' : '') + msg; } };
 const err = document.getElementById('err');
 let current = null;
-window.__paperWorld = () => current;      // debug handle (inspection from devtools / tests)
+window.__paperWorld = () => current;      // debug handles (inspection from devtools / tests)
+window.__lighting = () => lighting;
 
 function clearWorld() {
   world.traverse(o => {
@@ -208,7 +214,7 @@ const stampOf = async f => {
 async function poll() {
   try {
     // the page itself changed (engine or style): reload fully (state is kept via sessionStorage)
-    const ps = (await stampOf(location.pathname)) + (await stampOf('sound.js')) + (await stampOf('camera.js'));
+    const ps = (await stampOf(location.pathname)) + (await stampOf('sound.js')) + (await stampOf('camera.js')) + (await stampOf('mood.js'));
     if (pageStamp === null) pageStamp = ps;
     else if (ps !== pageStamp) { try { sessionStorage.setItem('paperWorldState', JSON.stringify(current?.snapshot?.())); } catch {} location.reload(); return; }
 
@@ -356,6 +362,7 @@ function animate() {
     if (performance.now() > cardAt) { cardAt = performance.now() + 250; try { refreshCard(); } catch {} }
   }
   stepMorph();
+  lighting.update(clock.elapsedTime, dt);
   controls.update();
   renderer.render(scene, camera);
 }

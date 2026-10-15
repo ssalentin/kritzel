@@ -29,6 +29,9 @@ camera ──► frame ──► generation (generate/) ────────
 - **`viewer/index.html`** — the engine: renderer, lights, orbit camera, speech-bubble
   sprites, hot reload, the "new world" transition, click-to-follow a character, and the
   sound toggle. It polls the server and reloads only what changed.
+- **`viewer/mood.js`** — light and time of day: a drawn sun makes it day, a moon makes
+  it night, lamps and fires light their surroundings; with neither sun nor moon the world
+  sits in a soft dusk. Backdrop, light colours and lamps ease over a few seconds.
 - **`viewer/world.js`** — builds one world: the island plus every file in `things/`.
   Things can be added, changed or removed live; every character's position, mood and
   friendships survive reloads (even a full page reload, via `sessionStorage`).
@@ -128,12 +131,32 @@ export function build(ctx) {
     obstacles: [{ x: 2, z: 1, r: 0.8 }],// circles characters walk around
     spots: [],                          // { kind, x, z, lines } — doors, items, places to visit
     update(t, dt, env) {},              // optional per-frame animation
+    light: null,                        // optional: this thing is a light source (below)
   };
 }
 ```
 
+**Light sources.** A thing that gives light returns `light` (one object or a list):
+
+```js
+light: { kind: 'lamp', object3D: flame, color: 0xff8a3a, intensity: 1, range: 8, flicker: true }
+```
+
+- `kind`: `'sun'` makes it day, `'moon'` makes it night (sun wins if both are drawn),
+  `'lamp'` is any local light: lamp, lantern, candle, fire, glowing window.
+- `object3D`: where the light is (the flame, the bulb, the sun disc). The sun's or moon's
+  position also sets where shadows fall. Without it the light sits on top of the thing.
+- Lamps only: `color` (default warm `0xffa54a`), `intensity` (0–5, default 1; 2–3 for a
+  lamp up high, such as a lantern on a post, so it still pools light on the ground), `range`
+  (default 8), `flicker` (for fire and candles). Lamps shine brighter at night and
+  barely by day; only the first two cast shadows. At most 3 lamps per thing and 8 in all
+  light up (the rest stay dark, with a note in the error box); `range` is kept to 0.5–20.
+
+Make the light's own mesh glow with an emissive material (`mat(c, { emissive, emissiveIntensity })`).
+
 `ctx` also carries `rand` (seeded), `limb`, `pond`, `trees`, `SUN_POS`, `islandR`
-(6.9) and `env` (`env.actors` lists who is around). A thing that throws is reported in
+(6.9) and `env` (`env.actors` lists who is around, `env.night` goes from 0 by day to 1
+at night, `env.lamps` lists where lamps and fires stand). A thing that throws is reported in
 the on-screen error box; the rest of the world keeps running.
 
 ## Generation
