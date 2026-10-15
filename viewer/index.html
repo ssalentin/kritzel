@@ -19,6 +19,16 @@
   #card .rel { margin-top: 4px; font-size: 13px; }
   #snd { position: fixed; right: 16px; top: 12px; font: 13px system-ui, sans-serif; color: var(--fg); background: var(--panel);
     border: 0; border-radius: 10px; padding: 6px 10px; cursor: pointer; opacity: .8; }
+  #camBtn { position: fixed; right: 124px; top: 12px; font: 13px system-ui, sans-serif; color: var(--fg); background: var(--panel);
+    border: 0; border-radius: 10px; padding: 6px 10px; cursor: pointer; opacity: .8; }
+  #cam { position: fixed; right: 16px; top: 48px; width: min(300px, calc(100vw - 32px)); box-sizing: border-box;
+    background: var(--panel); border-radius: 10px; padding: 8px; display: grid; gap: 6px; }
+  #cam[hidden] { display: none; }
+  #cam .row { display: flex; gap: 6px; }
+  #cam select { flex: 1; min-width: 0; font: inherit; }
+  #cam video, #cam img { width: 100%; border-radius: 6px; background: #0002; }
+  #cam .note { font-size: 12px; opacity: .75; }
+  #cam .note:empty { display: none; }
   #veil { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none;
     background: radial-gradient(circle at 50% 45%, rgba(255,255,255,.88), rgba(191,227,221,.92));
     opacity: 0; transition: opacity .6s ease; font: 600 22px system-ui, sans-serif; color: #2c4a44; }
@@ -42,6 +52,13 @@
 <div id="hint">Tippe eine Figur an, um ihr mit der Kamera zu folgen · Esc beendet</div>
 <div id="card"></div>
 <button id="snd" type="button" aria-pressed="false">🔇 Ton an</button>
+<button id="camBtn" type="button">📷 Kamera</button>
+<div id="cam" hidden>
+  <div class="row"><select aria-label="Kamera"></select><button class="refresh" type="button" title="Neu suchen">↻</button></div>
+  <video autoplay muted playsinline hidden></video>
+  <img alt="Kamerabild" hidden>
+  <div class="note"></div>
+</div>
 <script type="module">
 // Engine only: sky, ground, lights, camera, hot reload.
 // Everything that lives in the world comes from world.js, which is rewritten
@@ -191,7 +208,7 @@ const stampOf = async f => {
 async function poll() {
   try {
     // the page itself changed (engine or style): reload fully (state is kept via sessionStorage)
-    const ps = (await stampOf(location.pathname)) + (await stampOf('sound.js'));
+    const ps = (await stampOf(location.pathname)) + (await stampOf('sound.js')) + (await stampOf('camera.js'));
     if (pageStamp === null) pageStamp = ps;
     else if (ps !== pageStamp) { try { sessionStorage.setItem('paperWorldState', JSON.stringify(current?.snapshot?.())); } catch {} location.reload(); return; }
 
@@ -245,6 +262,11 @@ import('./sound.js?v=' + Date.now()).then(m => {
   if (want) addEventListener('pointerdown', async () => { if (!sound.enabled) { await sound.setEnabled(true); show(); } }, { once: true });
   show();
 }).catch(e => { document.getElementById('err').textContent = 'sound.js: ' + e.message; });
+
+// camera picker (local or network cameras) with a small live preview
+import('./camera.js?v=' + Date.now())
+  .then(m => m.cameraPicker({ button: document.getElementById('camBtn'), panel: document.getElementById('cam') }))
+  .catch(e => { document.getElementById('err').textContent = 'camera.js: ' + e.message; });
 
 // click a character to follow it with the camera; Esc or a click on empty ground stops
 const card = document.getElementById('card');

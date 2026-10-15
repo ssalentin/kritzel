@@ -70,6 +70,19 @@ Useful URL parameter: `?cam=x,y,z,tx,ty,tz` pins the camera (handy for screensho
 light). The mpv IPC socket (`mpv.sock`) lets a watcher grab frames while the window is
 open. Needs Linux, `mpv` and a camera.
 
+### Choosing a camera
+
+The 📷 button in the viewer opens a camera picker with a live preview:
+
+- **Dieser Computer:** cameras of the machine the browser runs on. Browsers allow
+  this only on `https://` or `localhost`.
+- **Im Netzwerk:** cameras on any online Tailscale peer that runs
+  `python3 scripts/camera_server.py` (port 8766; Linux, V4L2 and ffmpeg). The viewer's
+  server finds them and passes the streams through, so they work under https too.
+
+The choice is stored in `camera.json` at the repository root for the capture stage.
+`HOST`/`PORT` env vars change where `viewer/serve.py` listens.
+
 ### Starting a new sheet
 
 ```bash
