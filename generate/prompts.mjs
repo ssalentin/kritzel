@@ -15,7 +15,7 @@ Reply NOTHING if nothing changed that matters (blank paper, or only drawings alr
 <one line: what was taken away> (only when you are shown a before picture and the thing's drawing is in it: now it is erased, struck through, crossed out with an X, or scribbled over. A crossed-out WORD next to a drawing is not a removal: that renames the drawing. Colouring in, hatching or shading inside a drawing whose lines are still there is not a removal either: that is an UPDATE, the drawing got colour)
 ### UNCLEAR
 <what you see> | <what it could be>
-Use UNCLEAR for a mark that could be many things (a bare outline, a scribble, a lone line). Do not guess: a wrong thing on the island is worse than none.
+Anything with a face (eyes, a mouth) is a creature: build it from its own outline (a diamond with a face is a diamond-bodied creature) and, if it has no label, name it after its shape ("Rauti" for a diamond, "Kringel" for a round one). Use UNCLEAR only for scribbles, noise and marks with no recognisable subject at all (a bare outline without a face, a lone line). Do not guess there: a wrong thing on the island is worse than none.
 
 Reading a drawing: strokes that touch or connect are one thing. Prefer the reading as one creature over several separate figures. A small circle with a dot in it is an eye. Children draw by convention: an M or two joined arches is a bird with spread wings, a circle with rays is the sun, a zigzag cloud of loops is a cloud; build what the convention means (wings that flap, not legs). A stick figure has a head, a body line, and arms or legs; do not call something a stick figure without them. If your reading leaves drawn strokes unexplained, it is the wrong reading: find one that explains every stroke, or answer UNCLEAR.
 
