@@ -301,7 +301,7 @@ export function tick(actors, { now, R, pick, line, say, rel, spots, nearest }, c
     if (a.followed && R() < 0.1) { a.anim = 'wave'; a.animStart = now(); a.animUntil = now() + 1.8; say(a, 'Hallo du da draußen!', 1.8); }
     if (a.goal?.type !== 'idle' || !calm(a) || R() > 0.25) continue;
     // alone and idle: a little thought
-    if (!actors.some(b => b !== a && dist(a, b) <= 6)) say(a, line(a, 'think'), 1.8);
+    if (!actors.some(b => b !== a && dist(a, b) <= 6)) say(a, '💭' + line(a, 'think'), 1.8);
     continue;
   }
   // curious: walk to a random thing and comment on it by name
