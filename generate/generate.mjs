@@ -160,13 +160,21 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, r
 }
 
 // ---------- watch frames/settled ----------
-// Frames already there at start are what things/ already shows: they are not generated again.
-// If several frames queued up while we worked, the newest shows the whole sheet; its changed_box
-// is only trusted if it was measured against the frame we last handled.
+// Resumes after the newest frame with a finished report in reportsDir, so frames capture wrote
+// while generate was down still get made. On a first run ever, the frames already there count as
+// what things/ shows. If several frames queued up, only the newest matters (it shows the whole
+// sheet); its changed_box is only trusted if it was measured against the frame we last handled.
+// A failing frame gets ATTEMPTS tries with backoff, then is marked failed; not logged in waits long.
+const ATTEMPTS = 3;
 async function watch(dir, opts) {
   const list = () => existsSync(dir) ? readdirSync(dir).filter(f => /^\d{8}-\d{6}\.jpg$/.test(f)).sort() : [];
-  let last = list().at(-1) || null;
-  log(`watching ${dir} → ${opts.thingsDir} (model ${MODEL}, fallback ${FALLBACK_MODEL})${last ? `; ${last} counts as done` : ''}`);
+  const done = f => { try { return !JSON.parse(readFileSync(join(opts.reportsDir, f.replace('.jpg', '.json')), 'utf8')).error; } catch { return false; } };
+  const frames = list();
+  let last = frames.findLast(done) || null;
+  if (!last && !readdirSync(opts.reportsDir).some(f => f.endsWith('.json'))) last = frames.at(-1) || null;
+  log(`watching ${dir} → ${opts.thingsDir} (model ${MODEL}, fallback ${FALLBACK_MODEL}); handled up to ${last || '(nothing)'}`);
+  const sleep = ms => new Promise(ok => setTimeout(ok, ms));
+  let tries = 0;
   for (;;) {
     const newest = list().at(-1);
     if (newest && newest !== last) {
@@ -180,10 +188,16 @@ async function watch(dir, opts) {
       }
       const box = side.previous && side.previous === last ? side.changed_box : null;
       const r = await processFrame(join(dir, newest), { ...opts, box });
-      if (r.error) { await new Promise(ok => setTimeout(ok, 20_000)); continue; }   // e.g. claude unreachable: retry
-      last = newest;
+      if (!r.error) { last = newest; tries = 0; continue; }
+      // claude missing for a moment: Claude Code updates itself in place (the binary is replaced), so
+      // pinning its path at startup would not help; wait and try the same frame again, not counted
+      if (/ENOENT/.test(r.error)) { await sleep(30_000); continue; }
+      if (/not logged in|401|authenticat/i.test(r.error)) { log('claude is not logged in: waiting 10 min'); await sleep(600_000); continue; }
+      if (++tries < ATTEMPTS) { await sleep(20_000 * 2 ** (tries - 1)); continue; }
+      log(`${newest}: FAILED after ${ATTEMPTS} attempts, moving on: ${r.error}`);
+      last = newest; tries = 0;
     }
-    await new Promise(ok => setTimeout(ok, 300));
+    await sleep(300);
   }
 }
 
