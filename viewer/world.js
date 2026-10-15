@@ -72,6 +72,13 @@ export async function build(api, prevState = null) {
     if (!entry) return;
     for (const a of entry.actors) brain?.removeActor(a.id);
     api.mood?.set(file, []);
+    // things this one's actors hold go back to the world first, so they are not disposed with it
+    for (const e of loaded.values()) {
+      if (e === entry || !e.heldBy) continue;
+      let p = e.box.parent;
+      while (p && p !== entry.box) p = p.parent;
+      if (p === entry.box) { world.add(e.box); e.box.position.set(0, 0, 0); }
+    }
     entry.box.parent?.remove(entry.box);       // in the world, or in the hand of whoever held it
     entry.box.traverse(o => {
       o.geometry?.dispose();
@@ -94,7 +101,7 @@ export async function build(api, prevState = null) {
     const byId = brain.byId();
     for (const e of loaded.values()) {
       if (!e.heldBy) continue;
-      const g = byId[e.heldBy.actor]?.rig?.g, at = e.heldBy.at || [0, 1, 0.4];
+      const g = byId[e.heldBy.actor]?.rig?.g, at = Array.isArray(e.heldBy.at) && e.heldBy.at.length === 3 ? e.heldBy.at : [0, 1, 0.4];
       if (g && e.box.parent !== g) { g.add(e.box); e.box.position.set(...at); }
       else if (!g && e.box.parent !== world) { world.add(e.box); e.box.position.set(0, 0, 0); }
     }
