@@ -51,11 +51,19 @@ export async function build(api, prevState = null) {
   // ---------- placement: a NEW thing goes to a free spot near where it is on the paper ----------
   // Where each thing ended up is kept in things/placement.json (file → [dx, dz]), so a reload or
   // a second viewer puts it in the same place. Things that were there before keep their place.
-  let placed = {};
-  try { placed = await (await fetch('things/placement.json', { cache: 'no-store' })).json() || {}; } catch {}
-  const savePlace = (file, d) => {
+  // Once the file exists, a thing without an entry is new even if no viewer saw it arrive.
+  let placed = {}, tracking = false;
+  try { const r = await fetch('things/placement.json', { cache: 'no-store' }); if (r.ok) { placed = await r.json() || {}; tracking = true; } } catch {}
+  // the first viewer to save a spot wins: if another one was quicker, take its spot
+  const savePlace = async (file, d) => {
     if (d) placed[file] = d; else delete placed[file];
-    fetch('/api/placement', { method: 'PUT', body: JSON.stringify({ file, d }) }).catch(() => {});
+    try {
+      const win = await (await fetch('/api/placement', { method: 'PUT', body: JSON.stringify({ file, d }) })).json();
+      if (d && Array.isArray(win) && (win[0] !== d[0] || win[1] !== d[1]) && loaded.get(file)) {
+        shift(loaded.get(file), win[0] - d[0], win[1] - d[1]);
+        placed[file] = win;
+      }
+    } catch {}
   };
   // ground footprint of a thing (actors aside): centre and radius; null if it floats in the sky
   function footprint(box) {
@@ -85,33 +93,43 @@ export async function build(api, prevState = null) {
     const r = Math.hypot(x, z);
     return r > 5 ? { x: x * 5 / r, z: z * 5 / r } : { x, z };
   };
+  function shift(entry, dx, dz) {
+    entry.box.position.x += dx; entry.box.position.z += dz;
+    for (const o of [...entry.obstacles, ...entry.spots, ...entry.holds]) { o.x += dx; o.z += dz; }
+    for (const a of entry.actors) {
+      a.start = [(a.start?.[0] ?? 0) + dx, (a.start?.[1] ?? 0) + dz];
+      if (a.pos && brain) { a.pos.x += dx; a.pos.z += dz; }        // already walking: move along
+    }
+    if (entry.foot) { entry.foot.x += dx; entry.foot.z += dz; }
+  }
   function place(file, entry, meta, live) {
     // characters are placed by the sim in world coordinates: they leave the box, only their start moves
     entry.free = new THREE.Group();
     for (const a of entry.actors) if (a.rig?.g) entry.free.add(a.rig.g);
     world.add(entry.free);
     const foot = footprint(entry.box);
+    if (foot) entry.foot = { ...foot };
+    // held by a character (it hangs on the actor's rig): never placed. Holding characters (a jail
+    // drawn around someone): stays where it was drawn, or the relation would be lost
+    if (entry.heldBy) return;
     let d = placed[file];
-    if (!d && live && foot) {
+    const isNew = !d && (live || tracking);
+    if (isNew && (entry.holds.length || (!foot && !entry.actors.length))) d = [0, 0];
+    if (d && !placed[file]) savePlace(file, d);
+    if (!d && isNew && foot) {
       const p = meta?.paper;
       const wish = p && Number.isFinite(p.x) && Number.isFinite(p.y) ? fromPaper(p) : foot;
-      const spot = api.claimSpot?.() || freeSpot(wish.x, wish.z, foot.r, file);
+      const spot = (live && api.claimSpot?.()) || freeSpot(wish.x, wish.z, foot.r, file);
       d = [+(spot.x - foot.x).toFixed(2), +(spot.z - foot.z).toFixed(2)];
       savePlace(file, d);
-    } else if (!d && live && entry.actors.length) {      // a creature on its own: start it at a free spot
+    } else if (!d && isNew && entry.actors.length) {     // a creature on its own: start it at a free spot
       const p = meta?.paper, wish = p ? fromPaper(p) : { x: 0, z: 0 };
-      const spot = api.claimSpot?.() || freeSpot(wish.x, wish.z, 0.5, file);
+      const spot = (live && api.claimSpot?.()) || freeSpot(wish.x, wish.z, 0.5, file);
       const s = entry.actors[0].start || [0, 0];
       d = [+(spot.x - s[0]).toFixed(2), +(spot.z - s[1]).toFixed(2)];
       savePlace(file, d);
     }
-    if (foot) entry.foot = { ...foot };
-    if (!d) return;
-    const [dx, dz] = d;
-    entry.box.position.x += dx; entry.box.position.z += dz;
-    for (const o of [...entry.obstacles, ...entry.spots, ...entry.holds]) { o.x += dx; o.z += dz; }
-    for (const a of entry.actors) a.start = [(a.start?.[0] ?? 0) + dx, (a.start?.[1] ?? 0) + dz];
-    if (entry.foot) { entry.foot.x += dx; entry.foot.z += dz; }
+    if (d) shift(entry, d[0], d[1]);
   }
 
   async function loadThing(file, states, live = false) {
@@ -178,7 +196,6 @@ export async function build(api, prevState = null) {
       else if (!g && e.box.parent !== world) { world.add(e.box); e.box.position.set(0, 0, 0); }
     }
   }
-
 
   const listing = await (await fetch('things/', { cache: 'no-store' })).text();
   for (const [, file] of listing.matchAll(/href="([\w.-]+\.js)"/g)) await loadThing(file);

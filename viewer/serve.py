@@ -198,12 +198,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             assert d is None or (isinstance(d, list) and len(d) == 2 and all(isinstance(v, (int, float)) and abs(v) < 20 for v in d))
         except (ValueError, AssertionError, KeyError, TypeError):
             return self.json({"error": "expected {file: name.js, d: [dx, dz] | null}"}, 400)
-        path = ROOT / "viewer" / "things" / "placement.json"
+        things = ROOT / "viewer" / "things"
+        path = things / "placement.json"
         with PLACEMENT_LOCK:
             try:
                 placed = json.loads(path.read_text())
             except (OSError, ValueError):
-                placed = {}
+                # first placement in this world: everything already standing stays where it is
+                placed = {f.name: [0, 0] for f in things.glob("*.js") if f.name != file}
+            placed = {f: v for f, v in placed.items() if (things / f).exists() or f == file}   # gone things free their name
             if d is None:
                 placed.pop(file, None)
             elif file not in placed and len(placed) < 500:
