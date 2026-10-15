@@ -94,7 +94,8 @@ server and waits until the picture holds still. When the sheet shows something n
 writes `frames/settled/<YYYYmmdd-HHMMSS>.json` and then the camera's frame as
 `<same>.jpg`. The JSON gives `previous` (the last frame handed on), `reason` (`drawn`, or
 `big-change` for a new or moved sheet), and `changed_box` (where the change is, in
-pixels). Nothing is written while a hand moves over the paper or when nothing changed.
+pixels). Nothing is written while a hand moves over the paper or when nothing changed. Watch for the
+`.jpg`: it is renamed in last, so its `.json` is always there already.
 
 ### Starting a new sheet
 

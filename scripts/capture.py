@@ -31,8 +31,7 @@ OUT = ROOT / "frames" / "settled"
 VIEWER = os.environ.get("VIEWER", "http://127.0.0.1:8765")
 W, H = 320, 180          # compare at this size: averages away sensor noise, keeps pencil lines
 PIXEL = 20               # brightness step (0-255) that counts as a changed pixel
-MOVING = 0.002           # share of pixels changed between two samples that means "something moves"
-NEW_PX = 15              # changed pixels vs the last handed-on sheet that make it new
+NEW_PX = 15              # changed pixels that count: vs the still picture = movement, vs the last sheet = new
 BIG = 0.04               # share changed that is a big change, not drawing
 STILL_S, BIG_S, EVERY_S = 3.0, 8.0, 0.5
 MAX_BYTES = 20 << 20
@@ -56,29 +55,31 @@ def jpeg_size(data):
 
 def small(data):
     """Grey W×H thumbnail, brightness centred on its median (so exposure drift is no change)."""
-    px = subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "jpeg_pipe", "-i", "-", "-vf",
-                         f"format=gray,scale=960:540:flags=area,erosion,erosion,scale={W}:{H}:flags=area", "-f", "rawvideo", "-"],
-                        input=data, capture_output=True, timeout=10).stdout
+    try:
+        px = subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "jpeg_pipe", "-i", "-", "-vf",
+                             f"format=gray,scale=960:540:flags=area,erosion,erosion,scale={W}:{H}:flags=area",
+                             "-f", "rawvideo", "-"], input=data, capture_output=True, timeout=10).stdout
+    except (subprocess.SubprocessError, OSError) as e:
+        print(f"ffmpeg: {e}", file=sys.stderr, flush=True)
+        return None
     if len(px) != W * H:
         return None
     m = statistics.median(px[::7])
     return [p - m for p in px]
 
 
-def changed(a, b):
-    return [i for i, (x, y) in enumerate(zip(a, b)) if abs(x - y) > PIXEL]
-
-
 def envelope(thumb):
     """Darkest and brightest value around each pixel (3×3), so a camera that shifts by a
     pixel doesn't make the lines already on the sheet look new."""
-    lo, hi = [], []
-    for i in range(W * H):
-        x, y = i % W, i // W
-        near = [thumb[v * W + u] for v in range(max(y - 1, 0), min(y + 2, H)) for u in range(max(x - 1, 0), min(x + 2, W))]
-        lo.append(min(near))
-        hi.append(max(near))
-    return lo, hi
+    def pool(f):
+        rows = []
+        for y in range(H):
+            r = thumb[y * W:(y + 1) * W]
+            r = [r[0]] + r + [r[-1]]
+            rows.append(list(map(f, r, r[1:], r[2:])))
+        rows = [rows[0]] + rows + [rows[-1]]
+        return [v for a, b, c in zip(rows, rows[1:], rows[2:]) for v in map(f, a, b, c)]
+    return pool(min), pool(max)
 
 
 def new_marks(thumb, env):
@@ -86,20 +87,19 @@ def new_marks(thumb, env):
 
 
 class Detector:
-    """Feed it snapshots; it returns (reason, changed_indices) when a new sheet has settled."""
+    """Feed it snapshots; it returns (reason, changed_indices) when a new sheet has settled.
+
+    Stillness is measured against the picture at the start of the still spell (the anchor),
+    not the previous sample, so slow drawing or a creeping shadow also restarts the wait."""
 
     def __init__(self, baseline=None):
         self.baseline = baseline and envelope(baseline)
-        self.last = self.still_since = None
+        self.anchor = self.still_since = None
 
     def feed(self, thumb, t):
-        moving = self.last is None or len(changed(thumb, self.last)) > MOVING * W * H
-        self.last = thumb
-        if moving:
-            self.still_since = None
+        if self.anchor is None or len(new_marks(thumb, self.anchor)) >= NEW_PX:
+            self.anchor, self.still_since = envelope(thumb), t
             return None
-        if self.still_since is None:
-            self.still_since = t
         if self.baseline is None:
             diff = list(range(W * H))
         else:
@@ -109,7 +109,7 @@ class Detector:
         big = len(diff) > BIG * W * H
         if t - self.still_since < (BIG_S if big else STILL_S):
             return None
-        self.baseline = envelope(thumb)
+        self.baseline, self.still_since = self.anchor, t
         return ("big-change" if big else "drawn"), diff
 
 
@@ -164,7 +164,7 @@ def main():
             url = ""
             continue
         if cam[0] != url:
-            url, det.last = cam[0], None
+            url, det.anchor = cam[0], None
             print(f"watching {cam[1]['name']} on {cam[1]['host']}", flush=True)
         try:
             with urllib.request.urlopen(url, timeout=10) as r:
