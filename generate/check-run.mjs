@@ -93,6 +93,8 @@ async function buildCheck(file, takenIds) {
       if (!h?.actor || !num(h.x) || !num(h.z) || !num(h.r) || h.r <= 0) { problems.push('holds need { actor, x, z, r } with r > 0'); continue; }
       if (!takenIds.includes(h.actor) && !actors.some(a => a?.id === h.actor)) problems.push(`holds names actor "${h.actor}", which is on the island nowhere`);
       if (h.r < 0.4) problems.push(`holds "${h.actor}" in r=${h.r}: too small to move in (at least 0.4)`);
+      if (obstacles.some(o => num(o?.r) && o.r >= 0.5 * h.r && Math.hypot(o.x - h.x, o.z - h.z) < o.r))
+        problems.push(`holds "${h.actor}" has no room inside: an obstacle covers its centre; model the walls as a ring of small obstacles`);
     }
     // light (the engine's light contract): one object or a list of { kind, object3D, color, intensity, range, flicker }
     const lights = r.light == null ? [] : [].concat(r.light);
