@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paper World</title>
+<style>
+  :root { --bg: #bfe3dd; --fg: #10202e; --panel: rgba(255,255,255,.78); }
+  html, body { margin: 0; height: 100%; background: radial-gradient(ellipse at 50% 42%, #d9f1ec 0%, var(--bg) 55%, #a8d4cc 100%); color: var(--fg); overflow: hidden;
+    font: 14px/1.45 system-ui, sans-serif; }
+  #hud { position: fixed; left: 16px; top: 12px; max-width: min(560px, calc(100vw - 32px));
+    background: var(--panel); border-radius: 10px; padding: 8px 12px; pointer-events: none; }
+  #hud:has(#err:empty) { display: none; }
+  #err { color: #b3261e; white-space: pre-wrap; }
+  #hint { position: fixed; left: 16px; bottom: 12px; opacity: .6; font-size: 13px; pointer-events: none; }
+  #card { position: fixed; right: 16px; bottom: 12px; max-width: min(280px, calc(100vw - 32px)); display: none;
+    background: var(--panel); border-radius: 10px; padding: 8px 12px; }
+  #card b { display: block; font-size: 15px; }
+  #card .rel { margin-top: 4px; font-size: 13px; }
+  #snd { position: fixed; right: 16px; top: 12px; font: 13px system-ui, sans-serif; color: var(--fg); background: var(--panel);
+    border: 0; border-radius: 10px; padding: 6px 10px; cursor: pointer; opacity: .8; }
+  #veil { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none;
+    background: radial-gradient(circle at 50% 45%, rgba(255,255,255,.88), rgba(191,227,221,.92));
+    opacity: 0; transition: opacity .6s ease; font: 600 22px system-ui, sans-serif; color: #2c4a44; }
+  #veil.on { opacity: 1; }
+  #veil .pen { display: inline-block; animation: draw 0.9s ease-in-out infinite alternate; }
+  #veil .dots::after { content: ''; animation: dots 1.2s steps(4) infinite; }
+  @keyframes draw { from { transform: translate(-14px, 4px) rotate(-12deg); } to { transform: translate(14px, -4px) rotate(8deg); } }
+  @keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+  "rot-js": "https://cdn.jsdelivr.net/npm/rot-js@2.2.1/+esm"
+} }
+</script>
+</head>
+<body>
+<div id="hud"><div id="err"></div></div>
+<div id="veil"><div><span class="pen">✏️</span> Neue Welt wird gemalt<span class="dots"></span></div></div>
+<div id="hint">Tippe eine Figur an, um ihr mit der Kamera zu folgen · Esc beendet</div>
+<div id="card"></div>
+<button id="snd" type="button" aria-pressed="false">🔇 Ton an</button>
+<script type="module">
+// Engine only: sky, ground, lights, camera, hot reload.
+// Everything that lives in the world comes from world.js, which is rewritten
+// whenever a new drawing appears on the paper.
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(devicePixelRatio);
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+// Littlest-Tokyo look: very soft (blurred) shadows, no tone-mapping curve → clean pastel colours
+renderer.shadowMap.type = THREE.VSMShadowMap;
+renderer.toneMapping = THREE.NoToneMapping;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+// Fixed style, modelled on the three.js "Littlest Tokyo" keyframes example:
+// a floating low-poly diorama on a soft mint backdrop, lit by a room environment.
+// (the mint backdrop is a soft CSS gradient behind the transparent canvas)
+scene.background = new THREE.Color(0xbfe3dd);   // the example's flat mint backdrop
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 300);
+camera.position.set(13, 5.8, 16.5);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.6, 0);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI * 0.62;
+controls.minDistance = 6;
+controls.maxDistance = 40;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.5;
+// ?cam=x,y,z,tx,ty,tz pins the view (handy for screenshots)
+const camQ = new URLSearchParams(location.search).get('cam')?.split(',').map(Number);
+if (camQ?.length === 6) { camera.position.set(...camQ.slice(0, 3)); controls.target.set(...camQ.slice(3)); controls.autoRotate = false; }
+
+// light comes mostly from the room environment (as in the example); the sun only adds soft shadows
+scene.add(new THREE.HemisphereLight(0xfff4e6, 0x9cc7b8, 0.15));
+const sun = new THREE.DirectionalLight(0xfff1dc, 0.9);
+sun.position.set(8, 14, 6);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -11, right: 11, top: 11, bottom: -11 });
+sun.shadow.bias = -0.0005;
+sun.shadow.radius = 8;
+sun.shadow.blurSamples = 16;
+sun.shadow.normalBias = 0.02;
+scene.add(sun);
+// soft mint bounce light from below so the rocky underside of the island reads
+const bounce = new THREE.DirectionalLight(0xf2ead8, 0.25);
+bounce.position.set(-3, -10, 5);
+scene.add(bounce);
+
+// the floating island itself is built by island.js (part of the world, hot reloaded)
+
+const world = new THREE.Group();
+scene.add(world);
+
+// speech bubble / label sprite, attached to an object
+function bubble(parent, y, { name = false } = {}) {
+  const cv = document.createElement('canvas');
+  const ctx = cv.getContext('2d');
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ depthTest: false, transparent: true }));
+  sprite.renderOrder = 10;
+  sprite.visible = false;            // hidden until there is something to say
+  sprite.position.y = y;
+  parent.add(sprite);
+  let last = null;
+  return {
+    sprite,
+    say(text) {
+      if (text === last) return;
+      last = text;
+      sprite.visible = !!text;
+      if (!text) return;
+      if (!name) sound?.speak(parent, text);   // a speech bubble: soft babble
+      const font = name ? '600 44px system-ui' : '600 40px system-ui';
+      ctx.font = font;
+      const w = Math.ceil(ctx.measureText(text).width) + 48, h = 76;
+      cv.width = w; cv.height = h + (name ? 0 : 18);
+      ctx.font = font;
+      ctx.fillStyle = name ? 'rgba(20,30,45,.82)' : '#fff';
+      ctx.beginPath(); ctx.roundRect(2, 2, w - 4, h - 4, 30); ctx.fill();
+      if (!name) { ctx.beginPath(); ctx.moveTo(w / 2 - 14, h - 4); ctx.lineTo(w / 2, h + 16); ctx.lineTo(w / 2 + 14, h - 4); ctx.fill(); }
+      ctx.fillStyle = name ? '#fff' : '#152030';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(text, w / 2, h / 2 + 1);
+      sprite.material.map?.dispose();
+      const tex = new THREE.CanvasTexture(cv);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      sprite.material.map = tex;
+      sprite.material.needsUpdate = true;
+      const s = 0.0085;
+      sprite.scale.set(cv.width * s, cv.height * s, 1);
+      sprite.center.set(0.5, 0);
+    },
+  };
+}
+
+function shadowAll(obj) {
+  obj.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+}
+
+const errEl = document.getElementById('err');
+const api = { THREE, scene, world, camera, controls, bubble, shadowAll,
+  report: msg => { errEl.textContent += (errEl.textContent ? '\n' : '') + msg; } };
+const err = document.getElementById('err');
+let current = null;
+window.__paperWorld = () => current;      // debug handle (inspection from devtools / tests)
+
+function clearWorld() {
+  world.traverse(o => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) [].concat(o.material).forEach(m => { m.map?.dispose(); m.dispose(); });
+  });
+  world.clear();
+}
+
+// characters' state (positions, moods, friendships) survives reloads — even a full page reload
+const loadSaved = () => { try { return JSON.parse(sessionStorage.getItem('paperWorldState')); } catch { return null; } };
+setInterval(() => { try { const st = current?.snapshot?.(); if (st) sessionStorage.setItem('paperWorldState', JSON.stringify(st)); } catch {} }, 2000);
+
+async function load() {
+  try {
+    const mod = await import('./world.js?v=' + Date.now());
+    const prev = current?.snapshot?.() || loadSaved();
+    current = null;
+    clearWorld();
+    scene.scale.setScalar(1);          // things (e.g. a snow globe) may rescale the scene; reset on reload
+    scene.position.set(0, 0, 0);
+    err.textContent = '';
+    const next = await mod.build(api, prev);
+    current = next;
+  } catch (e) {
+    err.textContent = 'world.js: ' + e.message;
+  }
+}
+
+const CORE = ['world.js', 'sim.js', 'sim-extra.js', 'island.js', 'characters.js'];
+let coreStamp = '', thingStamps = null, pageStamp = null;
+const stampOf = async f => {
+  const r = await fetch(f, { method: 'HEAD', cache: 'no-store' });
+  return r.ok ? (r.headers.get('last-modified') || '') + r.headers.get('content-length') : null;
+};
+async function poll() {
+  try {
+    // the page itself changed (engine or style): reload fully (state is kept via sessionStorage)
+    const ps = (await stampOf(location.pathname)) + (await stampOf('sound.js'));
+    if (pageStamp === null) pageStamp = ps;
+    else if (ps !== pageStamp) { try { sessionStorage.setItem('paperWorldState', JSON.stringify(current?.snapshot?.())); } catch {} location.reload(); return; }
+
+    const listing = await (await fetch('things/', { cache: 'no-store' })).text();
+    const files = [...listing.matchAll(/href="([\w.-]+\.js)"/g)].map(m => m[1]);
+    const stamps = new Map();
+    for (const f of files) stamps.set(f, await stampOf('things/' + f));
+    let core = '';
+    for (const f of CORE) core += (await stampOf(f)) + ';';
+
+    if (core !== coreStamp || !current) {
+      // engine pieces changed: rebuild everything, but carry the characters' state over
+      coreStamp = core; thingStamps = stamps;
+      if (!files.length && !morph) newWorldTransition(false);
+      else if (files.length && morph) releaseMorph();
+      await load();
+    } else {
+      // only drawn things changed: reload just those, everyone else keeps going
+      const changed = files.filter(f => thingStamps.get(f) !== stamps.get(f));
+      const removed = [...thingStamps.keys()].filter(f => !stamps.has(f));
+      if (removed.length && !files.length) newWorldTransition();   // all things gone at once: a new sheet, a new world
+      if (morph && files.length) releaseMorph();                    // the first thing of the new world is here
+      thingStamps = stamps;
+      if ((changed.length || removed.length) && current.reloadThings) {
+        err.textContent = '';             // stale errors from the previous version of a thing go away; new ones get reported again
+        try { await current.reloadThings(changed, removed); } catch (e) { err.textContent = 'things: ' + e.message; }
+      }
+    }
+  } catch {}
+  setTimeout(poll, 500);
+}
+poll();
+
+// sound on/off: audio needs a click first; a remembered "on" starts at the first click on the page
+// (sound.js is loaded with cache-busting; api.sound / ctx.sound.fx become available once it's ready)
+var sound = null;
+import('./sound.js?v=' + Date.now()).then(m => {
+  sound = m.createSound(THREE, camera);
+  api.sound = sound;
+  const btn = document.getElementById('snd');
+  // the label says what a click will do
+  const show = () => { btn.textContent = sound.enabled ? '🔊 Ton aus' : '🔇 Ton an'; btn.setAttribute('aria-pressed', String(sound.enabled)); };
+  btn.addEventListener('click', async e => {
+    e.stopPropagation();
+    await sound.setEnabled(!sound.enabled);
+    try { localStorage.setItem('paperWorldSound', sound.enabled ? '1' : '0'); } catch {}
+    show();
+  });
+  let want = false;
+  try { want = localStorage.getItem('paperWorldSound') === '1'; } catch {}
+  if (want) addEventListener('pointerdown', async () => { if (!sound.enabled) { await sound.setEnabled(true); show(); } }, { once: true });
+  show();
+}).catch(e => { document.getElementById('err').textContent = 'sound.js: ' + e.message; });
+
+// click a character to follow it with the camera; Esc or a click on empty ground stops
+const card = document.getElementById('card');
+const ray = new THREE.Raycaster(), ptr = new THREE.Vector2();
+const canvas = renderer.domElement;
+let focus = null, downAt = null, cardAt = 0;
+const actorsNow = () => { try { return current?.brain?.()?.actors() || []; } catch { return []; } };
+const isUnder = (o, root) => { for (; o; o = o.parent) if (o === root) return true; return false; };
+canvas.addEventListener('pointerdown', e => { downAt = [e.clientX, e.clientY]; });
+canvas.addEventListener('pointerup', e => {
+  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) return;   // a drag, not a click
+  const r = canvas.getBoundingClientRect();
+  ptr.set((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1);
+  ray.setFromCamera(ptr, camera);
+  const hit = ray.intersectObjects(world.children, true)[0]?.object;
+  focus = (hit && actorsNow().find(a => isUnder(hit, a.rig.g))) || null;
+  cardAt = 0;
+  if (!focus) card.style.display = 'none';
+});
+addEventListener('keydown', e => { if (e.key === 'Escape') { focus = null; card.style.display = 'none'; } });
+
+const ACTIVITY = { wander: 'läuft herum', swim: 'schwimmt', rest: 'ruht sich aus', idle: 'schaut sich um', eat: 'isst',
+  follow: 'folgt jemandem', flee: 'rennt weg', approach: 'geht auf jemanden zu', chase: 'jagt jemanden' };
+function mood(a) {
+  if (a.fear > 0.4) return 'ängstlich';
+  if (a.energy < 0.3) return 'müde';
+  if (a.hunger > 0.6) return 'hungrig';
+  return 'fröhlich';
+}
+// who this character likes or avoids, by name (♥ friends, Angst vor ...)
+function relations(a, byId) {
+  const nameOf = id => byId[id]?.name ?? id;
+  const list = Object.entries(a.rel || {}).filter(([id]) => byId[id]).sort((p, q) => q[1] - p[1]);
+  const out = [];
+  for (const [id, v] of list.slice(0, 2)) if (v > 0.3) out.push(`♥ ${nameOf(id)}`);
+  for (const [id, v] of list.slice(-2).reverse()) if (v < -0.2) out.push(a.fears?.includes(id) ? `Angst vor ${nameOf(id)}` : `mag ${nameOf(id)} nicht`);
+  return out;
+}
+function refreshCard() {
+  const alive = focus && actorsNow().includes(focus);
+  if (focus && !alive) focus = null;
+  if (!focus) { card.style.display = 'none'; return; }
+  const a = focus, byId = current.brain().byId();
+  const lines = [`${mood(a)}, ${ACTIVITY[a.goal?.type] || 'steht da'}`, ...relations(a, byId)];
+  card.replaceChildren(...lines.map((t, i) => { const el = document.createElement(i ? 'div' : 'b'); if (i) el.className = 'rel'; el.textContent = i ? t : (a.name ?? a.id) + ': ' + t; return el; }));
+  card.style.display = 'block';
+}
+function followFocus() {
+  const p = new THREE.Vector3(focus.pos.x, 0.6, focus.pos.z);
+  const d = p.sub(controls.target).multiplyScalar(0.08);   // ease toward the character, keeping the user's view angle
+  controls.target.add(d); camera.position.add(d);
+}
+
+// ---------- new-world transition: old island shrinks away, veil, new island grows in ----------
+const veil = document.getElementById('veil');
+// the veil stays up until the first drawn thing of the new world has arrived
+let morph = null;                      // { t0, release }
+function newWorldTransition(shrink = true) {
+  morph = { t0: performance.now() - (shrink ? 0 : 800), release: null };
+  veil.classList.add('on');
+  if (shrink) sound?.fx('melodie');
+}
+function releaseMorph() { if (morph && !morph.release) morph.release = Math.max(performance.now(), morph.t0 + 1200); }
+function stepMorph() {
+  if (!morph) return;
+  const now = performance.now(), t = (now - morph.t0) / 1000;
+  let s = 0;
+  if (t < 0.8) s = 1 - (t / 0.8) ** 2;                       // shrink away
+  if (morph.release && now >= morph.release) {
+    const k = Math.min(1, (now - morph.release) / 1200);      // grow back with a little bounce
+    s = 1 + Math.sin(k * Math.PI) * 0.12 * (1 - k) - (1 - k) ** 3;
+    veil.classList.remove('on');
+    if (k >= 1) { s = 1; morph = null; }
+  }
+  world.scale.setScalar(Math.max(0.0001, s));
+  world.rotation.y = (1 - Math.min(1, s)) * 1.2;
+}
+
+const clock = new THREE.Clock();
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  try { current?.update?.(clock.elapsedTime, dt); } catch (e) { err.textContent = 'update: ' + e.message; }
+  for (const a of actorsNow()) a.followed = a === focus;   // the followed character waves at the viewer (sim)
+  if (focus) {
+    if (actorsNow().includes(focus)) followFocus(); else focus = null;
+    if (performance.now() > cardAt) { cardAt = performance.now() + 250; try { refreshCard(); } catch {} }
+  }
+  stepMorph();
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

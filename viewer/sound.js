@@ -1,0 +1,125 @@
+// Procedural sound for the paper world (Web Audio API, no sound files).
+// Off until the user presses the button (browsers only allow audio after a gesture).
+//  - every speech bubble babbles softly, Animal-Crossing style, with a pitch per speaker
+//  - some words trigger little effects (Quak, Piep, Buh, Mampf, Juhu …)
+//  - a very quiet wind bed in the background
+//  - sounds are panned/attenuated by where the speaker is relative to the camera
+// Two ways to use it (both reach the same single instance):
+//  - engine/things: createSound(THREE, camera) → .speak(obj, text), .fx(name, obj), .setEnabled(on)
+//  - sim: import { sound } from './sound.js'; sound.at(obj).mampf()   (plop, tune, buh, chirp, …)
+export function createSound(THREE, camera) {
+  let ctx = null, master = null, wind = null, enabled = false;
+  const v = new THREE.Vector3();
+
+  function init() {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    master = ctx.createGain();
+    master.gain.value = 0.55;
+    const comp = ctx.createDynamicsCompressor();
+    master.connect(comp).connect(ctx.destination);
+    // wind: looping filtered noise with a slow swell
+    const len = ctx.sampleRate * 4, buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < len; i++) { last = last * 0.98 + (Math.random() * 2 - 1) * 0.02; d[i] = last * 4; }
+    const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 420;
+    wind = ctx.createGain(); wind.gain.value = 0.05;
+    const lfo = ctx.createOscillator(), lfoGain = ctx.createGain();
+    lfo.frequency.value = 0.07; lfoGain.gain.value = 0.03;
+    lfo.connect(lfoGain).connect(wind.gain);
+    src.connect(lp).connect(wind).connect(master);
+    src.start(); lfo.start();
+  }
+
+  // stereo pan + distance attenuation for a sound coming from an object
+  function spot(obj) {
+    const pan = ctx.createStereoPanner(), g = ctx.createGain();
+    if (obj?.getWorldPosition) {
+      obj.getWorldPosition(v);
+      const dist = v.distanceTo(camera.position);
+      v.applyMatrix4(camera.matrixWorldInverse);
+      pan.pan.value = Math.max(-0.9, Math.min(0.9, v.x / Math.max(4, -v.z || 4)));
+      g.gain.value = Math.max(0.12, Math.min(1, 14 / Math.max(1, dist)));
+    }
+    g.connect(pan).connect(master);
+    return g;
+  }
+
+  const env = (node, t0, a, peak, dur) => {
+    node.gain.setValueAtTime(0.0001, t0);
+    node.gain.exponentialRampToValueAtTime(peak, t0 + a);
+    node.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  };
+  function tone(out, t0, freq, dur, { type = 'triangle', peak = 0.18, slide = 0 } = {}) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t0);
+    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(40, freq * slide), t0 + dur);
+    env(g, t0, 0.012, peak, dur);
+    o.connect(g).connect(out); o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  function noise(out, t0, dur, freq, peak = 0.2) {
+    const len = Math.ceil(ctx.sampleRate * dur), buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const s = ctx.createBufferSource(); s.buffer = buf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = freq; bp.Q.value = 1.2;
+    const g = ctx.createGain(); env(g, t0, 0.01, peak, dur);
+    s.connect(bp).connect(g).connect(out); s.start(t0);
+  }
+
+  // pitch per speaker, stable across reloads (hash of the speaker's uuid/name)
+  const pitchOf = key => { let h = 0; for (const c of String(key)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return 200 + (h % 340); };
+
+  const FX = {
+    plopp: (o, t) => tone(o, t, 520, 0.12, { type: 'sine', peak: 0.3, slide: 0.45 }),
+    melodie: (o, t) => [523, 659, 784, 1047].forEach((f, i) => tone(o, t + i * 0.13, f, 0.16, { type: 'sine', peak: 0.16 })),
+    buh: (o, t) => { tone(o, t, 140, 0.45, { type: 'sawtooth', peak: 0.12, slide: 0.6 }); tone(o, t, 147, 0.45, { type: 'sine', peak: 0.15, slide: 0.6 }); },
+    mampf: (o, t) => { noise(o, t, 0.08, 900, 0.25); noise(o, t + 0.16, 0.08, 800, 0.22); },
+    piep: (o, t) => [0, 0.11, 0.22].forEach(d => tone(o, t + d, 2400 + Math.random() * 600, 0.07, { type: 'sine', peak: 0.1, slide: 1.4 })),
+    quak: (o, t) => { tone(o, t, 330, 0.16, { type: 'square', peak: 0.07, slide: 0.7 }); tone(o, t + 0.2, 300, 0.18, { type: 'square', peak: 0.07, slide: 0.65 }); },
+    staunen: (o, t) => tone(o, t, 300, 0.5, { type: 'sine', peak: 0.16, slide: 1.8 }),
+    rascheln: (o, t) => noise(o, t, 0.35, 3000, 0.08),
+    herz: (o, t) => { tone(o, t, 880, 0.12, { type: 'sine', peak: 0.12 }); tone(o, t + 0.12, 1320, 0.2, { type: 'sine', peak: 0.12 }); },
+  };
+  // other names used elsewhere map onto the same effects
+  const ALIAS = { plop: 'plopp', tune: 'melodie', chirp: 'piep', babble: null };
+  // words in a speech bubble that also trigger an effect
+  const WORDS = [
+    [/quak/i, 'quak'], [/piep|tschilp|zwitscher|tirili/i, 'piep'], [/\bbuh\b/i, 'buh'], [/mampf|lecker|mmh/i, 'mampf'],
+    [/^o+h*!*$|ooo/i, 'staunen'], [/juhu|juchhe|party|tanz/i, 'melodie'], [/fünf|five/i, 'plopp'], [/♥/, 'herz'], [/rasch|wurzel/i, 'rascheln'],
+  ];
+
+  const api = {
+    get enabled() { return enabled; },
+    async setEnabled(on) {
+      enabled = on;
+      if (on && !ctx) init();
+      if (ctx) { if (on) await ctx.resume(); else await ctx.suspend(); }
+    },
+    fx(name, obj) {
+      if (name in ALIAS) name = ALIAS[name];
+      if (!enabled || !ctx || !FX[name]) return;
+      FX[name](spot(obj), ctx.currentTime + 0.01);
+    },
+    // called for every new speech bubble
+    speak(obj, text) {
+      if (!enabled || !ctx || !text) return;
+      const out = spot(obj), t0 = ctx.currentTime + 0.01, base = pitchOf(obj?.uuid);
+      const n = Math.max(2, Math.min(7, Math.round(text.replace(/[^\p{L}]/gu, '').length / 3)));
+      for (let i = 0; i < n; i++) {
+        const f = base * (1 + (Math.random() - 0.4) * 0.35) * (text.endsWith('?') && i === n - 1 ? 1.3 : 1);
+        tone(out, t0 + i * 0.085, f, 0.075, { type: 'triangle', peak: 0.13 });
+      }
+      for (const [re, name] of WORDS) if (re.test(text)) { FX[name](out, t0 + n * 0.085 + 0.05); break; }
+    },
+  };
+  globalThis.__paperSound = api;     // one instance, shared with the `sound` export below
+  return api;
+}
+
+// sim-style access: sound.at(obj).mampf() — works no matter which copy of this module was imported
+export const sound = {
+  get on() { return !!globalThis.__paperSound?.enabled; },
+  at(obj) {
+    return new Proxy({}, { get: (_, name) => () => globalThis.__paperSound?.fx(String(name), obj) });
+  },
+};

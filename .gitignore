@@ -1,0 +1,12 @@
+# camera captures, test renders and scratch harnesses
+frames/
+*.jpg
+!worlds/**/*.jpg
+
+# runtime files
+*.log
+mpv.sock
+node_modules/
+
+# local Claude Code settings
+.claude/settings.local.json

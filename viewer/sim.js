@@ -1,0 +1,499 @@
+// Autonomous life on the island, driven by rot.js (ROguelike Toolkit):
+//  - the island is a grid; trees are walls, the pond is water (only Sqichy swims)
+//  - ROT.Scheduler.Speed decides whose turn it is (faster characters act more often)
+//  - ROT.FOV lets characters only notice who they can actually see (trees block sight)
+//  - ROT.Path.AStar walks them around obstacles
+//  - each character has needs (energy, social), a fear level, traits and relationships,
+//    and picks its next goal by utility; meeting someone triggers an interaction
+//    whose outcome changes the relationship.
+import * as ROT from 'rot-js';
+import { sound } from './sound.js';
+
+const N = 33, C = 16, CELL = 0.45, TICK = 0.13;
+
+const LINES = {
+  sun: { sqichy: ['He! Wer hat die Sonne geklaut?'], person: ['Brrr…', 'Nur eine Wolke!', 'Huch, dunkel!'] },
+  rest: { sqichy: ['*blubbert leise*'], person: ['Puh, kurze Pause.', 'Zzz…', '*gähnt*'] },
+  splash: { sqichy: ['Platsch!', 'Ahh, Wasser!'] },
+  scared: { person: ['Hilfe!', 'Bloß weg hier!', 'Iiieh!'] },
+  birds: { sqichy: ['Vögel! Blubb!', 'Kommt runter, Vögel!'], person: ['Schau, Vögel!', 'Die fliegen ja tief!', 'Hallo, Vögel!'] },
+  tagCaught: { person: ['Hab dich!', 'Erwischt!'] },
+};
+
+export function create({ THREE, actors, trees, pond, spots = [], islandR, states = null, seed = Date.now() % 100000, extra = null }) {
+  ROT.RNG.setSeed(seed);
+  const R = () => ROT.RNG.getUniform();
+  const pick = a => ROT.RNG.getItem(a);
+  const toWorld = (x, y) => [(x - C) * CELL, (y - C) * CELL];
+  const key = (x, y) => x + ',' + y;
+  const gap = (x1, y1, x2, y2) => Math.hypot(x1 - x2, y1 - y2) * CELL;
+
+  actors = actors.slice();               // the sim owns its list; things add/remove actors live
+  // ---------- terrain (rebuilt when drawn things add or remove obstacles) ----------
+  const terrain = new Map();
+  let groundCells = [], waterCells = [];
+  const fov = new ROT.FOV.PreciseShadowcasting((x, y) => terrain.has(key(x, y)));
+  function rebuildTerrain() {
+    terrain.clear();
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const [wx, wz] = toWorld(x, y);
+      if (Math.hypot(wx, wz) > islandR) continue;
+      if (trees.some(t => Math.hypot(wx - t.x, wz - t.z) < t.r)) continue;
+      terrain.set(key(x, y), Math.hypot(wx - pond.x, wz - pond.z) < pond.r - 0.2 ? 'water' : 'ground');
+    }
+    const cellsOf = kind => [...terrain].filter(([, v]) => v === kind).map(([k]) => k.split(',').map(Number));
+    groundCells = cellsOf('ground'); waterCells = cellsOf('water');
+    for (const a of actors) a._pass = null;
+  }
+  rebuildTerrain();
+
+  const nearestCell = (wx, wz, self) => {
+    let best = null, bd = 1e9;
+    for (const [x, y] of groundCells) {
+      if (self && (!passable(self)(x, y) || actors.some(o => o !== self && o.cell && gap(x, y, o.cell.x, o.cell.y) < self.radius + o.radius))) continue;   // big bodies must fit
+      const [cx, cz] = toWorld(x, y);
+      const d = Math.hypot(cx - wx, cz - wz);
+      if (d < bd) { bd = d; best = { x, y }; }
+    }
+    return best;
+  };
+
+  // ---------- actors ----------
+  const byId = {};
+  // st: optional saved state of this actor (kept across live reloads, so nobody resets)
+  function initActor(a, st) {
+    byId[a.id] = a;
+    a.kind = a.rig.kind;
+    a.speed ??= 1;
+    a.traits = { curiosity: 0.6, sociable: 0.6, bravery: 0.5, loyalty: 0, ...a.traits };
+    a.start ??= [0, 0];
+    a.radius ??= a.kind === 'squid' ? 0.85 : 0.08 + 0.32 * (a.rig.g.scale.x || 1);
+    a.cell = nearestCell(...a.start, a);
+    const [wx, wz] = toWorld(a.cell.x, a.cell.y);
+    a.pos = new THREE.Vector3(wx, 0, wz);
+    a.face = a.id === 'sqichy' ? -Math.PI / 2 : Math.PI / 2;
+    a.goal = null; a.goalSince = 0;
+    a.busyUntil = 0; a.anim = 'idle'; a.animStart = 0; a.animUntil = 0; a.partner = null;
+    a.hidden = false; a.rig.g.visible = true;      // restored characters are always back in view
+    a.energy = 0.7 + R() * 0.3; a.social = 0.6; a.fear = 0;
+    a.lastMet = {}; a.sayUntil = 0; a.hunger = R() * 0.5;
+    a.getSpeed = () => a.speed;
+    if (st) {
+      Object.assign(a, { energy: st.energy, social: st.social, fear: st.fear, hunger: st.hunger ?? a.hunger,
+        lastMet: {}, calmUntil: 0, face: st.face ?? a.face });   // saved times are from the old clock: forget them
+      const ok = passable(a);
+      if (st.cell && ok(st.cell.x, st.cell.y)) a.cell = st.cell;
+      a.pos.set(st.pos?.[0] ?? a.pos.x, 0, st.pos?.[1] ?? a.pos.z);
+      a.rig.g.rotation.y = a.face;
+    }
+  }
+  for (const a of actors) initActor(a, states?.[a.id]);
+  // starting relationships: companions love the wanderer, are a bit shy of the big squid;
+  // Sqichy is friendly (it said HALLO!) but likes a practice duel with strangers
+  for (const a of actors) {
+    a.rel = {};
+    for (const b of actors) if (a !== b) a.rel[b.id] = 0.1;
+  }
+  for (const k of ['tophat', 'spiky']) {
+    if (!byId[k] || !byId.wanderer) continue;
+    byId[k].rel.wanderer = 0.8; byId.wanderer.rel[k] = 0.8;
+    if (byId.sqichy) byId[k].rel.sqichy = -0.2;
+  }
+  if (byId.tophat && byId.spiky) byId.tophat.rel.spiky = byId.spiky.rel.tophat = 0.6;
+  // things can declare starting relationships and whom an actor is afraid of
+  function declaredRelations() {
+    for (const a of actors) {
+      for (const [id, v] of Object.entries(a.relations || {})) if (byId[id] && !a._relSet?.[id]) a.rel[id] = v;
+      for (const id of a.fears || []) if (byId[id] && !a._relSet?.[id]) a.rel[id] = Math.min(a.rel[id] ?? 0, -0.4);
+    }
+  }
+  declaredRelations();
+  // relationships that grew during play survive reloads
+  for (const a of actors) if (states?.[a.id]?.rel) { Object.assign(a.rel, states[a.id].rel); a._relSet = { ...states[a.id].rel }; }
+
+  const scheduler = new ROT.Scheduler.Speed();
+  for (const a of actors) scheduler.add(a, true);
+
+  // ---------- live changes from drawn things ----------
+  function addActor(a, st) {
+    actors.push(a);
+    initActor(a, st);
+    if (!st) X.inspect?.(a.pos.x, a.pos.z, a, api);   // a new drawing: the others come to look
+    a.rel = {};
+    for (const b of actors) if (b !== a) { a.rel[b.id] = 0.1; b.rel[a.id] ??= 0.1; }
+    if (st?.rel) { Object.assign(a.rel, st.rel); a._relSet = { ...st.rel }; }
+    declaredRelations();
+    scheduler.add(a, true);
+  }
+  function removeActor(id) {
+    const a = byId[id];
+    if (!a) return;
+    if (a.hidden && a.goal?.spot) a.goal.spot.occupants = Math.max(0, (a.goal.spot.occupants || 1) - 1);
+    scheduler.remove(a);
+    actors.splice(actors.indexOf(a), 1);
+    delete byId[id];
+    for (const o of actors) {
+      if (o.goal?.target === a) o.goal = null;
+      if (o.flee?.from === a) o.flee = null;
+      if (o.partner === a) o.partner = null;
+    }
+    for (let i = pending.length - 1; i >= 0; i--) if (pending[i].a === a) pending.splice(i, 1);
+  }
+  function snapshotOf(a) {
+    return { cell: a.cell, pos: [a.pos.x, a.pos.z], face: a.face, rel: a.rel, energy: a.energy, social: a.social,
+      fear: a.fear, hunger: a.hunger, lastMet: a.lastMet, calmUntil: a.calmUntil };
+  }
+
+  let now = 0, acc = 0, prevCover = 0, prevBirds = false, nextTick = 0, coverNow = 0;
+  const pending = [];
+
+  const say = (a, text, dur = 2.4, delay = 0) => pending.push({ a, text, at: now + delay, dur });
+  const line = (a, group) => {
+    if (a.lines?.[group]?.length) return pick(a.lines[group]);
+    const pool = LINES[group]?.[a.kind === 'squid' ? 'sqichy' : 'person'] || LINES[group]?.person;
+    return pool ? pick(pool) : '';
+  };
+  // bodies, not grid cells, must not overlap: every actor has a footprint radius (world units)
+  const blocked = (x, y, a, ignore) =>
+    actors.some(o => o !== a && o !== ignore && !o.hidden && gap(x, y, o.cell.x, o.cell.y) < a.radius + o.radius);
+  const near = (a, b, extra = 0.35) => gap(a.cell.x, a.cell.y, b.cell.x, b.cell.y) <= a.radius + b.radius + extra;
+  function passable(a) {
+    if (!a._pass) {
+      const ok = new Set();
+      for (const [k, t] of terrain) {
+        if (t === 'water' && !a.swims) continue;
+        const [x, y] = k.split(',').map(Number);
+        const [wx, wz] = toWorld(x, y);
+        // wide bodies keep clear of tree trunks too
+        if (trees.every(tr => Math.hypot(wx - tr.x, wz - tr.z) > tr.r + Math.max(0, a.radius - 0.25))) ok.add(k);
+      }
+      a._pass = (x, y) => ok.has(key(x, y));
+    }
+    return a._pass;
+  }
+  const dist = (a, b) => Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y));
+  const rel = (a, b) => a.rel[b.id] ?? 0;
+  const bond = (a, b, d) => {
+    a.rel[b.id] = Math.max(-1, Math.min(1, rel(a, b) + d));
+    b.rel[a.id] = Math.max(-1, Math.min(1, rel(b, a) + d));
+  };
+
+  function stepToward(a, tx, ty, target = null) {
+    const pass = passable(a);
+    const astar = new ROT.Path.AStar(tx, ty,
+      (x, y) => (x === a.cell.x && y === a.cell.y) || (x === tx && y === ty) || (pass(x, y) && !blocked(x, y, a, target)),
+      { topology: 8 });
+    const path = [];
+    astar.compute(a.cell.x, a.cell.y, (x, y) => path.push([x, y]));
+    if (path.length < 2) return false;
+    const [nx, ny] = path[1];
+    if (!pass(nx, ny) || blocked(nx, ny, a)) return !!target;   // someone in the way: wait a moment
+    a.cell = { x: nx, y: ny };
+    return true;
+  }
+
+  function stepAway(a, from) {
+    const pass = passable(a);
+    let best = null, bd = dist(a, from);
+    for (const [dx, dy] of ROT.DIRS[8]) {
+      const x = a.cell.x + dx, y = a.cell.y + dy;
+      if (!pass(x, y) || blocked(x, y, a)) continue;
+      const d = Math.max(Math.abs(x - from.cell.x), Math.abs(y - from.cell.y)) + R() * 0.5;
+      if (d > bd) { bd = d; best = { x, y }; }
+    }
+    if (best) a.cell = best;
+    return !!best;
+  }
+
+  function visible(a) {
+    const seen = [];
+    fov.compute(a.cell.x, a.cell.y, 12, (x, y) => {
+      for (const o of actors) if (o !== a && !o.hidden && o.cell.x === x && o.cell.y === y) seen.push(o);
+    });
+    return seen;
+  }
+
+  function decide(a) {
+    const opts = [];
+    const add = (u, goal) => opts.push({ u: u + R() * 0.3, goal });
+    add(0.3 + a.traits.curiosity * 0.35, { type: 'wander', cell: pick(groundCells) });
+    if (a.energy < 0.3) add(1.3 - a.energy, { type: 'rest', until: now + 20 });
+    // doors (drawn houses): go in to rest for a while; more often when tired or under clouds
+    X.options?.(a, add, api);                 // doors and items: see sim-extra.js
+    for (const sp of spots) if (sp.kind === 'egg' && !sp.found && spotCell(sp, a)) add(0.4 + a.traits.curiosity * 0.4, { type: 'eat', spot: sp, cell: spotCell(sp, a) });
+    // food from drawn things (e.g. the apple tree): go there when hungry
+    for (const sp of spots) if (sp.kind === 'food' && a.hunger > 0.5)
+      add(0.6 + a.hunger, { type: 'eat', spot: sp, cell: spotCell(sp, a) });
+    // sometimes just stand around and look about
+    add(0.25 + (1 - a.traits.curiosity) * 0.2, { type: 'idle', until: now + 1.5 + R() * 2.5 });
+    if (a.swims && waterCells.length) add(0.35 + (1 - a.energy) * 0.3, { type: 'swim', cell: pick(waterCells) });
+    for (const o of visible(a)) {
+      const r = rel(a, o);
+      // afraid of it and it's close: run! (fear fades as they get to know each other)
+      if (a.fears?.includes(o.id) && rel(a, o) < 0.45 && dist(a, o) < 6 && now > (a.calmUntil ?? 0)) {
+        add(2.5, { type: 'flee', target: o, until: now + 2.5 + R() * 1.5 });
+        a.calmUntil = now + 12;          // after a dash, stand and peek for a while (lets the other catch up)
+        if (R() < 0.5) say(a, line(a, 'scared'), 1.6);
+        continue;
+      }
+      if (now - (a.lastMet[o.id] ?? -99) < 10) continue;     // just talked; give it a rest
+      if (a.fear > 0.45 && r < 0.2) add(a.fear + 0.5, { type: 'flee', target: o, until: now + 3 });
+      else add(0.35 + a.social * a.traits.sociable * (0.8 + r) + (a.kind === 'squid' ? 0.3 : 0), { type: 'approach', target: o });
+    }
+    if (a.leader) {
+      const L = byId[a.leader];
+      if (L && dist(a, L) > 2) add(0.45 + a.traits.loyalty, { type: 'follow', target: L });
+    }
+    opts.sort((p, q) => q.u - p.u);
+    a.goal = opts[0].goal;
+    a.goalSince = now;
+    if (a.goal.type === 'rest') say(a, line(a, 'rest'), 2);
+  }
+
+  // a free walkable cell close to a spot (spots usually sit on an obstacle like a trunk)
+  function spotCell(sp, a) {
+    let best = null, bd = 1e9;
+    const pass = passable(a);
+    for (const [x, y] of groundCells) {
+      if (!pass(x, y)) continue;
+      const [wx, wz] = toWorld(x, y);
+      const d = Math.abs(Math.hypot(wx - sp.x, wz - sp.z) - 1.0) + R() * 0.3;
+      if (d < bd) { bd = d; best = [x, y]; }
+    }
+    return best;
+  }
+
+  function busy(a, partner, anim, dur) {
+    a.partner = partner; a.anim = anim; a.animStart = now; a.animUntil = now + dur; a.busyUntil = now + dur;
+    a.goal = null;
+  }
+
+  const X = extra || {};
+  Object.assign(LINES, X.LINES);
+  // what extra interactions get: the sim's helpers, so they stay generic
+  const api = { busy, say, line, bond, now: () => now, R, pick, rel, actors: () => actors, nearest: nearestCell, step: stepToward, pass: passable, spots: () => spots, spotCell, cover: () => coverNow, seen: (x, y) => { const c = new Set(); fov.compute(x, y, 12, (cx, cy) => c.add(cx + ',' + cy)); return c; } };
+  const INT = Object.fromEntries(Object.entries(X.INTERACTIONS || {}).map(([k, f]) => [k, (a, b) => f(a, b, api)]));
+
+  function interact(a, b) {
+    a.lastMet[b.id] = b.lastMet[a.id] = now;
+    const r = Math.min(rel(a, b), rel(b, a));
+    if (X.choose) INT[X.choose(a, b, r, api)](a, b);   // without sim-extra.js people just wander
+  }
+
+  function act(a) {
+    a.energy = Math.max(0, a.energy - 0.004);
+    a.hunger = Math.min(1, a.hunger + 0.003);
+    a.social = Math.min(1, a.social + 0.007);
+    a.fear = Math.max(0, a.fear - 0.008);
+    if (now < a.busyUntil) return;
+    a.partner = null;
+
+    // being chased in a game of tag
+    if (a.flee && now < a.flee.until) { if (!X.hide?.(a, a.flee.from, api)) stepAway(a, a.flee.from); return; }
+    a.flee = null;
+
+    if (!a.goal || (now - a.goalSince > 15 && !/visit|fetch|bring/.test(a.goal.type))) decide(a);
+    const g = a.goal;
+    switch (g.type) {
+      case 'wander':
+      case 'swim': {
+        const wasDry = terrain.get(key(a.cell.x, a.cell.y)) !== 'water';
+        if ((a.cell.x === g.cell[0] && a.cell.y === g.cell[1]) || !stepToward(a, g.cell[0], g.cell[1])) a.goal = null;
+        if (g.type === 'swim' && wasDry && terrain.get(key(a.cell.x, a.cell.y)) === 'water') say(a, line(a, 'splash'), 1.6);
+        break;
+      }
+      case 'rest':
+        a.energy += 0.016;
+        if (a.energy >= 0.8 || now > g.until) { a.goal = null; }   // rested enough: back to the world (keeps rests to about a fifth of the time)
+        break;
+      case 'eat': {
+        const [sx, sz] = toWorld(a.cell.x, a.cell.y);
+        if (Math.hypot(sx - g.spot.x, sz - g.spot.z) < 1.4) {
+          busy(a, null, 'talk', 2.6);
+          a.face = Math.atan2(g.spot.x - sx, g.spot.z - sz);
+          say(a, pick(g.spot.lines || ['Mmh!']), 2.2); sound.at(a.rig.g).mampf();
+          if (g.spot.kind === 'egg') { g.spot.found = true; a.eggs = (a.eggs || 0) + 1; } else { a.hunger = 0; a.energy = Math.min(1, a.energy + 0.35); }
+        } else if (!stepToward(a, g.cell[0], g.cell[1])) a.goal = null;
+        break;
+      }
+      case 'idle':
+        a.energy = Math.min(1, a.energy + 0.004);
+        if (R() < 0.02) { a.anim = pick(['lookup', 'wave', 'yawn', 'stretch']); a.animStart = now; a.animUntil = now + 1.8; }   // fidget
+        if (now > g.until) a.goal = null;
+        break;
+      case 'circle':                       // stand on a ring around the group's middle, then dance
+        if (now > g.until) { a.goal = null; break; }
+        if (a.cell.x === g.cell[0] && a.cell.y === g.cell[1]) { a.anim = 'dance'; a.animStart = now; a.animUntil = now + 0.3; }
+        else if (!stepToward(a, g.cell[0], g.cell[1])) a.goal = null;
+        break;
+      case 'follow':
+        if (near(a, g.target, 1.2) || !stepToward(a, g.target.cell.x, g.target.cell.y, g.target)) a.goal = null;
+        break;
+      case 'flee':
+        if (now > g.until || !stepAway(a, g.target)) a.goal = null;
+        break;
+      case 'visit': case 'fetch': case 'bring': X.visit?.(a, g, api); break;
+      case 'approach':
+        if (g.target.hidden) { a.goal = null; break; }
+        if (near(a, g.target, 0.9)) { interact(a, g.target); }   // wider margin: two bodies waiting on each other would deadlock
+        else if (!stepToward(a, g.target.cell.x, g.target.cell.y, g.target)) a.goal = null;
+        break;
+      case 'chase': {
+        const prey = g.target;
+        if (now > g.until) { a.goal = null; prey.flee = null; break; }
+        if (near(a, prey)) {
+          say(a, line(a, 'tagCaught'), 1.4);
+          prey.flee = null;
+          a.lastMet[prey.id] = prey.lastMet[a.id] = now;
+          bond(a, prey, 0.05);
+          if (g.rounds > 1) {              // roles swap: the caught one now chases
+            prey.goal = { type: 'chase', target: a, until: now + 8, rounds: g.rounds - 1 };
+            prey.busyUntil = now + 1;
+            a.flee = { from: prey, until: now + 8 };
+            a.goal = null;
+          } else { busy(a, prey, 'dance', 2); busy(prey, a, 'dance', 2); }
+        } else stepToward(a, prey.cell.x, prey.cell.y, prey);
+        break;
+      }
+    }
+  }
+
+  // ---------- per-frame animation ----------
+  const lerpAngle = (a, b, k) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
+
+  function animPerson(a, state, t, moving) {
+    const r = a.rig, ph = t + a.speed * 3;
+    for (const p of [r.armL, r.armR, r.legL, r.legR]) p.rotation.set(0, 0, 0);
+    r.head.rotation.set(0, 0, 0);
+    r.body.position.y = 0; r.g.position.y = 0;
+    const k = (now - a.animStart);
+    switch (state) {
+      case 'walk': {
+        const s = Math.sin(ph * 9 * a.speed) * 0.7;
+        r.legL.rotation.x = s; r.legR.rotation.x = -s; r.armL.rotation.x = -s * 0.8; r.armR.rotation.x = s * 0.8;
+        r.g.position.y = Math.abs(Math.cos(ph * 9 * a.speed)) * 0.05;
+        break;
+      }
+      case 'sit':
+        r.legL.rotation.x = r.legR.rotation.x = -1.5;
+        r.g.position.y = -0.62 * r.g.scale.y;
+        r.head.rotation.x = 0.25 + Math.sin(t * 1.5) * 0.05;
+        break;
+      case 'wave': r.armR.rotation.z = -2.5 + Math.sin(t * 12) * 0.35; break;
+      case 'talk':
+        r.armR.rotation.x = -0.9 + Math.sin(t * 5) * 0.3; r.armL.rotation.x = -0.5 + Math.sin(t * 4 + 1) * 0.2;
+        r.head.rotation.z = Math.sin(t * 3) * 0.1;
+        break;
+      case 'scared':
+        r.armL.rotation.z = 2.4; r.armR.rotation.z = -2.4;
+        r.g.position.y = Math.sin(Math.min(1, k / 0.8) * Math.PI) * 0.5;
+        r.body.position.y = Math.sin(t * 40) * 0.02;
+        break;
+      case 'dance':
+        r.g.position.y = Math.abs(Math.sin(t * 7)) * 0.4;
+        r.armL.rotation.z = 2.6 + Math.sin(t * 7) * 0.3; r.armR.rotation.z = -2.6 - Math.sin(t * 7) * 0.3;
+        break;
+      case 'highfive': r.armR.rotation.x = -2.9; break;
+      case 'yawn': r.head.rotation.x = -0.35; r.armR.rotation.x = -1.6; break;             // hand to the mouth
+      case 'stretch': r.armL.rotation.z = 2.5; r.armR.rotation.z = -2.5; r.body.position.y = 0.04; break;
+      case 'lookup': r.head.rotation.x = -0.6; break;
+      default:
+        r.armL.rotation.z = 0.08 + Math.sin(t * 1.6) * 0.04; r.armR.rotation.z = -0.08 - Math.sin(t * 1.6) * 0.04;
+    }
+  }
+
+  function animSquid(a, state, t, moving) {
+    const r = a.rig;
+    const inWater = terrain.get(key(a.cell.x, a.cell.y)) === 'water';
+    let swing = -0.25, mouth = 0.6, hop = 0;
+    const k = (now - a.animStart) / Math.max(0.1, a.animUntil - a.animStart);
+    switch (state) {
+      case 'swing':
+        swing = k < 0.3 ? -0.25 - k / 0.3 * 0.7 : k < 0.5 ? -0.95 + (k - 0.3) / 0.2 * 2.4 : 1.45 - (k - 0.5) * 3.4;
+        mouth = 1.5; hop = Math.abs(Math.sin(k * Math.PI * 2)) * 0.25;
+        break;
+      case 'wave': swing = -0.6 + Math.sin(t * 10) * 0.4; mouth = 1.3; break;
+      case 'talk': mouth = 0.6 + Math.abs(Math.sin(t * 9)) * 0.9; break;
+      case 'dance': hop = Math.abs(Math.sin(t * 6)) * 0.4; swing = -0.4 + Math.sin(t * 6) * 0.4; mouth = 1.1; break;
+      case 'highfive': swing = -1.2; mouth = 1.2; break;
+      case 'lookup': mouth = 1.6; break;
+      case 'sit': mouth = 0.25; break;
+    }
+    const sink = inWater ? -0.7 : 0;
+    r.g.position.y += ((sink + hop + Math.sin(t * (moving ? 6 : 2)) * 0.06) - r.g.position.y) * 0.25;
+    r.body.scale.y = 0.95 + Math.sin(t * 2) * 0.03;
+    r.mouth.scale.y = mouth * (0.8 + Math.abs(Math.sin(t * 10)) * 0.4);
+    const blink = (t % 3.7) < 0.12 || state === 'sit' ? 0.15 : 1;
+    for (const e of r.eyes) e.scale.y = blink;
+    r.swordArm.rotation.x = swing;
+    r.swordArm.rotation.z = 0.5;
+    for (const tf of r.tufts) tf.rotation.z = Math.sin(t * 5 + tf.position.x * 8) * 0.25;
+    for (const { segs, phase } of r.tentacles)
+      segs.forEach((s, i) => { s.rotation.x = 0.35 + Math.sin(t * (moving ? 7 : 3) + phase + i * 0.7) * (0.15 + i * 0.08); });
+  }
+
+  return {
+    addActor, removeActor,
+    actors: () => actors, byId: () => byId, spots: () => spots,   // read-only views for the UI and tests
+    // obstacles/spots changed (a drawn thing was added, changed or removed)
+    setWorld({ trees: tr, spots: sp }) {
+      const had = new Set([...trees, ...spots].map(o => o.x + ',' + o.z));
+      const fresh = [...tr, ...sp].filter(o => !had.has(o.x + ',' + o.z));
+      trees = tr; spots = sp;
+      for (const o of fresh.slice(0, 1)) X.inspect?.(o.x, o.z, null, api);
+      rebuildTerrain();
+      for (const a of actors) {
+        if (!passable(a)(a.cell.x, a.cell.y)) { const [wx, wz] = toWorld(a.cell.x, a.cell.y); a.cell = nearestCell(wx, wz, a); }
+        if ([a.goal?.spot, a.goal?.item, a.goal?.lock].some(s => s && !spots.includes(s))) { a.goal = null; a.hidden = false; a.rig.g.visible = true; }   // target gone: forget it
+      }
+    },
+    snapshot() { return Object.fromEntries(actors.map(a => [a.id, snapshotOf(a)])); },
+    update(t, dt, { cover = 0, birdsLow = false } = {}) {
+      now = t; coverNow = cover;
+      acc += dt;
+      while (acc >= TICK) { acc -= TICK; const a = scheduler.next(); if (a) act(a); }   // empty world: nobody to act
+      if (X.tick && now >= (nextTick ?? 0)) { nextTick = now + 4; X.tick(actors, api, coverNow); }
+
+      // the cloud just covered the sun: everyone reacts
+      if (cover > 0.6 && prevCover <= 0.6) {
+        for (const a of actors) {
+          if (now < a.busyUntil) continue;
+          a.anim = 'lookup'; a.animStart = now; a.animUntil = a.busyUntil = now + 2;
+          if (a.kind === 'squid' || R() < 0.6) say(a, line(a, 'sun'), 2, R() * 0.6);
+        }
+      }
+      prevCover = cover;
+
+      // the birds swoop down low: whoever is free looks up and points it out
+      if (birdsLow && !prevBirds) {
+        for (const a of actors) {
+          if (now < a.busyUntil) continue;
+          a.anim = 'lookup'; a.animStart = now; a.animUntil = a.busyUntil = now + 2.2;
+          if (R() < 0.7) say(a, line(a, 'birds'), 2, R() * 0.8);
+        }
+      }
+      prevBirds = birdsLow;
+
+      for (let i = pending.length - 1; i >= 0; i--) {
+        const p = pending[i];
+        if (now >= p.at) { p.a.rig.say(p.text); p.a.sayUntil = now + p.dur; pending.splice(i, 1); }
+      }
+
+      for (const a of actors) {
+        if (a.sayUntil && now > a.sayUntil) { a.rig.say(''); a.sayUntil = 0; }
+        const [wx, wz] = toWorld(a.cell.x, a.cell.y);
+        const dx = wx - a.pos.x, dz = wz - a.pos.z, d = Math.hypot(dx, dz);
+        const step = Math.min(d, 1.6 * a.speed * dt * (a.kind === 'squid' ? 1.2 : 1));
+        const moving = d > 0.03;
+        if (moving) { a.pos.x += dx / d * step; a.pos.z += dz / d * step; a.face = Math.atan2(dx, dz); }
+        else if (a.partner) a.face = Math.atan2(a.partner.pos.x - a.pos.x, a.partner.pos.z - a.pos.z);
+        a.rig.g.position.x = a.pos.x;
+        a.rig.g.position.z = a.pos.z;
+        a.rig.g.rotation.y = lerpAngle(a.rig.g.rotation.y, a.face, Math.min(1, dt * 8));
+        const state = now < a.animUntil ? a.anim : moving ? 'walk' : a.goal?.type === 'rest' ? 'sit' : 'idle';
+        if (a.rig.animate) a.rig.animate(state, t, moving, a);
+        else if (a.kind === 'squid') animSquid(a, state, t, moving); else animPerson(a, state, t, moving);
+      }
+    },
+  };
+}
