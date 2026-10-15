@@ -11,7 +11,7 @@ import { chromium } from 'playwright-core';
 const VIEWER = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'viewer');
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.css': 'text/css' };
 
-function serve(thingsDir) {
+export function serve(thingsDir) {
   const server = http.createServer((req, res) => {
     const url = decodeURIComponent(new URL(req.url, 'http://x').pathname);
     if (!url.startsWith('/viewer/')) { res.writeHead(404).end(); return; }

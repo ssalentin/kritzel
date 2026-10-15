@@ -88,6 +88,12 @@ async function buildCheck(file, takenIds) {
     }
     for (const o of obstacles) if (!num(o?.x) || !num(o?.z) || !num(o?.r)) { problems.push('obstacles need numeric { x, z, r }'); break; }
     for (const s of spots) if (!s?.kind || !num(s?.x) || !num(s?.z)) { problems.push('spots need { kind, x, z }'); break; }
+    // holds: this thing keeps an actor (its own or another thing's) inside a circle, e.g. a jail around the spider
+    for (const h of [].concat(r.holds || [])) {
+      if (!h?.actor || !num(h.x) || !num(h.z) || !num(h.r) || h.r <= 0) { problems.push('holds need { actor, x, z, r } with r > 0'); continue; }
+      if (!takenIds.includes(h.actor) && !actors.some(a => a?.id === h.actor)) problems.push(`holds names actor "${h.actor}", which is on the island nowhere`);
+      if (h.r < 0.4) problems.push(`holds "${h.actor}" in r=${h.r}: too small to move in (at least 0.4)`);
+    }
     // light (the engine's light contract): one object or a list of { kind, object3D, color, intensity, range, flicker }
     const lights = r.light == null ? [] : [].concat(r.light);
     for (const l of lights) {

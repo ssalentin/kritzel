@@ -168,6 +168,7 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
         if (t === 'water' && !a.swims) continue;
         const [x, y] = k.split(',').map(Number);
         const [wx, wz] = toWorld(x, y);
+        if (a.hold && Math.hypot(wx - a.hold.x, wz - a.hold.z) > a.hold.r) continue;   // held by a drawn thing (a jail, a fence)
         // wide bodies keep clear of tree trunks too
         if (trees.every(tr => Math.hypot(wx - tr.x, wz - tr.z) > tr.r + Math.max(0, a.radius - 0.25))) ok.add(k);
       }
@@ -463,6 +464,21 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
       for (const a of actors) {
         if (!passable(a)(a.cell.x, a.cell.y)) { const [wx, wz] = toWorld(a.cell.x, a.cell.y); a.cell = nearestCell(wx, wz, a); }
         if ([a.goal?.spot, a.goal?.item, a.goal?.lock].some(s => s && !spots.includes(s))) { a.goal = null; a.hidden = false; a.rig.g.visible = true; }   // target gone: forget it
+      }
+    },
+    // drawn things that hold actors (a jail around the spider): [{ actor: id, x, z, r }]; the actor only
+    // walks inside its circle and is brought in if it is outside. Actors no longer held walk free again.
+    setHolds(list) {
+      for (const a of actors) {
+        const h = list.find(x => x.actor === a.id) || null;
+        if (JSON.stringify(h) === JSON.stringify(a.hold || null)) continue;
+        a.hold = h; a._pass = null;
+        if (h && Math.hypot(a.pos.x - h.x, a.pos.z - h.z) > h.r) {
+          a.goal = null; a.hidden = false; a.rig.g.visible = true;
+          a.cell = nearestCell(h.x, h.z, a) || a.cell;
+          const [wx, wz] = toWorld(a.cell.x, a.cell.y);
+          a.pos.set(wx, 0, wz);
+        }
       }
     },
     snapshot() { return Object.fromEntries(actors.map(a => [a.id, snapshotOf(a)])); },

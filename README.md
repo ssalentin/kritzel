@@ -217,6 +217,10 @@ light: { kind: 'lamp', object3D: flame, color: 0xff8a3a, intensity: 1, range: 8,
 
 Make the light's own mesh glow with an emissive material (`mat(c, { emissive, emissiveIntensity })`).
 
+A thing drawn around a character (a jail, a fence) can keep it inside: `holds: [{ actor, x, z, r }]`
+lets that actor walk only within the circle; it is brought in if it is outside, and walks free
+again when the holding thing is gone.
+
 `ctx` also carries `rand` (seeded), `limb`, `pond`, `trees`, `SUN_POS`, `islandR`
 (6.9) and `env` (`env.actors` lists who is around, `env.night` goes from 0 by day to 1
 at night, `env.lamps` lists where lamps and fires stand). A thing that throws is reported in

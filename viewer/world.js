@@ -37,7 +37,7 @@ export async function build(api, prevState = null) {
 
   // ---------- drawn things: every file in things/ adds itself to the world ----------
   // contract: export const meta = { name, drawing }; export function build(ctx) → optional
-  //   { actors: [...], obstacles: [{ x, z, r }], spots: [{ kind, x, z, lines }], update(t, dt, env),
+  //   { actors: [...], obstacles: [{ x, z, r }], spots: [{ kind, x, z, lines }], holds: [{ actor, x, z, r }], update(t, dt, env),
   //     light: { kind: 'sun'|'moon'|'lamp', object3D, color, intensity, range, flicker } (or a list) }
   // Things are loaded one by one and can be added/changed/removed live — the rest of the
   // world (and every character's position, mood and friendships) keeps running.
@@ -50,11 +50,11 @@ export async function build(api, prevState = null) {
 
   async function loadThing(file, states) {
     const before = new Set(world.children);
-    const entry = { box: new THREE.Group(), actors: [], obstacles: [], spots: [], update: null, light: [] };
+    const entry = { box: new THREE.Group(), actors: [], obstacles: [], spots: [], holds: [], update: null, light: [] };
     try {
       const m = await import('./things/' + file + '?v=' + Date.now());
       const r = (await m.build(ctx)) || {};
-      Object.assign(entry, { actors: r.actors || [], obstacles: r.obstacles || [], spots: r.spots || [], update: r.update || null,
+      Object.assign(entry, { actors: r.actors || [], obstacles: r.obstacles || [], spots: r.spots || [], holds: r.holds || [], update: r.update || null,
         light: [].concat(r.light || []) });
     } catch (e) { report(`things/${file}: ${e.message}`); }
     // everything this thing put into the world goes into its own box, so it can be removed later
@@ -84,6 +84,7 @@ export async function build(api, prevState = null) {
     const spots = [];
     for (const e of loaded.values()) { trees.push(...e.obstacles); spots.push(...e.spots); }
     brain.setWorld({ trees, spots });
+    brain.setHolds([...loaded.values()].flatMap(e => e.holds));
   }
 
   const listing = await (await fetch('things/', { cache: 'no-store' })).text();
@@ -92,6 +93,7 @@ export async function build(api, prevState = null) {
   for (const e of loaded.values()) trees.push(...e.obstacles);
   const spots = [...loaded.values()].flatMap(e => e.spots);
   brain = sim.create({ THREE, actors, trees, pond, spots, islandR: 6.9, states: prevState, extra });
+  brain.setHolds([...loaded.values()].flatMap(e => e.holds));
 
   return {
     // engine calls this when only things/ changed: reload just those files
