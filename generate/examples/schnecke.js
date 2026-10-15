@@ -1,4 +1,8 @@
 // Reference for drawn creatures that are not people: own body, own rig.animate.
+// parts: foot = a long flat body lying on the ground, rounded at both ends, three times as long as tall
+// parts: shell = a round disc on the back half of the foot with a spiral drawn on it, as tall as the foot is long
+// parts: head = the front end of the foot rising up, with two feelers with a dot at each tip
+// parts: mouth = a small smile on the front of the head
 export const meta = { name: 'Schnecke', drawing: 'a snail with a round spiral shell, two feelers and a happy face', paper: { x: 0.3, y: 0.6 } };
 
 export function build(ctx) {
