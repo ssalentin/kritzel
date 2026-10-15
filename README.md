@@ -97,6 +97,10 @@ writes `frames/settled/<YYYYmmdd-HHMMSS>.json` and then the camera's frame as
 pixels). Nothing is written while a hand moves over the paper or when nothing changed. Watch for the
 `.jpg`: it is renamed in last, so its `.json` is always there already.
 
+Keep the paper inside the camera's view: capture ignores the outer edge of the frame
+(about 60 px at 1080p), so a drawing made only there is never handed on. A sheet that
+slides or turns a little is aligned first and doesn't count as new.
+
 ### Starting a new sheet
 
 ```bash
