@@ -110,6 +110,8 @@ export async function build(api, prevState = null) {
         try { e.update(t, dt, env); } catch (err) { report('things: ' + err.message); e.update = null; }
       }
       env.actors = brain.actors?.() || [];   // living props (e.g. a tree with a face) can react to who is near
+      env.night = api.mood?.night ?? 0;      // 0 day … 1 night: characters get sleepy and gather at lamps
+      env.lamps = api.mood?.lamps() ?? [];
       brain.update(t, dt, env);
     },
   };

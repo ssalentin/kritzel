@@ -151,7 +151,8 @@ light: { kind: 'lamp', object3D: flame, color: 0xff8a3a, intensity: 1, range: 8,
 Make the light's own mesh glow with an emissive material (`mat(c, { emissive, emissiveIntensity })`).
 
 `ctx` also carries `rand` (seeded), `limb`, `pond`, `trees`, `SUN_POS`, `islandR`
-(6.9) and `env` (`env.actors` lists who is around). A thing that throws is reported in
+(6.9) and `env` (`env.actors` lists who is around, `env.night` goes from 0 by day to 1
+at night, `env.lamps` lists where lamps and fires stand). A thing that throws is reported in
 the on-screen error box; the rest of the world keeps running.
 
 ## Repository layout

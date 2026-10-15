@@ -8,11 +8,11 @@ const PRESETS = {
   // sky: CSS backdrop (centre, middle, edge); env: room-environment light; key: sun/moon light;
   // hemi: sky/ground fill; lamp: how strongly drawn lamps shine in this mood
   day: { sky: ['#d9f1ec', '#bfe3dd', '#a8d4cc'], ink: '#10202e', env: 1, key: [0xfff1dc, 0.9],
-    hemi: [0xfff4e6, 0x9cc7b8, 0.15], bounce: 0.25, lamp: 0.35, dir: [6.5, 15.8, -4.5] },
+    hemi: [0xfff4e6, 0x9cc7b8, 0.15], bounce: 0.25, lamp: 0.35, night: 0, dir: [6.5, 15.8, -4.5] },
   dusk: { sky: ['#e8ad8a', '#6e5d8c', '#2c2848'], ink: '#fff4ea', env: 0.26, key: [0xff9a55, 1.3],
-    hemi: [0xffb98f, 0x3c3a62, 0.18], bounce: 0.1, lamp: 1, dir: [15, 4.5, -6] },
+    hemi: [0xffb98f, 0x3c3a62, 0.18], bounce: 0.1, lamp: 1, night: 0.3, dir: [15, 4.5, -6] },
   night: { sky: ['#34487c', '#19244c', '#0b1130'], ink: '#dfe6ff', env: 0.12, key: [0x9db4ff, 0.45],
-    hemi: [0x7088c8, 0x141a30, 0.25], bounce: 0.05, lamp: 1.8, dir: [-6, 12, -5] },
+    hemi: [0x7088c8, 0x141a30, 0.25], bounce: 0.05, lamp: 1.8, night: 1, dir: [-6, 12, -5] },
 };
 const LAMP = 7;            // a lamp's light at intensity 1 in a dusk mood (linear falloff:
                            // a lantern up on a post still makes a pool of light on the grass)
@@ -25,7 +25,7 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
   const make = name => {
     const p = PRESETS[name];
     return { sky: p.sky.map(C), ink: C(p.ink), env: p.env, keyColor: C(p.key[0]), keyInt: p.key[1],
-      hemiSky: C(p.hemi[0]), hemiGround: C(p.hemi[1]), hemiInt: p.hemi[2], bounce: p.bounce, lamp: p.lamp,
+      hemiSky: C(p.hemi[0]), hemiGround: C(p.hemi[1]), hemiInt: p.hemi[2], bounce: p.bounce, lamp: p.lamp, night: p.night,
       dir: new THREE.Vector3(...p.dir) };
   };
   const presets = Object.fromEntries(Object.keys(PRESETS).map(n => [n, make(n)]));
@@ -34,6 +34,18 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
   let name = 'dusk', frame = 0, envApplied = -1;
   const sources = new Map();          // thing id → [{ kind, obj, color, intensity, flicker, pl }]
   const tmp = new THREE.Vector3();
+
+  // a few stars far out, fading in as night falls
+  const starPos = [];
+  for (let i = 0; i < 160; i++) {
+    const a = Math.random() * Math.PI * 2, y = 0.12 + Math.random() * 0.88, r = 70 + Math.random() * 20;
+    starPos.push(Math.cos(a) * Math.sqrt(1 - y * y) * r, y * r - 10, Math.sin(a) * Math.sqrt(1 - y * y) * r);
+  }
+  const starGeo = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(starPos, 3));
+  const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xfff6dc, size: 2.2, sizeAttenuation: false,
+    transparent: true, opacity: 0, depthWrite: false, fog: false }));
+  stars.visible = false;
+  scene.add(stars);
 
   function forget(id) {
     for (const s of sources.get(id) || []) { s.pl?.removeFromParent(); s.pl?.dispose(); }
@@ -94,7 +106,7 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
     const k = 1 - Math.exp(-dt / EASE_S);
     cur.sky.forEach((c, i) => c.lerp(goal.sky[i], k));
     for (const f of ['ink', 'keyColor', 'hemiSky', 'hemiGround']) cur[f].lerp(goal[f], k);
-    for (const f of ['env', 'keyInt', 'hemiInt', 'bounce', 'lamp']) cur[f] += (goal[f] - cur[f]) * k;
+    for (const f of ['env', 'keyInt', 'hemiInt', 'bounce', 'lamp', 'night']) cur[f] += (goal[f] - cur[f]) * k;
     cur.dir.lerp(goalDir, k);
 
     key.color.copy(cur.keyColor);
@@ -104,6 +116,10 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
     hemi.groundColor.copy(cur.hemiGround);
     hemi.intensity = cur.hemiInt;
     bounce.intensity = cur.bounce;
+    const starAlpha = Math.max(0, (cur.night - 0.4) / 0.6);
+    stars.visible = starAlpha > 0.01;
+    stars.material.opacity = starAlpha * (0.85 + 0.15 * Math.sin(t * 1.7));
+    stars.rotation.y = t * 0.004;
 
     for (const s of all) {
       if (!s.pl) continue;
@@ -131,5 +147,9 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
     reset() { for (const id of [...sources.keys()]) forget(id); },
     update,
     get name() { return name; },
+    get night() { return cur.night; },   // 0 day, ~0.3 dusk, 1 night (eased)
+    lamps() {                            // where drawn lamps and fires stand, for the characters
+      return [...sources.values()].flat().filter(s => s.pl).map(s => (s.pl.getWorldPosition(tmp), { x: tmp.x, z: tmp.z }));
+    },
   };
 }

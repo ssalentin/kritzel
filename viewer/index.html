@@ -174,7 +174,8 @@ const api = { THREE, scene, world, camera, controls, bubble, shadowAll, mood: li
   report: msg => { errEl.textContent += (errEl.textContent ? '\n' : '') + msg; } };
 const err = document.getElementById('err');
 let current = null;
-window.__paperWorld = () => current;      // debug handle (inspection from devtools / tests)
+window.__paperWorld = () => current;      // debug handles (inspection from devtools / tests)
+window.__lighting = () => lighting;
 
 function clearWorld() {
   world.traverse(o => {

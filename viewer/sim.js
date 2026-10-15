@@ -18,6 +18,9 @@ const LINES = {
   scared: { person: ['Hilfe!', 'Bloß weg hier!', 'Iiieh!'] },
   birds: { sqichy: ['Vögel! Blubb!', 'Kommt runter, Vögel!'], person: ['Schau, Vögel!', 'Die fliegen ja tief!', 'Hallo, Vögel!'] },
   tagCaught: { person: ['Hab dich!', 'Erwischt!'] },
+  night: { sqichy: ['Blubb… Nacht!'], person: ['Gute Nacht!', 'Es wird dunkel…', 'Schau, der Mond!'] },
+  day: { sqichy: ['Blubb, Morgen!'], person: ['Guten Morgen!', 'Die Sonne ist da!'] },
+  warm: { person: ['Schön warm hier.', 'Ahh, Licht!', 'Kommt alle ans Feuer!'] },
 };
 
 export function create({ THREE, actors, trees, pond, spots = [], islandR, states = null, seed = Date.now() % 100000, extra = null }) {
@@ -145,6 +148,7 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
   }
 
   let now = 0, acc = 0, prevCover = 0, prevBirds = false, nextTick = 0, coverNow = 0;
+  let nightNow = 0, prevNight = null, lampsNow = [];     // 0 day … 1 night; drawn lamps and fires { x, z }
   const pending = [];
 
   const say = (a, text, dur = 2.4, delay = 0) => pending.push({ a, text, at: now + delay, dur });
@@ -217,7 +221,13 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
     const opts = [];
     const add = (u, goal) => opts.push({ u: u + R() * 0.3, goal });
     add(0.3 + a.traits.curiosity * 0.35, { type: 'wander', cell: pick(groundCells) });
-    if (a.energy < 0.3) add(1.3 - a.energy, { type: 'rest', until: now + 20 });
+    if (a.energy < 0.3 + 0.3 * nightNow) add(1.3 - a.energy + nightNow * 0.3, { type: 'rest', until: now + 20 + nightNow * 20 });   // sleepy at night
+    // in the dark, a lamp or fire draws everyone close
+    if (nightNow > 0.25 && lampsNow.length) {
+      const l = pick(lampsNow), ang = R() * Math.PI * 2, r = 0.9 + R() * 0.7;
+      const c = nearestCell(l.x + Math.cos(ang) * r, l.z + Math.sin(ang) * r, a);
+      if (c) add(0.3 + nightNow * (0.5 + a.traits.sociable * 0.5), { type: 'warm', cell: [c.x, c.y], lamp: l, until: now + 12 + R() * 10 });
+    }
     // doors (drawn houses): go in to rest for a while; more often when tired or under clouds
     X.options?.(a, add, api);                 // doors and items: see sim-extra.js
     for (const sp of spots) if (sp.kind === 'egg' && !sp.found && spotCell(sp, a)) add(0.4 + a.traits.curiosity * 0.4, { type: 'eat', spot: sp, cell: spotCell(sp, a) });
@@ -281,7 +291,7 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
   }
 
   function act(a) {
-    a.energy = Math.max(0, a.energy - 0.004);
+    a.energy = Math.max(0, a.energy - 0.004 * (1 + nightNow));   // night makes everyone tired sooner
     a.hunger = Math.min(1, a.hunger + 0.003);
     a.social = Math.min(1, a.social + 0.007);
     a.fear = Math.max(0, a.fear - 0.008);
@@ -314,6 +324,14 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
           say(a, pick(g.spot.lines || ['Mmh!']), 2.2); sound.at(a.rig.g).mampf();
           if (g.spot.kind === 'egg') { g.spot.found = true; a.eggs = (a.eggs || 0) + 1; } else { a.hunger = 0; a.energy = Math.min(1, a.energy + 0.35); }
         } else if (!stepToward(a, g.cell[0], g.cell[1])) a.goal = null;
+        break;
+      }
+      case 'warm': {                       // walk to the light, then sit by it a while
+        if (now > g.until) { a.goal = null; break; }
+        const there = a.cell.x === g.cell[0] && a.cell.y === g.cell[1];
+        if (!there && !stepToward(a, g.cell[0], g.cell[1])) { a.goal = null; break; }
+        if (there && !g.sat) { g.sat = true; const [sx, sz] = toWorld(a.cell.x, a.cell.y); a.face = Math.atan2(g.lamp.x - sx, g.lamp.z - sz); if (R() < 0.3) say(a, line(a, 'warm'), 2); }
+        if (there) a.energy = Math.min(1, a.energy + 0.006);
         break;
       }
       case 'idle':
@@ -448,8 +466,8 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
       }
     },
     snapshot() { return Object.fromEntries(actors.map(a => [a.id, snapshotOf(a)])); },
-    update(t, dt, { cover = 0, birdsLow = false } = {}) {
-      now = t; coverNow = cover;
+    update(t, dt, { cover = 0, birdsLow = false, night = 0, lamps = [] } = {}) {
+      now = t; coverNow = cover; nightNow = night; lampsNow = lamps;
       acc += dt;
       while (acc >= TICK) { acc -= TICK; const a = scheduler.next(); if (a) act(a); }   // empty world: nobody to act
       if (X.tick && now >= (nextTick ?? 0)) { nextTick = now + 4; X.tick(actors, api, coverNow); }
@@ -474,6 +492,17 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
       }
       prevBirds = birdsLow;
 
+      // night falls or the sun comes up: whoever is free looks up and says so
+      const phase = night > 0.6 ? 'night' : night < 0.1 ? 'day' : prevNight;
+      if (prevNight && phase !== prevNight) {
+        for (const a of actors) {
+          if (now < a.busyUntil) continue;
+          a.anim = phase === 'night' ? 'yawn' : 'stretch'; a.animStart = now; a.animUntil = a.busyUntil = now + 2;
+          if (R() < 0.6) say(a, line(a, phase), 2.2, R() * 1.2);
+        }
+      }
+      prevNight = phase ?? (night > 0.35 ? 'night' : 'day');
+
       for (let i = pending.length - 1; i >= 0; i--) {
         const p = pending[i];
         if (now >= p.at) { p.a.rig.say(p.text); p.a.sayUntil = now + p.dur; pending.splice(i, 1); }
@@ -490,7 +519,7 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
         a.rig.g.position.x = a.pos.x;
         a.rig.g.position.z = a.pos.z;
         a.rig.g.rotation.y = lerpAngle(a.rig.g.rotation.y, a.face, Math.min(1, dt * 8));
-        const state = now < a.animUntil ? a.anim : moving ? 'walk' : a.goal?.type === 'rest' ? 'sit' : 'idle';
+        const state = now < a.animUntil ? a.anim : moving ? 'walk' : /rest|warm/.test(a.goal?.type) ? 'sit' : 'idle';
         if (a.rig.animate) a.rig.animate(state, t, moving, a);
         else if (a.kind === 'squid') animSquid(a, state, t, moving); else animPerson(a, state, t, moving);
       }
