@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { oneShot, MODEL, FALLBACK_MODEL } from './claude.mjs';
+import { live } from './children.mjs';
 import { staticCheck, buildCheck, metaOf } from './check.mjs';
 import { SYSTEM, userText, fixText } from './prompts.mjs';
 import { islandOf } from './place.mjs';
@@ -256,6 +257,13 @@ async function watch(dir, opts) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  // stop at once on SIGTERM / Ctrl-C: kill running calls and checks (a headless render's browser is
+  // closed by playwright on exit). Files are only ever written as .tmp + rename, so nothing is half-written.
+  for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => {
+    for (const p of live) p.kill('SIGKILL');
+    log(`${sig}: stopped`);
+    process.exit(sig === 'SIGTERM' ? 143 : 130);
+  });
   const args = process.argv.slice(2);
   const flag = n => { const i = args.indexOf(n); if (i < 0) return false; args.splice(i, 1); return true; };
   const opt = (n, def) => { const i = args.indexOf(n); if (i < 0) return def; const v = args[i + 1]; args.splice(i, 2); return v; };

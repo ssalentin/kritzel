@@ -3,6 +3,7 @@
 // the default system prompt is replaced. (--bare would be shorter but ignores the OAuth login.)
 // A camera frame is input from strangers; with no tools the reply is just text we check.
 import { spawn } from 'node:child_process';
+import { track } from './children.mjs';
 import { tmpdir } from 'node:os';
 
 export const MODEL = process.env.KRITZEL_MODEL || 'claude-sonnet-5-5';
@@ -22,7 +23,7 @@ export function oneShot({ system, text, images, model = MODEL, effort = EFFORT, 
     '--no-session-persistence', '--system-prompt', system];
   const t0 = Date.now();
   return new Promise((resolve, reject) => {
-    const p = spawn('claude', args, { cwd: tmpdir(), stdio: ['pipe', 'pipe', 'pipe'] });   // outside any repo
+    const p = track(spawn('claude', args, { cwd: tmpdir(), stdio: ['pipe', 'pipe', 'pipe'] }));   // outside any repo
     let out = '', err = '';
     p.stdout.on('data', d => { out += d; });
     p.stderr.on('data', d => { err += d; });

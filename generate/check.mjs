@@ -2,6 +2,7 @@
 // They catch code that is broken or misbehaves, not code that looks wrong.
 import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { spawn } from 'node:child_process';
+import { track } from './children.mjs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,7 +50,7 @@ function runSandboxed(mode, code, extra = []) {
   const reads = [join(HERE, 'check-run.mjs'), join(HERE, 'node_modules', 'three'), join(HERE, 'package.json'), join(VIEWER, 'characters.js'), dir];
   const args = ['--net', process.execPath, '--permission', ...reads.map(p => '--allow-fs-read=' + p), join(HERE, 'check-run.mjs'), mode, file, ...extra];
   return new Promise(ok => {
-    const p = spawn('unshare', args, { stdio: ['ignore', 'pipe', 'pipe'], cwd: dir });
+    const p = track(spawn('unshare', args, { stdio: ['ignore', 'pipe', 'pipe'], cwd: dir }));
     let out = '', err = '', timedOut = false;
     p.stdout.on('data', d => { if (out.length < 1e6) out += d; });
     p.stderr.on('data', d => { if (err.length < 1e5) err += d; });
