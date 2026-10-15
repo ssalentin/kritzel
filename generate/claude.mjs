@@ -6,10 +6,13 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 
 export const MODEL = process.env.KRITZEL_MODEL || 'claude-sonnet-5-5';
+// KRITZEL_EFFORT is for measuring; an unknown value falls back to low instead of failing every call
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const EFFORT = EFFORTS.includes(process.env.KRITZEL_EFFORT) ? process.env.KRITZEL_EFFORT : 'low';
 export const FALLBACK_MODEL = process.env.KRITZEL_FALLBACK_MODEL || 'claude-opus-5-5';
 
 // images: JPEG Buffers, in order. Returns { text, cost, seconds, model }.
-export function oneShot({ system, text, images, model = MODEL, effort = process.env.KRITZEL_EFFORT || 'low', timeoutMs = 3 * 60_000 }) {
+export function oneShot({ system, text, images, model = MODEL, effort = EFFORT, timeoutMs = 3 * 60_000 }) {
   const msg = { type: 'user', message: { role: 'user', content: [
     ...images.map(i => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: i.toString('base64') } })),
     { type: 'text', text },

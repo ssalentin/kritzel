@@ -44,14 +44,15 @@ function freeName(base, taken) {
 }
 const atomicWrite = (path, data) => { const tmp = join(dirname(path), '.' + basename(path) + '.tmp'); writeFileSync(tmp, data); renameSync(tmp, path); };
 
-// changed_box (+ margin) → a JPEG (≤1568 px, Claude's own limit: a whole-sheet frame keeps small drawings legible), and where it goes on the island
+// changed_box (+ margin) → a JPEG, and where it goes on the island. A tight crop is sharp at 768 px; a whole
+// sheet (no trusted box) goes at up to 1568 px (Claude's own limit), so small drawings stay legible
 function cropOf(frame, box, previous = null) {
   const [W, H] = execFileSync('identify', ['-format', '%w %h', frame], { encoding: 'utf8' }).split(' ').map(Number);
   const [x, y, w, h] = box || [0, 0, W, H];
   const m = Math.max(40, 0.15 * Math.max(w, h));
   const x0 = Math.max(0, Math.round(x - m)), y0 = Math.max(0, Math.round(y - m));
   const x1 = Math.min(W, Math.round(x + w + m)), y1 = Math.min(H, Math.round(y + h + m));
-  const crop = f => execFileSync('convert', [f, '-crop', `${x1 - x0}x${y1 - y0}+${x0}+${y0}`, '+repage', '-resize', '1568x1568>', '-quality', '85', 'jpg:-'], { maxBuffer: 20e6 });
+  const crop = f => execFileSync('convert', [f, '-crop', `${x1 - x0}x${y1 - y0}+${x0}+${y0}`, '+repage', '-resize', box ? '768x768>' : '1568x1568>', '-quality', '85', 'jpg:-'], { maxBuffer: 20e6 });
   const image = crop(frame), before = previous && existsSync(previous) ? crop(previous) : null;
   const px = (x + w / 2) / W, py = (y + h / 2) / H;           // frame ≈ paper: no paper detection yet
   let ix = (px - 0.5) * 9, iz = (py - 0.5) * 7;               // paper top = island back (-z)
@@ -88,13 +89,12 @@ async function finish({ body, model, frame, images, takenIds, keepIds, calls }) 
     }
     const full = `${MARK}frames/settled/${basename(frame)} (${model})\n${code}\n`;
     problems = staticCheck(full);
-    if (!/^\/\/ parts:/m.test(code)) problems.push('start the module with the // parts: list of every drawn part, then build each');
     if (!problems.length) {
       const b = await buildCheck(full, { takenIds });
       problems = b.problems;
       for (const id of keepIds) if (!b.info.actors?.includes(id)) problems.push(`keep the actor id "${id}" (the sim remembers its friendships)`);
     }
-    if (!problems.length) return { code: full, model };
+    if (!problems.length) return { code: full, model, warnings: /^\/\/ parts:/m.test(code) ? [] : ['no // parts: list (a thinking aid for the model; module accepted)'] };
   }
   return { problems };
 }
@@ -147,7 +147,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
       atomicWrite(join(thingsDir, file), f.code);
       const latency = +((Date.now() - settledAt) / 1000).toFixed(1);
       const ids = [...f.code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]);
-      report.written.push({ kind: s.kind, file, name: thingName, model: f.model, latency, ids });
+      report.written.push({ kind: s.kind, file, name: thingName, model: f.model, latency, ids, ...(f.warnings.length && { warnings: f.warnings }) });
       log(`${name}: ${s.kind === 'UPDATE' ? 'UPDATED' : 'WROTE'} ${file} (${thingName}) by ${f.model}, ${latency}s after the frame settled`);
       renders.push({ base, file, code: f.code });
     }
