@@ -114,7 +114,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             n = int(self.headers.get("Content-Length", ""))
             assert 0 <= n <= 4096
             choice = clean_choice(json.loads(self.rfile.read(n)))
-        except (ValueError, AssertionError, TypeError):
+        except (ValueError, AssertionError, TypeError, AttributeError):
             return self.json({"error": "expected {kind: none} | {kind: local, label} | {kind: remote, ip, id}"}, 400)
         CHOICE.write_text(json.dumps(choice, indent=2) + "\n")
         self.json(choice)
