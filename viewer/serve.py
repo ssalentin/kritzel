@@ -28,7 +28,7 @@ def tailnet_hosts():
     hosts = [("this computer", "127.0.0.1")]
     try:
         st = json.loads(subprocess.run(["tailscale", "status", "--json"], capture_output=True, timeout=3).stdout)
-        hosts += [(p["HostName"], p["TailscaleIPs"][0]) for p in st.get("Peer", {}).values()
+        hosts += [((p.get("DNSName") or p["HostName"]).split(".")[0], p["TailscaleIPs"][0]) for p in st.get("Peer", {}).values()
                   if p.get("Online") and p.get("TailscaleIPs")]
     except (OSError, ValueError, subprocess.SubprocessError):
         pass

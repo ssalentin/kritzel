@@ -50,7 +50,7 @@ class Feed:
             return f
 
     def __init__(self, cam):
-        self.frame, self.seq, self.clients, self.alive = None, 0, 0, True
+        self.frame, self.seq, self.clients, self.alive, self.error = None, 0, 0, True, ""
         self.cond = threading.Condition()
         self.proc = subprocess.Popen(
             ["ffmpeg", "-loglevel", "error", "-f", "v4l2", "-input_format", "mjpeg", "-video_size", SIZE,
@@ -76,8 +76,9 @@ class Feed:
             idle_since = (idle_since or time.time()) if self.clients == 0 else None
             if idle_since and time.time() - idle_since > 5:
                 break
-        self.alive = False
         self.proc.kill()
+        self.error = self.proc.stderr.read().decode(errors="replace").strip()[-300:]
+        self.alive = False
         with self.cond:
             self.cond.notify_all()
 
@@ -112,7 +113,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             frame, seq = feed.next(0)
             if frame is None:
-                return self.send(503, b"camera gives no picture", "text/plain")
+                msg = "camera gives no picture: " + (feed.error or "no frame within 5 s")
+                print(f"{m[2]}: {msg}")
+                return self.send(503, msg.encode(), "text/plain")
             if m[1] == "snapshot":
                 return self.send(200, frame, "image/jpeg")
             self.send_response(200)
