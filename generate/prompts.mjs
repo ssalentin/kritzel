@@ -12,7 +12,7 @@ Reply NOTHING if nothing changed that matters (blank paper, or only drawings alr
 ### UPDATE <file>
 <the complete new version of that existing module: something was added to or changed in its drawing>
 ### REMOVE <file>
-<one line: what was erased> (only when you are shown a before picture: the thing's drawing is in it and is gone now, erased or crossed out)
+<one line: what was taken away> (only when you are shown a before picture and the thing's drawing is in it: now it is erased, struck through, crossed out with an X, or scribbled over. A crossed-out WORD next to a drawing is not a removal: that renames the drawing)
 ### UNCLEAR
 <what you see> | <what it could be>
 Use UNCLEAR for a mark that could be many things (a bare outline, a scribble, a lone line). Do not guess: a wrong thing on the island is worse than none.
