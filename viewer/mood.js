@@ -9,25 +9,28 @@ const PRESETS = {
   // hemi: sky/ground fill; lamp: how strongly drawn lamps shine in this mood
   day: { sky: ['#d9f1ec', '#bfe3dd', '#a8d4cc'], ink: '#10202e', env: 1, key: [0xfff1dc, 0.9],
     hemi: [0xfff4e6, 0x9cc7b8, 0.15], bounce: 0.25, lamp: 0.35, dir: [6.5, 15.8, -4.5] },
-  dusk: { sky: ['#e8ad8a', '#6e5d8c', '#2c2848'], ink: '#fff4ea', env: 0.3, key: [0xff9a55, 0.8],
-    hemi: [0xffb98f, 0x3c3a62, 0.3], bounce: 0.1, lamp: 1, dir: [15, 4.5, -6] },
+  dusk: { sky: ['#e8ad8a', '#6e5d8c', '#2c2848'], ink: '#fff4ea', env: 0.26, key: [0xff9a55, 1.3],
+    hemi: [0xffb98f, 0x3c3a62, 0.18], bounce: 0.1, lamp: 1, dir: [15, 4.5, -6] },
   night: { sky: ['#34487c', '#19244c', '#0b1130'], ink: '#dfe6ff', env: 0.12, key: [0x9db4ff, 0.45],
     hemi: [0x7088c8, 0x141a30, 0.25], bounce: 0.05, lamp: 1.8, dir: [-6, 12, -5] },
 };
-const LAMP = 5;            // a lamp's light at intensity 1 in a dusk mood (linear falloff:
+const LAMP = 7;            // a lamp's light at intensity 1 in a dusk mood (linear falloff:
                            // a lantern up on a post still makes a pool of light on the grass)
+const LAMPS_PER_THING = 3, LAMPS_MAX = 8;   // every lamp is a light the GPU pays for in every material
 const LAMP_SHADOWS = 2;    // point-light shadows are expensive: only the first lamps cast them
 const EASE_S = 0.9;        // time constant of every transition (≈ 3 s to settle)
 
 export function createMood({ THREE, scene, key, hemi, bounce }) {
   const C = h => new THREE.Color(h);
-  const preset = name => {
+  const make = name => {
     const p = PRESETS[name];
     return { sky: p.sky.map(C), ink: C(p.ink), env: p.env, keyColor: C(p.key[0]), keyInt: p.key[1],
       hemiSky: C(p.hemi[0]), hemiGround: C(p.hemi[1]), hemiInt: p.hemi[2], bounce: p.bounce, lamp: p.lamp,
       dir: new THREE.Vector3(...p.dir) };
   };
-  const cur = preset('dusk');
+  const presets = Object.fromEntries(Object.keys(PRESETS).map(n => [n, make(n)]));
+  const cur = make('dusk'), goalDir = new THREE.Vector3();
+  const css = {};                     // last values written, so a settled sky doesn't repaint every frame
   let name = 'dusk', frame = 0, envApplied = -1;
   const sources = new Map();          // thing id → [{ kind, obj, color, intensity, flicker, pl }]
   const tmp = new THREE.Vector3();
@@ -52,16 +55,19 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
   }
 
   // the light sources one drawn thing declares; [] removes them. `anchor` stands in for a
-  // missing object3D (the thing's own group).
+  // missing object3D (the thing's own group). Returns how many lamps were left out (too many).
   function set(id, lights, anchor) {
     forget(id);
     const list = [];
+    let lamps = [...sources.values()].flat().filter(s => s.pl).length, mine = 0, dropped = 0;
     for (const l of lights) {
       if (!l || !['sun', 'moon', 'lamp'].includes(l.kind)) continue;
+      if (l.kind === 'lamp' && (mine >= LAMPS_PER_THING || lamps >= LAMPS_MAX)) { dropped++; continue; }
       const s = { kind: l.kind, obj: l.object3D?.isObject3D ? l.object3D : top(anchor),
         intensity: Number.isFinite(l.intensity) ? Math.max(0, Math.min(l.intensity, 5)) : 1, flicker: !!l.flicker };
       if (s.kind === 'lamp' && s.obj) {
-        s.pl = new THREE.PointLight(l.color ?? 0xffa54a, 0, Number.isFinite(l.range) ? l.range : 8, 1);
+        s.pl = new THREE.PointLight(l.color ?? 0xffa54a, 0, Number.isFinite(l.range) ? Math.max(0.5, Math.min(l.range, 20)) : 8, 1);
+        lamps++; mine++;
         s.pl.shadow.mapSize.set(512, 512);
         s.pl.shadow.bias = -0.002;
         s.obj.add(s.pl);
@@ -70,24 +76,26 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
     }
     if (list.length) sources.set(id, list);
     assignShadows();
+    return dropped;
   }
 
   function update(t, dt) {
     const all = [...sources.values()].flat();
     const sun = all.find(s => s.kind === 'sun'), moon = all.find(s => s.kind === 'moon');
     name = sun ? 'day' : moon ? 'night' : 'dusk';
-    const goal = preset(name);
+    const goal = presets[name];
+    goalDir.copy(goal.dir);
     const body = sun || moon;
     if (body?.obj) {                  // light comes from where the sun or moon hangs
       body.obj.getWorldPosition(tmp);
-      if (tmp.lengthSq() > 0.01) goal.dir.copy(tmp).setY(Math.max(tmp.y, 3));
+      if (tmp.lengthSq() > 0.01) goalDir.copy(tmp).setY(Math.max(tmp.y, 3));
     }
 
     const k = 1 - Math.exp(-dt / EASE_S);
     cur.sky.forEach((c, i) => c.lerp(goal.sky[i], k));
     for (const f of ['ink', 'keyColor', 'hemiSky', 'hemiGround']) cur[f].lerp(goal[f], k);
     for (const f of ['env', 'keyInt', 'hemiInt', 'bounce', 'lamp']) cur[f] += (goal[f] - cur[f]) * k;
-    cur.dir.lerp(goal.dir, k);
+    cur.dir.lerp(goalDir, k);
 
     key.color.copy(cur.keyColor);
     key.intensity = cur.keyInt;
@@ -105,9 +113,11 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
       s.pl.intensity = s.base * flick;
     }
 
-    const root = document.documentElement.style;
-    cur.sky.forEach((c, i) => root.setProperty(`--sky${i}`, '#' + c.getHexString()));
-    root.setProperty('--ink', '#' + cur.ink.getHexString());
+    const vars = { '--sky0': cur.sky[0], '--sky1': cur.sky[1], '--sky2': cur.sky[2], '--ink': cur.ink };
+    for (const [v, c] of Object.entries(vars)) {
+      const hex = '#' + c.getHexString();
+      if (css[v] !== hex) { css[v] = hex; document.documentElement.style.setProperty(v, hex); }
+    }
 
     // the room environment gives most of the light: dim it on every material (new things included)
     if (Math.abs(cur.env - envApplied) > 0.002 || ++frame % 30 === 0) {

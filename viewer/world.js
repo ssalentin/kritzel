@@ -61,7 +61,8 @@ export async function build(api, prevState = null) {
     for (const o of [...world.children]) if (!before.has(o)) entry.box.add(o);
     world.add(entry.box);
     bakeAO(THREE, entry.box);
-    api.mood?.set(file, entry.light, entry.box);
+    const dropped = api.mood?.set(file, entry.light, entry.box);
+    if (dropped) report(`things/${file}: ${dropped} lamp(s) left dark (at most 3 per thing, 8 in all)`);
     loaded.set(file, entry);
     if (brain) { for (const a of entry.actors) brain.addActor(a, states?.[a.id]); }
     return entry;

@@ -142,9 +142,11 @@ light: { kind: 'lamp', object3D: flame, color: 0xff8a3a, intensity: 1, range: 8,
   `'lamp'` is any local light: lamp, lantern, candle, fire, glowing window.
 - `object3D`: where the light is (the flame, the bulb, the sun disc). The sun's or moon's
   position also sets where shadows fall. Without it the light sits on top of the thing.
-- Lamps only: `color` (default warm `0xffa54a`), `intensity` (0–5, default 1), `range`
+- Lamps only: `color` (default warm `0xffa54a`), `intensity` (0–5, default 1; 2–3 for a
+  lamp up high, such as a lantern on a post, so it still pools light on the ground), `range`
   (default 8), `flicker` (for fire and candles). Lamps shine brighter at night and
-  barely by day; only the first two cast shadows.
+  barely by day; only the first two cast shadows. At most 3 lamps per thing and 8 in all
+  light up (the rest stay dark, with a note in the error box); `range` is kept to 0.5–20.
 
 Make the light's own mesh glow with an emissive material (`mat(c, { emissive, emissiveIntensity })`).
 
