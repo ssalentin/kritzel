@@ -5,7 +5,7 @@ export const caption = '';
 
 // prevState: characters' saved state (position, mood, friendships) so a reload doesn't reset them
 export async function build(api, prevState = null) {
-  const { THREE, scene, world, camera, bubble, shadowAll, report } = api;
+  const { THREE, world, camera, bubble, shadowAll, report } = api;
   const v = '?v=' + Date.now();
   const [sim, islandMod, charMod, extra] = await Promise.all(
     ['sim', 'island', 'characters', 'sim-extra'].map(f => import(`./${f}.js${v}`)));
@@ -28,17 +28,17 @@ export async function build(api, prevState = null) {
 
   // (no grass tufts or pebbles: the grass top stays calm, softly painted like the example)
 
-  // light: the scene's sun light stays (lighting only, no drawn sun disc)
+  // light: the scene's key light is placed by mood.js (from a drawn sun or moon, or the time of day)
   const SUN_POS = new THREE.Vector3(2.5, 6.8, -6.5);
-  const sunLight = scene.children.find(o => o.isDirectionalLight && o.castShadow);
-  if (sunLight) sunLight.position.set(SUN_POS.x + 4, SUN_POS.y + 9, SUN_POS.z + 2).normalize().multiplyScalar(20);
+  api.mood?.reset();
 
   // ---------- character helpers for drawn figures ----------
   const { makePerson } = charMod.makeCharacters({ THREE, world, mat, limb, bubble, shadowAll });
 
   // ---------- drawn things: every file in things/ adds itself to the world ----------
   // contract: export const meta = { name, drawing }; export function build(ctx) → optional
-  //   { actors: [...], obstacles: [{ x, z, r }], spots: [{ kind, x, z, lines }], update(t, dt, env) }
+  //   { actors: [...], obstacles: [{ x, z, r }], spots: [{ kind, x, z, lines }], update(t, dt, env),
+  //     light: { kind: 'sun'|'moon'|'lamp', object3D, color, intensity, range, flicker } (or a list) }
   // Things are loaded one by one and can be added/changed/removed live — the rest of the
   // world (and every character's position, mood and friendships) keeps running.
   const env = { cover: 0 };
@@ -50,16 +50,18 @@ export async function build(api, prevState = null) {
 
   async function loadThing(file, states) {
     const before = new Set(world.children);
-    const entry = { box: new THREE.Group(), actors: [], obstacles: [], spots: [], update: null };
+    const entry = { box: new THREE.Group(), actors: [], obstacles: [], spots: [], update: null, light: [] };
     try {
       const m = await import('./things/' + file + '?v=' + Date.now());
       const r = (await m.build(ctx)) || {};
-      Object.assign(entry, { actors: r.actors || [], obstacles: r.obstacles || [], spots: r.spots || [], update: r.update || null });
+      Object.assign(entry, { actors: r.actors || [], obstacles: r.obstacles || [], spots: r.spots || [], update: r.update || null,
+        light: [].concat(r.light || []) });
     } catch (e) { report(`things/${file}: ${e.message}`); }
     // everything this thing put into the world goes into its own box, so it can be removed later
     for (const o of [...world.children]) if (!before.has(o)) entry.box.add(o);
     world.add(entry.box);
     bakeAO(THREE, entry.box);
+    api.mood?.set(file, entry.light, entry.box);
     loaded.set(file, entry);
     if (brain) { for (const a of entry.actors) brain.addActor(a, states?.[a.id]); }
     return entry;
@@ -68,6 +70,7 @@ export async function build(api, prevState = null) {
     const entry = loaded.get(file);
     if (!entry) return;
     for (const a of entry.actors) brain?.removeActor(a.id);
+    api.mood?.set(file, []);
     world.remove(entry.box);
     entry.box.traverse(o => {
       o.geometry?.dispose();
