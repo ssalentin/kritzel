@@ -176,7 +176,7 @@ npm test                                        # the offline checks
 For each frame:
 
 1. **One call.** The frame is cropped to capture's `changed_box` (plus a margin) and scaled
-   to at most 768 px. One `claude -p` call (default `claude-sonnet-5-5`, `KRITZEL_MODEL` to
+   to at most 1568 px. One `claude -p` call (default `claude-sonnet-5-5`, `KRITZEL_MODEL` to
    change) gets the crop inline, all tools off, and a short system prompt with the contract
    and one example (`generate/examples/`). The existing modules' code is in the request. The
    reply is `NOTHING`, or one section per change: `### NEW` (a module), `### UPDATE <file>`

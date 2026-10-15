@@ -9,7 +9,7 @@ export const MODEL = process.env.KRITZEL_MODEL || 'claude-sonnet-5-5';
 export const FALLBACK_MODEL = process.env.KRITZEL_FALLBACK_MODEL || 'claude-opus-5-5';
 
 // images: JPEG Buffers, in order. Returns { text, cost, seconds, model }.
-export function oneShot({ system, text, images, model = MODEL, effort = 'low', timeoutMs = 3 * 60_000 }) {
+export function oneShot({ system, text, images, model = MODEL, effort = process.env.KRITZEL_EFFORT || 'low', timeoutMs = 3 * 60_000 }) {
   const msg = { type: 'user', message: { role: 'user', content: [
     ...images.map(i => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: i.toString('base64') } })),
     { type: 'text', text },
