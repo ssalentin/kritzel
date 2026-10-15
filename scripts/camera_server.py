@@ -1,8 +1,9 @@
 """Share this machine's cameras with the paper world over the network (e.g. Tailscale).
 
 Run it on the machine the camera is plugged into:
-    python3 scripts/camera_server.py            # listens on 0.0.0.0:8766
+    python3 scripts/camera_server.py            # listens on 127.0.0.1 and this machine's Tailscale IP, port 8766
 The viewer's server finds it on every online tailnet peer and lists its cameras.
+It never listens on the LAN: anyone there could watch the camera. CAMERA_HOST=<addr> overrides.
 
   GET /cameras.json            → {"host": ..., "cameras": [{"id", "name", "stream", "snapshot"}]}
   GET /stream/<id>.mjpg        → MJPEG stream (multipart/x-mixed-replace)
@@ -19,6 +20,7 @@ import socket
 import subprocess
 import threading
 import time
+import urllib.parse
 from pathlib import Path
 
 PORT = int(os.environ.get("CAMERA_PORT", "8766"))
@@ -44,13 +46,14 @@ class Feed:
     def get(cls, cam):
         with cls.lock:
             f = cls.feeds.get(cam)
-            if not f or not f.alive:
+            if not f or not f.alive or f.proc.poll() is not None:
                 f = cls.feeds[cam] = Feed(cam)
             f.clients += 1
             return f
 
     def __init__(self, cam):
         self.frame, self.seq, self.clients, self.alive, self.error = None, 0, 0, True, ""
+        self.last_frame = self.idle_since = time.time()
         self.cam, self.cond = cam, threading.Condition()
         self.proc = subprocess.Popen(
             ["ffmpeg", "-loglevel", "warning", "-f", "v4l2", "-input_format", "mjpeg", "-video_size", SIZE,
@@ -58,6 +61,23 @@ class Feed:
             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         threading.Thread(target=self.read, daemon=True).start()
         threading.Thread(target=self.log, daemon=True).start()
+        threading.Thread(target=self.watchdog, daemon=True).start()
+
+    def watchdog(self):
+        # stop ffmpeg when nobody watches for 5 s, or when the camera stalls (no frame for 10 s);
+        # killing it ends read() even if ffmpeg hangs without exiting
+        while self.proc.poll() is None:
+            time.sleep(1)
+            now = time.time()
+            if self.clients > 0:
+                self.idle_since = now
+            if now - self.idle_since > 5 or now - self.last_frame > 10:
+                self.stop()
+
+    def stop(self):
+        with Feed.lock:                     # new clients get a fresh feed from here on
+            self.alive = False
+        self.proc.kill()
 
     def log(self):
         # show ffmpeg's messages in this terminal, keep the last ones for the 503 answer
@@ -69,7 +89,7 @@ class Feed:
             self.error = line[-300:]
 
     def read(self):
-        buf, idle_since = b"", None
+        buf = b""
         while True:
             chunk = self.proc.stdout.read1(65536)
             if not chunk:
@@ -80,16 +100,13 @@ class Feed:
                 start = buf.find(b"\xff\xd8")
                 if 0 <= start < end:
                     with self.cond:
-                        self.frame, self.seq = buf[start:end + 2], self.seq + 1
+                        self.frame, self.seq, self.last_frame = buf[start:end + 2], self.seq + 1, time.time()
                         self.cond.notify_all()
                 buf = buf[end + 2:]
-            idle_since = (idle_since or time.time()) if self.clients == 0 else None
-            if idle_since and time.time() - idle_since > 5:
-                break
         self.proc.kill()
         self.proc.wait()
         time.sleep(0.2)                     # let the log thread catch ffmpeg's last words
-        self.alive = False
+        self.stop()
         with self.cond:
             self.cond.notify_all()
 
@@ -109,15 +126,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path == "/cameras.json":
+        path = urllib.parse.urlsplit(self.path).path
+        if path == "/cameras.json":
             return self.send(200, json.dumps({"host": socket.gethostname(), "cameras": cameras()}).encode(),
                              "application/json")
-        m = re.fullmatch(r"/(stream|snapshot)/(video\d+)\.(mjpg|jpg)", self.path)
+        m = re.fullmatch(r"/(stream|snapshot)/(video\d+)\.(mjpg|jpg)", path)
         if not m or m[2] not in {c["id"] for c in cameras()}:
             return self.send(404, b"not found", "text/plain")
         feed = Feed.get(m[2])
@@ -137,7 +154,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(frame))
                 self.wfile.write(frame + b"\r\n")
                 frame, seq = feed.next(seq)
-        except (BrokenPipeError, ConnectionResetError):
+        except OSError:
             pass
         finally:
             feed.release()
@@ -146,6 +163,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
 
+def addresses():
+    if os.environ.get("CAMERA_HOST"):
+        return [os.environ["CAMERA_HOST"]]
+    try:
+        ts = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=3).stdout.split()
+    except (OSError, subprocess.SubprocessError):
+        ts = []
+    if not ts:
+        print("no Tailscale IP found: only reachable from this machine (set CAMERA_HOST to change)")
+    return ["127.0.0.1", *ts[:1]]
+
+
 if __name__ == "__main__":
-    print(f"cameras on :{PORT}:", ", ".join(f"{c['id']} ({c['name']})" for c in cameras()) or "none found")
-    http.server.ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    print("cameras:", ", ".join(f"{c['id']} ({c['name']})" for c in cameras()) or "none found")
+    addrs = addresses()
+    servers = [http.server.ThreadingHTTPServer((a, PORT), Handler) for a in addrs]
+    print("listening on", ", ".join(f"{a}:{PORT}" for a in addrs))
+    for srv in servers[1:]:
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+    servers[0].serve_forever()

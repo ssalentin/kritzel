@@ -18,6 +18,10 @@ fi
 if ! curl -s -o /dev/null http://127.0.0.1:8766/cameras.json; then
   setsid python3 scripts/camera_server.py >camera.log 2>&1 &
   for _ in $(seq 20); do curl -s -o /dev/null http://127.0.0.1:8766/cameras.json && break; sleep 0.25; done
+  if ! curl -s -o /dev/null http://127.0.0.1:8766/cameras.json; then
+    echo "camera server did not start, see $root/camera.log" >&2
+    exit 1
+  fi
   echo "camera server: http://127.0.0.1:8766/cameras.json"
 fi
 
