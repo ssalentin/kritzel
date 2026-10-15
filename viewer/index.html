@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Paper World</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
 <style>
   :root { --bg: #bfe3dd; --fg: #10202e; --panel: rgba(255,255,255,.78); }
   /* --sky0..2 and --ink follow the time of day (mood.js) */
@@ -51,7 +52,7 @@
 <body>
 <div id="hud"><div id="err"></div></div>
 <div id="veil"><div><span class="pen">✏️</span> Neue Welt wird gemalt<span class="dots"></span></div></div>
-<div id="hint">Tippe eine Figur an, um ihr mit der Kamera zu folgen · Esc beendet</div>
+<div id="hint">Tippe eine Figur an, um ihr mit der Kamera zu folgen · Esc beendet <span id="ver"></span></div>
 <div id="card"></div>
 <button id="snd" type="button" aria-pressed="false">🔇 Ton an</button>
 <button id="camBtn" type="button">📷 Kamera</button>
@@ -361,6 +362,10 @@ import('./sound.js?v=' + Date.now()).then(m => {
   if (want) addEventListener('pointerdown', async () => { if (!sound.enabled) { await sound.setEnabled(true); show(); } }, { once: true });
   show();
 }).catch(e => { document.getElementById('err').textContent = 'sound.js: ' + e.message; });
+
+// version in the hint line: which build of Kritzel this page runs
+fetch('/api/version', { cache: 'no-store' }).then(r => r.json())
+  .then(v => { document.getElementById('ver').textContent = `· Kritzel v${v.version}${v.commit ? ' (' + v.commit + ')' : ''}`; }).catch(() => {});
 
 // camera picker (local or network cameras) with a small live preview
 import('./camera.js?v=' + Date.now())

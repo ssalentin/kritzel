@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="t">
+  <title id="t">Kritzel</title>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b3a6b"/>
+      <stop offset="0.55" stop-color="#8a6a9c"/>
+      <stop offset="1" stop-color="#f2b38a"/>
+    </linearGradient>
+    <linearGradient id="grass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9fd27a"/>
+      <stop offset="1" stop-color="#6aa65a"/>
+    </linearGradient>
+    <linearGradient id="rock" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8a5a3c"/>
+      <stop offset="0.45" stop-color="#6b4a3a"/>
+      <stop offset="1" stop-color="#4a4458"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffd88a" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#ffd88a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- the sheet of paper, slightly turned, with a dusk sky drawn on it -->
+  <rect x="44" y="44" width="424" height="424" rx="72" fill="url(#sky)"/>
+
+  <!-- stars and the drawn moon -->
+  <g fill="#fff6d8">
+    <circle cx="112" cy="118" r="5"/><circle cx="168" cy="84" r="3.5"/><circle cx="392" cy="150" r="4"/>
+    <circle cx="300" cy="96" r="3"/><circle cx="420" cy="104" r="3"/>
+  </g>
+  <path d="M380 72 a52 52 0 1 0 38 88 a42 42 0 1 1 -38 -88z" fill="#ffe27a" stroke="#10202e" stroke-width="6" stroke-linejoin="round"/>
+  <circle cx="341" cy="112" r="5" fill="#10202e"/>
+  <path d="M336 136 q8 7 17 1" fill="none" stroke="#10202e" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- the floating island: a scribbled outline, grass on top, rock underneath -->
+  <path d="M96 290 C 120 252, 210 236, 262 240 C 330 244, 404 258, 418 288
+           C 400 318, 330 326, 258 326 C 186 326, 116 320, 96 290 Z" fill="url(#grass)"/>
+  <path d="M100 298 C 150 330, 360 334, 414 296 C 392 360, 330 410, 262 444 C 196 410, 132 360, 100 298 Z"
+        fill="url(#rock)"/>
+  <path d="M96 290 C 120 252, 210 236, 262 240 C 330 244, 404 258, 418 288
+           C 404 318, 330 330, 258 328 C 186 328, 116 320, 96 290
+           M100 298 C 132 360, 196 410, 262 444 C 330 410, 392 360, 414 296"
+        fill="none" stroke="#10202e" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- a few scribble strokes on the rock, like pencil hatching -->
+  <path d="M190 352 l18 20 M232 372 l16 22 M290 368 l14 24 M332 346 l16 20" stroke="#10202e" stroke-width="6" stroke-linecap="round" opacity="0.55"/>
+
+  <!-- a lamp glow and Bana, the first drawn character -->
+  <circle cx="300" cy="262" r="58" fill="url(#glow)"/>
+  <path d="M232 274 C 222 236, 222 200, 238 170 C 250 150, 272 152, 270 176 C 266 206, 262 236, 262 274 C 258 290, 236 290, 232 274 Z"
+        fill="#f3d36b" stroke="#10202e" stroke-width="7" stroke-linejoin="round"/>
+  <circle cx="242" cy="196" r="4.5" fill="#10202e"/><circle cx="256" cy="194" r="4.5" fill="#10202e"/>
+  <path d="M240 210 v8 h16 v-8" fill="none" stroke="#10202e" stroke-width="4.5" stroke-linejoin="round"/>
+  <path d="M231 248 q16 6 33 0" fill="none" stroke="#6b4226" stroke-width="7" stroke-linecap="round"/>
+  <!-- the lantern -->
+  <path d="M310 274 v-46" stroke="#10202e" stroke-width="6" stroke-linecap="round"/>
+  <rect x="300" y="210" width="20" height="22" rx="4" fill="#ffd56a" stroke="#10202e" stroke-width="5"/>
+
+  <!-- the pencil that drew it all -->
+  <g transform="translate(392 214) rotate(38)">
+    <rect x="-13" y="-96" width="26" height="92" rx="4" fill="#f7b733" stroke="#10202e" stroke-width="6"/>
+    <rect x="-13" y="-110" width="26" height="18" rx="4" fill="#f08a8a" stroke="#10202e" stroke-width="6"/>
+    <path d="M-13 -4 L0 26 L13 -4 Z" fill="#f6dcb4" stroke="#10202e" stroke-width="6" stroke-linejoin="round"/>
+    <path d="M-4 17 L0 26 L4 17 Z" fill="#10202e"/>
+  </g>
+</svg>

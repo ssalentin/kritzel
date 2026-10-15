@@ -1,20 +1,65 @@
-# Kritzel
+<p align="center">
+  <img src="docs/logo.svg" alt="Kritzel logo: a drawn banana character on a floating island at night, with a pencil" width="160">
+</p>
 
-Drawings on paper become a living 3D paper diorama.
+<h1 align="center">Kritzel</h1>
 
-A camera watches a sheet of paper. Every figure, house or tree drawn on it becomes a
-small low-poly object on a floating island in the browser — and the characters start
-living there: they walk around, meet each other, make friends or run away, talk in
-speech bubbles and babble softly. Start a new sheet and the old island shrinks away
-while a new one grows in.
+<p align="center"><b>Draw on paper. Watch it come alive.</b><br>
+A camera watches your sheet of paper; every drawing becomes a living thing on a floating 3D island.</p>
 
-The look is modelled on the three.js "Littlest Tokyo" example: a pastel diorama on a
-soft mint backdrop, lit by a room environment, with very soft shadows and baked
-contact shading.
+<p align="center">
+  <img alt="version 0.1.0" src="https://img.shields.io/badge/version-0.1.0-6aa65a">
+  <img alt="three.js 0.160" src="https://img.shields.io/badge/three.js-0.160-000000?logo=threedotjs">
+  <img alt="rot.js 2.2" src="https://img.shields.io/badge/rot.js-2.2-8a5a3c">
+  <img alt="Claude Sonnet 5.5" src="https://img.shields.io/badge/drawings%20read%20by-Claude%20Sonnet%205.5-d97757?logo=anthropic">
+  <img alt="Python 3" src="https://img.shields.io/badge/python-3-3776ab?logo=python&logoColor=white">
+  <img alt="Node 24" src="https://img.shields.io/badge/node-24-5fa04e?logo=nodedotjs&logoColor=white">
+  <img alt="status: prototype" src="https://img.shields.io/badge/status-prototype-f2b38a">
+</p>
 
-> **Status:** prototype. The engine in `viewer/` is complete and runs on its own.
-> The generation stage (`generate/`) turns a settled camera frame into `things/*.js`
-> files; see [Generation](#generation).
+<p align="center">
+  <img src="docs/paper-to-world.png" alt="Left: a photo of a sheet of paper with a banana character, a moon, a cloud, a rock with a waterfall, birds with eyes and a spider in a jail. Right: the same drawings as a 3D diorama at night." width="100%">
+</p>
+
+Every figure, house or tree drawn on the sheet becomes a small low-poly thing on a
+floating island in the browser, and the characters start living there. They walk around,
+meet each other, make friends or run away, and talk in speech bubbles (or think in thought
+clouds) while babbling softly. Draw a moon and night falls; draw a lamp or a campfire and
+everyone gathers in its warm light. Label a drawing ("Vogel", "Fels") and it is read as
+that. Erase a drawing and its thing goes away. Start a new sheet and the old island
+shrinks away while a new one grows in.
+
+From finished drawing to living thing takes about 20 seconds: a non-LLM change detector
+waits until the hand has left the paper, then Claude reads the new drawing and writes a
+small three.js module for it, which runs sandboxed and is checked before it reaches the
+world.
+
+<p align="center">
+  <img src="docs/world-night.png" alt="The island at night: stars, a smiling moon behind a cloud, a grey rock with a waterfall, a spider in a cage, a banana character with a belt and two little birds saying 'Piep! Spielst du mit?'" width="80%">
+</p>
+
+> **Status:** prototype, version 0.1.0 (see `VERSION`; the viewer shows it with the
+> commit in its bottom line). The whole loop runs: camera → capture → generation →
+> viewer. It is built and run by a small team of agents; see [Generation](#generation)
+> for how drawings become code.
+
+## Features
+
+- **Paper to world, live:** capture notices a finished drawing (not a hand moving over
+  the paper, not a slid sheet), generation turns it into a thing, the open page hot-reloads.
+- **A living island:** characters have needs, moods, friendships and fears, find their
+  way around obstacles ([rot.js](https://ondras.github.io/rot.js/)), talk, dance, play tag,
+  and react to what's newly drawn.
+- **Light and time of day:** dusk by default; a drawn sun or moon turns day or night,
+  lamps and fires pool warm light and cast long shadows; characters get sleepy at night.
+- **Speech and thought bubbles** in a colour per speaker, laid out so they don't cover
+  each other.
+- **Any camera:** pick a camera on this computer or one shared over the network
+  (`scripts/camera_server.py`, e.g. a document camera on another machine via Tailscale).
+- **Safe by design:** model-written code runs in a sandboxed child process (no network,
+  no file writes, time limit), the page sends a strict Content-Security-Policy, and the
+  server only serves the viewer.
+- **Procedural sound:** Animal-Crossing-style babble and little effects, no sound files.
 
 ## How it works
 
@@ -215,6 +260,8 @@ generate/        the generation stage: frame → things/*.js
 scripts/         start.sh (server + camera window), dev.sh (server + capture + generate),
                  capture.py (camera → frames/settled/), camera_server.py (shares a camera),
                  newworld.sh (archive + reset)
+docs/            logo and screenshots for this README
+VERSION          the version the viewer shows (with the commit)
 BACKLOG.md       ideas and requests that are not scheduled work yet
 ```
 
