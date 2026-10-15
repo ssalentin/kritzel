@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 
 PORT = int(os.environ.get("CAMERA_PORT", "8766"))
-SIZE = os.environ.get("CAMERA_SIZE", "1280x720")
+SIZE = os.environ.get("CAMERA_SIZE", "1920x1080")    # what start.sh uses for the IPEVO
 
 
 def cameras():
@@ -51,12 +51,22 @@ class Feed:
 
     def __init__(self, cam):
         self.frame, self.seq, self.clients, self.alive, self.error = None, 0, 0, True, ""
-        self.cond = threading.Condition()
+        self.cam, self.cond = cam, threading.Condition()
         self.proc = subprocess.Popen(
-            ["ffmpeg", "-loglevel", "error", "-f", "v4l2", "-input_format", "mjpeg", "-video_size", SIZE,
+            ["ffmpeg", "-loglevel", "warning", "-f", "v4l2", "-input_format", "mjpeg", "-video_size", SIZE,
              "-i", f"/dev/{cam}", "-f", "mjpeg", "-q:v", "5", "-"],
-            stdout=subprocess.PIPE)
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         threading.Thread(target=self.read, daemon=True).start()
+        threading.Thread(target=self.log, daemon=True).start()
+
+    def log(self):
+        # show ffmpeg's messages in this terminal, keep the last ones for the 503 answer
+        for line in self.proc.stderr:
+            line = line.decode(errors="replace").strip()
+            if not line:
+                continue
+            print(f"{self.cam}: {line}", flush=True)
+            self.error = line[-300:]
 
     def read(self):
         buf, idle_since = b"", None
@@ -77,7 +87,8 @@ class Feed:
             if idle_since and time.time() - idle_since > 5:
                 break
         self.proc.kill()
-        self.error = self.proc.stderr.read().decode(errors="replace").strip()[-300:]
+        self.proc.wait()
+        time.sleep(0.2)                     # let the log thread catch ffmpeg's last words
         self.alive = False
         with self.cond:
             self.cond.notify_all()
