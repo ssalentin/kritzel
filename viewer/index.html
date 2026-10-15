@@ -152,7 +152,9 @@ function bubble(parent, y, { name = false } = {}) {
       const thought = !name && (/^💭/u.test(text) || /^\*.+\*$/.test(text) || /^Zzz/.test(text));
       if (thought) text = text.replace(/^💭\s*/u, '').replace(/^\*(.+)\*$/, '$1');
       if (!name && !thought) sound?.speak(parent, text);   // a speech bubble: soft babble
-      const who = name ? '' : (actorsNow().find(a => a.rig?.g === parent)?.name || '');
+      const cut = (t, n) => t.length > n ? t.slice(0, n - 1) + '…' : t;      // model-written names/lines can be long
+      text = cut(text, 90);
+      const who = cut(name ? '' : (actorsNow().find(a => a.rig?.g === parent)?.name || ''), 20);
       const hue = hueOf(who || parent.uuid);
       const font = name ? '600 44px system-ui' : thought ? 'italic 500 38px system-ui' : '600 40px system-ui';
       ctx.font = font;
