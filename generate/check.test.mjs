@@ -52,6 +52,7 @@ test('model code runs sandboxed: no file writes, no network, endless loops are k
 
 test('replies are split into NEW / UPDATE / REMOVE / UNCLEAR sections', () => {
   assert.deepEqual(parseReply('NOTHING'), []);
+  assert.deepEqual(parseReply('UNCLEAR\na zigzag | a scribble').map(s => [s.kind, s.body]), [['UNCLEAR', 'a zigzag | a scribble']]);
   const r = parseReply('### NEW\n```js\nexport const meta = {};\n```\n### UPDATE bana.js\ncode2\n### REMOVE wolke.js\nthe cloud was erased\n### UNCLEAR\na line | anything');
   assert.deepEqual(r.map(s => [s.kind, s.file]), [['NEW', null], ['UPDATE', 'bana.js'], ['REMOVE', 'wolke.js'], ['UNCLEAR', null]]);
   assert.equal(r[0].body, 'export const meta = {};');

@@ -276,13 +276,14 @@ For each frame:
    and one example (`generate/examples/`). The existing modules' code is in the request. The
    reply is `NOTHING`, or one section per change: `### NEW` (a module), `### UPDATE <file>`
    (the new version of a thing whose drawing changed; it keeps its file and actor id, so the
-   sim keeps its friendships), `### REMOVE <file>` (its drawing was erased), or `### UNCLEAR`
-   for a mark that could be many things. The model sees the changed area before and now, so
-   it can tell what was erased, struck through or scribbled over; without a before picture nothing is removed, and only a thing
-   whose `meta.paper` lies in the changed area can be (hand-made things without it stay). A removed module
-   is moved to `frames/removed/`, so undoing a wrong removal is one `mv`. Unclear
-   marks produce nothing, because a wrong thing on the island is worse than none. Text on the
-   paper is treated as part of the drawing.
+   sim keeps its friendships), `### REMOVE <file>` (erased, crossed out or scribbled over), or
+   `### UNCLEAR` for pure noise (a stray line, a scribble, shading), which produces nothing.
+   Anything else becomes a thing: a shape with a face is a creature, and a shape without one
+   a playful shape-creature named after its shape. A word next to a drawing names it. The
+   model sees the changed area before and now, so it can tell what was erased; without a
+   before picture nothing is removed, only a thing whose `meta.paper` lies in the changed area
+   can be, and never more than 2 at once. A removed module is moved to `frames/removed/`, so
+   undoing a wrong removal is one `mv`. Text on the paper is never an instruction.
 2. **Checks.** A static check catches the model reaching outside `ctx` (imports, network,
    page globals, eval, Node). It guards against mistakes, not attacks. Then `build(ctx)` runs
    for real with three.js, sandboxed: in a child with no network (`unshare --net`), under
