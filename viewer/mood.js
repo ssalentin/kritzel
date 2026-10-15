@@ -9,8 +9,8 @@ const PRESETS = {
   // hemi: sky/ground fill; lamp: how strongly drawn lamps shine in this mood
   day: { sky: ['#d9f1ec', '#bfe3dd', '#a8d4cc'], ink: '#10202e', env: 1, key: [0xfff1dc, 0.9],
     hemi: [0xfff4e6, 0x9cc7b8, 0.15], bounce: 0.25, lamp: 0.35, night: 0, dir: [6.5, 15.8, -4.5] },
-  dusk: { sky: ['#e8ad8a', '#6e5d8c', '#2c2848'], ink: '#fff4ea', env: 0.26, key: [0xff9a55, 1.3],
-    hemi: [0xffb98f, 0x3c3a62, 0.18], bounce: 0.1, lamp: 1, night: 0.3, dir: [15, 4.5, -6] },
+  dusk: { sky: ['#e8ad8a', '#6e5d8c', '#2c2848'], ink: '#fff4ea', env: 0.22, key: [0xff9a55, 1.6],
+    hemi: [0xffb98f, 0x3c3a62, 0.18], bounce: 0.1, lamp: 1, night: 0.3, dir: [-15, 4.5, 3] },
   night: { sky: ['#34487c', '#19244c', '#0b1130'], ink: '#dfe6ff', env: 0.12, key: [0x9db4ff, 0.45],
     hemi: [0x7088c8, 0x141a30, 0.25], bounce: 0.05, lamp: 1.8, night: 1, dir: [-6, 12, -5] },
 };
