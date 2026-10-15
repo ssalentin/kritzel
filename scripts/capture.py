@@ -93,16 +93,22 @@ class Stream:
         except OSError as e:
             self.proc, self.error = None, str(e)
             return
+        self.last_err, self.at = "", time.monotonic()
         threading.Thread(target=self.read, daemon=True).start()
+        threading.Thread(target=self.log, daemon=True).start()
+
+    def log(self):                   # drained all the time, or a full pipe would stall ffmpeg
+        for line in self.proc.stderr:
+            self.last_err = line.decode(errors="replace").strip() or self.last_err
 
     def read(self):
         while len(px := self.proc.stdout.read(W * H)) == W * H:
             with self.cond:
-                self.frame, self.seq = px, self.seq + 1
+                self.frame, self.seq, self.at = px, self.seq + 1, time.monotonic()
                 self.cond.notify_all()
-        err = self.proc.stderr.read().decode(errors="replace").strip().splitlines()
+        self.proc.wait()
         with self.cond:
-            self.error = (err[-1] if err else "") or "stream ended"
+            self.error = self.last_err or "stream ended"
             self.cond.notify_all()
 
     def next(self, seq, timeout=2):
@@ -194,9 +200,16 @@ class Detector:
         if t - self.still_since < (BIG_S if big else STILL_S):
             return None
         dx, dy = self.shift                  # report where the change is in the new picture
+        self.prev = (self.base, self.baseline)
         self.base, self.baseline, self.still_since, self.shift, self.diff = thumb, envelope(thumb), t, (0, 0), []
         diff = [min(max(i // W + dy, 0), H - 1) * W + min(max(i % W + dx, 0), W - 1) for i in diff]
         return ("big-change" if big else "drawn"), diff
+
+    def undo(self, t):
+        """The last emit didn't happen after all: back to the sheet before it, wait for stillness again."""
+        self.base, self.baseline = self.prev
+        self.anchor, self.still_since, self.shift, self.diff = None, t, None, None
+
 
 def box(diff, size):
     """Where the change is, in picture px, padded by 2 thumb px. For a drawing, only clumps of
@@ -362,6 +375,8 @@ def main():
                 stream.stop()
                 stream, url = None, None      # reconnect after a pause
                 time.sleep(2)
+            elif time.monotonic() - stream.at > 4:
+                status.set("camera-off", "kein Bild seit %d s" % (time.monotonic() - stream.at))
             else:
                 status.set(status.state or "watching")   # keep the heartbeat going
             continue
@@ -377,8 +392,11 @@ def main():
             print(f"camera snapshot: {e}", file=sys.stderr, flush=True)
             continue
         size = jpeg_size(data)
-        if not size:
-            print("camera sent something that isn't a usable JPEG; skipped", file=sys.stderr, flush=True)
+        snap = size and small(data)
+        if not snap or len(new_marks(snap, det.anchor)) >= NEW_PX:
+            # the snapshot isn't the picture that settled (a hand came back): let it settle again
+            print("snapshot differs from the settled picture; waiting again", file=sys.stderr, flush=True)
+            det.undo(t)
             continue
         previous = hand_on(data, size, *got, cam[1], previous)
         meta = json.loads((OUT / previous.replace(".jpg", ".json")).read_text())
