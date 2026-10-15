@@ -116,6 +116,7 @@ the paper, so writing on it is treated as part of the drawing.
 ```bash
 cd generate && npm install
 node generate.mjs --watch                       # every new frames/settled/<ts>.jpg → viewer/things/
+../scripts/dev.sh                               # or: viewer server + capture + generate in one go
 node generate.mjs frame.jpg --things /tmp/t     # one frame, into a scratch things/ dir
 npm test                                        # the offline checks
 ```
@@ -151,7 +152,8 @@ appears (both are only reported). `KRITZEL_MODEL` overrides the model
 viewer/          the engine (served at /viewer/)
 viewer/things/   one module per drawn object (empty in the repo)
 generate/        the generation stage: frame → things/*.js
-scripts/         start.sh (server + camera window), newworld.sh (archive + reset)
+scripts/         start.sh (server + camera window), dev.sh (server + capture + generate),
+                 newworld.sh (archive + reset)
 BACKLOG.md       ideas and requests that are not scheduled work yet
 ```
 
