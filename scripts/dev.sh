@@ -21,6 +21,6 @@ echo "capture:  frames/settled/  (log: capture.log)"
 if ! pgrep -f "generate.mjs --watch" >/dev/null; then
   [ -d generate/node_modules ] || (cd generate && npm install --no-audit --no-fund >/dev/null)
   mkdir -p frames/generated
-  setsid node generate/generate.mjs --watch --render >>generate.log 2>&1 < /dev/null &
+  setsid node generate/generate.mjs --watch >>generate.log 2>&1 < /dev/null &
 fi
 echo "generate: viewer/things/  (log: generate.log, reports: frames/generated/)"
