@@ -49,7 +49,8 @@ const atomicWrite = (path, data) => { const tmp = join(dirname(path), '.' + base
 function cropOf(frame, box, previous = null) {
   const [W, H] = execFileSync('identify', ['-format', '%w %h', frame], { encoding: 'utf8' }).split(' ').map(Number);
   const [x, y, w, h] = box || [0, 0, W, H];
-  const m = Math.max(40, 0.15 * Math.max(w, h));
+  // margin: 15 %, and enough that a small change (a word, a dot) is seen with the drawings around it
+  const m = Math.max(40, 0.15 * Math.max(w, h), (480 - Math.min(w, h)) / 2);
   const x0 = Math.max(0, Math.round(x - m)), y0 = Math.max(0, Math.round(y - m));
   const x1 = Math.min(W, Math.round(x + w + m)), y1 = Math.min(H, Math.round(y + h + m));
   const crop = f => execFileSync('convert', [f, '-crop', `${x1 - x0}x${y1 - y0}+${x0}+${y0}`, '+repage', '-resize', box ? '768x768>' : '1568x1568>', '-quality', '85', 'jpg:-'], { maxBuffer: 20e6 });
@@ -89,7 +90,7 @@ async function finish({ body, model, frame, images, takenIds, keepIds, calls }) 
   for (const fixModel of [null, MODEL, FALLBACK_MODEL]) {
     if (fixModel) {
       const r = await oneShot({ system: SYSTEM, text: fixText({ problems, code }), images: images.slice(-1), model: fixModel });   // the area now
-      calls.push({ model: fixModel, seconds: +r.seconds.toFixed(1), cost: r.cost, fix: true });
+      calls.push({ model: fixModel, seconds: +r.seconds.toFixed(1), cost: r.cost, fix: true, fixing: problems });
       code = stripFences(r.text).replace(/^###.*\n/, '');
       model = fixModel;
     }
@@ -98,7 +99,8 @@ async function finish({ body, model, frame, images, takenIds, keepIds, calls }) 
     if (!problems.length) {
       const b = await buildCheck(full, { takenIds });
       problems = b.problems;
-      for (const id of keepIds) if (!b.info.actors?.includes(id)) problems.push(`keep the actor id "${id}" (the sim remembers its friendships)`);
+      // a thing that is still alive keeps its actor ids (the sim remembers friendships); one that no longer is (figures → candles) has none to keep
+      if (b.info.actors?.length) for (const id of keepIds) if (!b.info.actors.includes(id)) problems.push(`keep the actor id "${id}" (the sim remembers its friendships)`);
     }
     if (!problems.length) return { code: full, model, warnings: /^\/\/ parts:/m.test(code) ? [] : ['no // parts: list (a thinking aid for the model; module accepted)'] };
   }
