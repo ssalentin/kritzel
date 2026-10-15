@@ -13,13 +13,13 @@ soft mint backdrop, lit by a room environment, with very soft shadows and baked
 contact shading.
 
 > **Status:** prototype. The engine in `viewer/` is complete and runs on its own.
-> The stage that turns a camera frame into a `things/*.js` file (the drawing → code
-> generation step) is not part of this repository yet.
+> The generation stage (`generate/`) turns a settled camera frame into `things/*.js`
+> files; see [Generation](#generation).
 
 ## How it works
 
 ```
-camera ──► frame ──► generation (not in this repo yet) ──► viewer/things/<thing>.js
+camera ──► frame ──► generation (generate/) ──────────► viewer/things/<thing>.js
                                                                   │
                                          browser polls every 0.5s │ hot reload
                                                                   ▼
@@ -132,12 +132,55 @@ export function build(ctx) {
 (6.9) and `env` (`env.actors` lists who is around). A thing that throws is reported in
 the on-screen error box; the rest of the world keeps running.
 
+## Generation
+
+`generate/` turns a settled frame (a photo of the whole sheet) into modules in
+`viewer/things/`. It runs headless Claude Code (`claude -p`) on this machine's existing
+Claude Code login, so it needs no API key. Each call runs with `--restricted`: no shell, no
+web, and only the images for that call are readable. The frame comes from whoever draws on
+the paper, so writing on it is treated as part of the drawing.
+
+```bash
+cd generate && npm install
+node generate.mjs --watch                       # every new frames/settled/<ts>.jpg → viewer/things/
+../scripts/dev.sh                               # or: viewer server + capture + generate in one go
+node generate.mjs frame.jpg --things /tmp/t     # one frame, into a scratch things/ dir
+npm test                                        # the offline checks
+```
+
+For each frame:
+
+1. **Understand.** Claude lists every drawing on the sheet as new, changed or unchanged,
+   matched against the existing things' `meta` (which doubles as the registry). A mark it
+   cannot read with confidence (a bare outline, a scribble) goes to `unclear` and produces
+   nothing. A wrong thing on the island is worse than no thing.
+2. **Write.** One module per new or changed drawing, placed on the island where it sits on
+   the paper. The prompt carries the contract and two reference things in
+   `generate/examples/`.
+3. **Check.** A static check forbids anything outside `ctx` (imports, network, page
+   globals, eval, file loaders). Then `build(ctx)` runs for real in Node with three.js, and
+   the result must be visible, on the island, with valid actors (unique id; non-person rigs
+   bring their own `animate`), obstacles, spots and a working `update`.
+4. **Render and look.** Headless Chromium renders the thing in the real viewer, and Claude
+   compares the render with the drawing: same kind of thing, the drawn features, nothing
+   big added. Failed checks go back to step 2 with the problems and the render (3 attempts).
+
+Only a module that passes everything is written, atomically, to `things/`. Each frame
+leaves a report in `frames/generated/<frame>.json` (what was understood, written,
+rejected and why, unclear marks) next to the render PNGs. A changed drawing rewrites its
+module and keeps its actor id, so the sim keeps its friendships. Not automatic yet:
+removing a thing whose drawing was erased, and archiving the world when a new sheet
+appears (both are only reported). `KRITZEL_MODEL` overrides the model
+(default `claude-opus-5-5`).
+
 ## Repository layout
 
 ```
 viewer/          the engine (served at /viewer/)
 viewer/things/   one module per drawn object (empty in the repo)
-scripts/         start.sh (server + camera window), capture.py (camera → frames/settled/),
+generate/        the generation stage: frame → things/*.js
+scripts/         start.sh (server + camera window), dev.sh (server + capture + generate),
+                 capture.py (camera → frames/settled/), camera_server.py (shares a camera),
                  newworld.sh (archive + reset)
 BACKLOG.md       ideas and requests that are not scheduled work yet
 ```

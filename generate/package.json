@@ -1,0 +1,11 @@
+{
+  "name": "kritzel-generate",
+  "private": true,
+  "type": "module",
+  "description": "Settled camera frame → viewer/things/<thing>.js, via headless Claude Code",
+  "scripts": { "test": "node --test" },
+  "dependencies": {
+    "three": "0.160.0",
+    "playwright-core": "^1.56.0"
+  }
+}
