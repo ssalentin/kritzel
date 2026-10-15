@@ -334,10 +334,16 @@ def cutout(data, box_px, size, path, diff=None, side=256):
         ink = [a if (int((y0 + (j // ow + 0.5) / k) / sy) * W + int((x0 + (j % ow + 0.5) / k) / sx)) in near else 0
                for j, a in enumerate(ink)]
     keep = dilate([a > 0.3 for a in ink], ow, oh, max(4, ow // 28))
+    if not any(keep):
+        return False
+    xs, ys = [j % ow for j, v in enumerate(keep) if v], [j // ow for j, v in enumerate(keep) if v]
+    bx0, bx1, by0, by1 = min(xs), max(xs) + 1, min(ys), max(ys) + 1    # trimmed to the cut-out itself
     rgba = bytearray()
-    for a, inside in zip(ink, keep):
-        c = round(255 - a * (255 - 38))
-        rgba += bytes((c, round(c * 0.97), round(c * 0.93), 255 if inside else 0))
+    for y in range(by0, by1):
+        for j in range(y * ow + bx0, y * ow + bx1):
+            c = round(255 - ink[j] * (255 - 38))
+            rgba += bytes((c, round(c * 0.97), round(c * 0.93), 255 if keep[j] else 0))
+    ow, oh = bx1 - bx0, by1 - by0
     png = subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{ow}x{oh}",
                           "-i", "-", "-f", "image2", "-c:v", "png", "-"], input=bytes(rgba), capture_output=True,
                          timeout=10).stdout
