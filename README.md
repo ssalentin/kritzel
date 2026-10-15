@@ -54,8 +54,10 @@ world.
   lamps and fires pool warm light and cast long shadows; characters get sleepy at night.
 - **Speech and thought bubbles** in a colour per speaker, laid out so they don't cover
   each other.
-- **Any camera:** pick a camera on this computer or one shared over the network
-  (`scripts/camera_server.py`, e.g. a document camera on another machine via Tailscale).
+- **A camera anywhere on your network:** share a camera with `scripts/camera_server.py`
+  (e.g. a document camera on another machine via Tailscale) and pick it in the viewer.
+  The picker also shows this computer's own cameras as a preview; capture uses network
+  cameras for now.
 - **Safe by design:** model-written code runs in a sandboxed child process (no network,
   no file writes, time limit), the page sends a strict Content-Security-Policy, and the
   server only serves the viewer.

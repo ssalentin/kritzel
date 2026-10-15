@@ -25,11 +25,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CHOICE = ROOT / "camera.json"
-VERSION = (ROOT / "VERSION").read_text().strip() if (ROOT / "VERSION").exists() else "dev"
-try:
-    COMMIT = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True, timeout=3).stdout.strip()
-except (OSError, subprocess.SubprocessError):
-    COMMIT = ""
+
+
+def version():
+    """Read per request: live code is merged in without restarting this server."""
+    v = (ROOT / "VERSION").read_text().strip() if (ROOT / "VERSION").exists() else "dev"
+    try:
+        c = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True, timeout=3).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        c = ""
+    return {"version": v, "commit": c}
 CAMERA_PORT = 8766
 
 
@@ -114,7 +119,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         path = urllib.parse.urlsplit(self.path).path
         if path == "/api/version":
-            return self.json({"version": VERSION, "commit": COMMIT})
+            return self.json(version())
         if path == "/api/cameras":
             hosts = tailnet_hosts()
             with ThreadPoolExecutor(16) as ex:
