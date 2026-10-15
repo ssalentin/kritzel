@@ -95,7 +95,7 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
       // an updated thing keeps its actor ids (the sim remembers friendships), unless it was renamed into
       // something else that is no longer alive (figures → "Kerzen")
       const renamed = oldName && code.match(/name:\s*['"]([^'"]+)['"]/)?.[1] !== oldName;
-      if (!(renamed && !b.info.actors?.length)) for (const id of keepIds) if (!b.info.actors.includes(id)) problems.push(`keep the actor id "${id}" (the sim remembers its friendships)`);
+      if (!(renamed && !b.info.actors?.length)) for (const id of keepIds) if (!b.info.actors?.includes(id)) problems.push(`keep the actor id "${id}" (the sim remembers its friendships)`);
     }
     if (!problems.length) return { code: full, model, warnings: /^\/\/ parts:/m.test(code) ? [] : ['no // parts: list (a thinking aid for the model; module accepted)'] };
   }
