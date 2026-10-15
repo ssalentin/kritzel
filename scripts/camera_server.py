@@ -54,7 +54,7 @@ class Feed:
         self.cam, self.cond = cam, threading.Condition()
         self.proc = subprocess.Popen(
             ["ffmpeg", "-loglevel", "warning", "-f", "v4l2", "-input_format", "mjpeg", "-video_size", SIZE,
-             "-i", f"/dev/{cam}", "-f", "mjpeg", "-q:v", "5", "-"],
+             "-i", f"/dev/{cam}", "-f", "mjpeg", "-q:v", "3", "-"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         threading.Thread(target=self.read, daemon=True).start()
         threading.Thread(target=self.log, daemon=True).start()
