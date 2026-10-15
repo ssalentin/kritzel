@@ -5,6 +5,8 @@ Camera selection (see scripts/camera_server.py for the remote side):
   GET /api/cameras              → remote cameras found on online Tailscale peers (and this host)
   GET /api/camera-stream/<ip>/<id>.mjpg|.jpg → that camera, proxied (same origin, works under https)
   GET/PUT /api/camera           → the chosen camera, kept in camera.json for the capture stage
+  GET /api/status               → what capture and generate are doing (frames/status/*.json), for the status pill
+  GET /api/status/cutout.png    → the newest drawing as a paper cut-out (written by capture)
 
 HOST / PORT env vars change the listen address (default 127.0.0.1:8765).
 """
@@ -16,6 +18,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import posixpath
 import urllib.error
 import urllib.parse
@@ -36,6 +39,8 @@ def version():
         c = ""
     return {"version": v, "commit": c}
 CAMERA_PORT = 8766
+STATUS = ROOT / "frames" / "status"
+ALIVE_S = 10          # a stage whose status file is older than this is not running
 
 
 def tailnet_hosts():
@@ -129,12 +134,36 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self.json(json.loads(CHOICE.read_text()))
             except (OSError, ValueError):
                 return self.json(None)
+        if path == "/api/status":
+            return self.json(self.status())
+        if path == "/api/status/cutout.png":
+            try:
+                body = (STATUS / "cutout.png").read_bytes()
+            except OSError:
+                return self.json({"error": "not found"}, 404)
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            return self.wfile.write(body)
         m = re.fullmatch(r"/api/camera-stream/([\d.]+)/(video\d+)\.(mjpg|jpg)", path)
         if m:
             return self.proxy(*m.groups())
         if not public(path):
             return self.json({"error": "not found"}, 404)
         super().do_GET()
+
+    def status(self):
+        now, out = time.time(), {"now": time.time()}
+        for stage in ("capture", "generate"):
+            try:
+                st = json.loads((STATUS / f"{stage}.json").read_text())
+                assert isinstance(st, dict)
+            except (OSError, ValueError, AssertionError):
+                st = {}
+            st["alive"] = isinstance(st.get("beat"), (int, float)) and now - st["beat"] < ALIVE_S
+            out[stage] = st
+        return out
 
     def do_HEAD(self):
         if not public(urllib.parse.urlsplit(self.path).path):

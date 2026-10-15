@@ -156,7 +156,8 @@ python3 scripts/capture.py
 ```
 
 Watches the camera chosen in `camera.json` (network cameras for now) through the viewer's
-server and waits until the picture holds still. When the sheet shows something new, it
+server, reading its video stream eight times a second, and waits until the picture holds
+still for 1.2 s (8 s for a big change such as a new sheet or a hand resting on the paper). When the sheet shows something new, it
 writes `frames/settled/<YYYYmmdd-HHMMSS>.json` and then the camera's frame as
 `<same>.jpg`. The JSON gives `previous` (the last frame handed on), `reason` (`drawn`, or
 `big-change` for a new or moved sheet), and `changed_box` (where the change is, in
@@ -166,6 +167,20 @@ pixels). Nothing is written while a hand moves over the paper or when nothing ch
 Keep the paper inside the camera's view: capture ignores the outer edge of the frame
 (about 60 px at 1080p), so a drawing made only there is never handed on. A sheet that
 slides or turns a little is aligned first and doesn't count as new.
+
+### Pipeline status in the viewer
+
+Capture and generate each keep a small status file, `frames/status/capture.json` and
+`frames/status/generate.json` (`state`, `since`, `beat`, `detail`; rewritten at least every
+few seconds). `GET /api/status` serves both, with `alive: false` for a stage whose file is
+older than 10 s. Capture also writes `frames/status/cutout.png`, the newest drawing as a
+paper cut-out (`GET /api/status/cutout.png`).
+
+The viewer shows this as a pill in the top-left corner (at the bottom on a phone): camera
+off or connected, watching the paper, movement, a new drawing (with its cut-out), building
+(with a seconds counter), the result, and a warning when a stage isn't running. When nothing
+happens it folds to a dot. The moment a drawing is seen, its cut-out stands on the island
+where the 3D thing will appear, and folds away when the thing arrives.
 
 ### Starting a new sheet
 
