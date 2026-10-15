@@ -88,6 +88,16 @@ async function buildCheck(file, takenIds) {
     }
     for (const o of obstacles) if (!num(o?.x) || !num(o?.z) || !num(o?.r)) { problems.push('obstacles need numeric { x, z, r }'); break; }
     for (const s of spots) if (!s?.kind || !num(s?.x) || !num(s?.z)) { problems.push('spots need { kind, x, z }'); break; }
+    // light (the engine's light contract): one object or a list of { kind, object3D, color, intensity, range, flicker }
+    const lights = r.light == null ? [] : [].concat(r.light);
+    for (const l of lights) {
+      if (!['sun', 'moon', 'lamp'].includes(l?.kind)) { problems.push(`light.kind must be 'sun', 'moon' or 'lamp' (got ${JSON.stringify(l?.kind)})`); continue; }
+      if (l.object3D != null && !l.object3D.isObject3D) problems.push(`${l.kind} light: object3D must be a mesh or group of this thing`);
+      if (l.intensity != null && !(num(l.intensity) && l.intensity >= 0 && l.intensity <= 5)) problems.push(`${l.kind} light: intensity must be 0-5`);
+      if (l.range != null && !(num(l.range) && l.range > 0)) problems.push(`${l.kind} light: range must be a positive number`);
+    }
+    const lamps = lights.filter(l => l?.kind === 'lamp').length;
+    if (lamps > 3) problems.push(`${lamps} lamps: at most 3 per thing (the engine lights only that many; make the others glow with an emissive material instead)`);
     if (r.update) {
       if (typeof r.update !== 'function') problems.push('update must be a function');
       // 30 simulated seconds, so something that only starts later (if (t > 5) ...) runs too

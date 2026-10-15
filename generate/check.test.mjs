@@ -57,3 +57,16 @@ test('replies are split into NEW / UPDATE / REMOVE / UNCLEAR sections', () => {
   assert.equal(r[0].body, 'export const meta = {};');
   assert.throws(() => parseReply('export const meta = {};'), /no ### sections/);
 });
+
+test('light: shape is checked, at most 3 lamps per thing', async () => {
+  const withLights = n => thing(`const g = new ctx.THREE.Group(); const m = new ctx.THREE.Mesh(new ctx.THREE.SphereGeometry(0.2), ctx.mat(0xffcc00)); g.add(m); ctx.world.add(g);
+    return { light: [${Array.from({ length: n }, () => "{ kind: 'lamp', object3D: m, intensity: 1, flicker: true }").join(', ')}] };`);
+  assert.deepEqual((await buildCheck(withLights(3))).problems, []);
+  assert.ok((await buildCheck(withLights(4))).problems.some(p => p.includes('at most 3')));
+  const bad = thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(1, 1, 1), ctx.mat(1))); ctx.world.add(g);
+    return { light: { kind: 'torch', intensity: 9 } };`);
+  assert.ok((await buildCheck(bad)).problems.some(p => p.includes("'sun', 'moon' or 'lamp'")));
+  const moon = thing(`const g = new ctx.THREE.Group(); const d = new ctx.THREE.Mesh(new ctx.THREE.SphereGeometry(0.5), ctx.mat(0xffffcc)); g.add(d); g.position.y = 4; ctx.world.add(g);
+    return { light: { kind: 'moon', object3D: d } };`);
+  assert.deepEqual((await buildCheck(moon)).problems, []);
+});
