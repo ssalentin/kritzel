@@ -2,8 +2,9 @@
 
     python3 scripts/capture.py            # needs viewer/serve.py running (it proxies the camera)
 
-Reads camera.json (written by the viewer's camera picker; only kind=remote for now), takes a
-snapshot every half second through the viewer's server and waits for the picture to settle.
+Reads camera.json (written by the viewer's camera picker; only kind=remote for now), watches
+that camera's MJPEG stream through the viewer's server (FPS thumbnails a second, decoded by one
+ffmpeg) and waits for the picture to settle; the full-size frame it hands on is a snapshot.
 When the settled sheet differs from the last one handed on, it writes
 
     frames/settled/<YYYYmmdd-HHMMSS>.json   first: {captured_at, camera, previous, reason,
@@ -12,7 +13,11 @@ When the settled sheet differs from the last one handed on, it writes
 
 No frame while something moves (a drawing hand), none when nothing changed. A small change
 counts once still for STILL_S ("drawn"); a large one (new sheet, moved paper, a resting hand)
-must stay still for BIG_S ("big-change"). Needs ffmpeg. Env: VIEWER (default
+must stay still for BIG_S ("big-change").
+
+For the viewer's status pill it keeps frames/status/capture.json up to date (state, since, beat,
+detail, last) and writes frames/status/cutout.png for each drawing handed on: the new ink on
+white paper, cut out around it. Needs ffmpeg. Env: VIEWER (default
 http://127.0.0.1:8765), KRITZEL_ROOT (where camera.json and frames/ live).
 """
 import datetime
@@ -22,12 +27,14 @@ import re
 import statistics
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from pathlib import Path
 
 ROOT = Path(os.environ.get("KRITZEL_ROOT", Path(__file__).resolve().parent.parent))
 OUT = ROOT / "frames" / "settled"
+STATUS = ROOT / "frames" / "status"
 VIEWER = os.environ.get("VIEWER", "http://127.0.0.1:8765")
 W, H = 320, 180          # compare at this size: averages away sensor noise, keeps pencil lines
 PIXEL = 20               # brightness step (0-255) that counts as a changed pixel
@@ -35,7 +42,8 @@ NEW_PX = 15              # changed pixels that count: vs the still picture = mov
 INK_R = 2                # new ink must be this far (thumb px) from ink already there
 SLIDE = 5                # how far (thumb px, ×6 at 1080p) the paper may slide and still be the same sheet
 BIG = 0.04               # share changed that is a big change, not drawing
-STILL_S, BIG_S, EVERY_S = 1.2, 8.0, 0.5   # a sample itself takes ~0.65 s (fetch + ffmpeg)
+STILL_S, BIG_S, FPS = 1.2, 8.0, 8
+SHRINK = f"format=gray,scale=960:540:flags=area,erosion,erosion,scale={W}:{H}:flags=area"   # keeps thin lines
 MAX_BYTES = 20 << 20
 
 
@@ -55,19 +63,58 @@ def jpeg_size(data):
     return None
 
 
+def centred(px):
+    """Brightness centred on the median, so exposure drift is no change."""
+    m = statistics.median(px[::7])
+    return [p - m for p in px]
+
+
 def small(data):
-    """Grey W×H thumbnail, brightness centred on its median (so exposure drift is no change)."""
+    """Grey W×H thumbnail of one JPEG."""
     try:
-        px = subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "jpeg_pipe", "-i", "-", "-vf",
-                             f"format=gray,scale=960:540:flags=area,erosion,erosion,scale={W}:{H}:flags=area",
+        px = subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "jpeg_pipe", "-i", "-", "-vf", SHRINK,
                              "-f", "rawvideo", "-"], input=data, capture_output=True, timeout=10).stdout
     except (subprocess.SubprocessError, OSError) as e:
         print(f"ffmpeg: {e}", file=sys.stderr, flush=True)
         return None
-    if len(px) != W * H:
-        return None
-    m = statistics.median(px[::7])
-    return [p - m for p in px]
+    return centred(px) if len(px) == W * H else None
+
+
+class Stream:
+    """One ffmpeg turning the camera's MJPEG stream into thumbnails; keeps only the newest, so a
+    slow moment never builds a backlog."""
+
+    def __init__(self, url):
+        self.frame, self.seq, self.error, self.cond = None, 0, "", threading.Condition()
+        try:
+            self.proc = subprocess.Popen(["ffmpeg", "-loglevel", "error", "-f", "mpjpeg", "-i", url, "-vf",
+                                          f"fps={FPS},{SHRINK}", "-f", "rawvideo", "-"],
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except OSError as e:
+            self.proc, self.error = None, str(e)
+            return
+        threading.Thread(target=self.read, daemon=True).start()
+
+    def read(self):
+        while len(px := self.proc.stdout.read(W * H)) == W * H:
+            with self.cond:
+                self.frame, self.seq = px, self.seq + 1
+                self.cond.notify_all()
+        err = self.proc.stderr.read().decode(errors="replace").strip().splitlines()
+        with self.cond:
+            self.error = (err[-1] if err else "") or "stream ended"
+            self.cond.notify_all()
+
+    def next(self, seq, timeout=2):
+        """The newest thumbnail after `seq`, as (pixels, seq); (None, seq) on timeout or end."""
+        with self.cond:
+            self.cond.wait_for(lambda: self.seq != seq or self.error, timeout)
+            return (self.frame, self.seq) if self.seq != seq else (None, seq)
+
+    def stop(self):
+        if self.proc:
+            self.proc.kill()
+            self.proc.wait()
 
 
 def envelope(thumb, ink=INK_R):
@@ -105,7 +152,12 @@ def paper_shift(thumb, base):
 def moved(thumb, d):
     """`thumb` slid back by d, so it lines up with the picture it was compared with."""
     dx, dy = d
-    return [thumb[min(max(y + dy, 0), H - 1) * W + min(max(x + dx, 0), W - 1)] for y in range(H) for x in range(W)]
+    out = []
+    for y in range(H):
+        r = min(max(y + dy, 0), H - 1) * W
+        row = thumb[r:r + W]
+        out += row[dx:] + row[-1:] * dx if dx >= 0 else row[:1] * -dx + row[:dx]
+    return out
 
 
 class Detector:
@@ -119,28 +171,32 @@ class Detector:
     def __init__(self, baseline=None):
         self.base = baseline
         self.baseline = baseline and envelope(baseline)
-        self.anchor = self.still_since = self.shift = None
+        self.anchor = self.still_since = self.shift = self.moved_at = self.diff = None
 
     def feed(self, thumb, t):
         if self.anchor is None or len(new_marks(thumb, self.anchor)) >= NEW_PX:
-            self.anchor, self.still_since, self.shift = envelope(thumb, 1), t, None
+            if self.anchor is not None:
+                self.moved_at = t
+            self.anchor, self.still_since, self.shift, self.diff = envelope(thumb, 1), t, None, None
             return None
-        if self.baseline is None:
-            diff, self.shift = list(range(W * H)), (0, 0)
-        else:
-            if self.shift is None:
+        if t - self.still_since < STILL_S:
+            return None
+        if self.diff is None:                # once per still spell: what is new since the last sheet?
+            if self.baseline is None:
+                self.shift, self.diff = (0, 0), list(range(W * H))
+            else:
                 self.shift = paper_shift(thumb, self.base)
-            diff = new_marks(moved(thumb, self.shift), self.baseline)
-            if len(diff) < NEW_PX:
-                return None
+                self.diff = new_marks(moved(thumb, self.shift), self.baseline)
+        diff = self.diff
+        if len(diff) < NEW_PX:
+            return None
         big = len(diff) > BIG * W * H
         if t - self.still_since < (BIG_S if big else STILL_S):
             return None
         dx, dy = self.shift                  # report where the change is in the new picture
-        self.base, self.baseline, self.still_since, self.shift = thumb, envelope(thumb), t, (0, 0)
+        self.base, self.baseline, self.still_since, self.shift, self.diff = thumb, envelope(thumb), t, (0, 0), []
         diff = [min(max(i // W + dy, 0), H - 1) * W + min(max(i % W + dx, 0), W - 1) for i in diff]
         return ("big-change" if big else "drawn"), diff
-
 
 def box(diff, size):
     """Where the change is, in picture px, padded by 2 thumb px. For a drawing, only clumps of
@@ -198,40 +254,141 @@ def hand_on(data, size, reason, diff, info, previous):
     return f"{stem}.jpg"
 
 
+def write_atomic(path, body):
+    tmp = path.with_name("." + path.name + ".tmp")
+    tmp.write_bytes(body)
+    tmp.replace(path)
+
+
+class Status:
+    """frames/status/capture.json: what capture is doing now, rewritten at least every 2 s
+    (beat) so the viewer can tell a running capture from a dead one."""
+
+    def __init__(self):
+        self.state, self.since, self.written, self.last = None, 0, 0, None
+
+    def set(self, state, detail=""):
+        now = time.time()
+        if state != self.state:
+            self.state, self.since = state, now
+        elif now - self.written < 2:
+            return
+        self.written = now
+        try:
+            STATUS.mkdir(parents=True, exist_ok=True)
+            write_atomic(STATUS / "capture.json", json.dumps({"state": state, "since": self.since, "beat": now,
+                                                              "detail": detail, "last": self.last}).encode())
+        except OSError as e:
+            print(f"status: {e}", file=sys.stderr, flush=True)
+
+
+def dilate(mask, w, h, r):
+    """Boolean mask grown by r px (a square), rows then columns."""
+    def grow(line):
+        n, acc, out = len(line), [0], []
+        for v in line:
+            acc.append(acc[-1] + v)
+        return [acc[min(n, i + r + 1)] - acc[max(0, i - r)] > 0 for i in range(n)]
+    rows = [grow(mask[y * w:(y + 1) * w]) for y in range(h)]
+    cols = [grow([rows[y][x] for y in range(h)]) for x in range(w)]
+    return [cols[x][y] for y in range(h) for x in range(w)]
+
+
+def cutout(data, box_px, size, path, diff=None, side=256):
+    """The changed area as a paper cut-out: dark ink on white, transparent outside a margin
+    around the ink. Same margin as generate's crop. With `diff` (the new marks, thumb pixels)
+    only ink near them counts, so older drawings in the margin stay out."""
+    x, y, w, h = box_px
+    m = max(40, int(0.15 * max(w, h)))
+    x0, y0 = max(0, x - m), max(0, y - m)
+    x1, y1 = min(size[0], x + w + m), min(size[1], y + h + m)
+    k = min(1, side / max(x1 - x0, y1 - y0))
+    ow, oh = max(1, round((x1 - x0) * k)), max(1, round((y1 - y0) * k))
+    px = subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "jpeg_pipe", "-i", "-", "-vf",
+                         f"crop={x1 - x0}:{y1 - y0}:{x0}:{y0},scale={ow}:{oh}:flags=area,format=gray",
+                         "-f", "rawvideo", "-"], input=data, capture_output=True, timeout=10).stdout
+    if len(px) != ow * oh:
+        return False
+    paper = max(1, sorted(px)[len(px) * 4 // 5])          # most of the crop is paper
+    ink = [min(1, max(0, ((paper - v) / paper - 0.15) / 0.25)) for v in px]
+    if diff:
+        near = set()
+        for i in diff:
+            for dy in (-2, -1, 0, 1, 2):
+                for dx in (-2, -1, 0, 1, 2):
+                    near.add(i + dy * W + dx)
+        sx, sy = size[0] / W, size[1] / H
+        ink = [a if (int((y0 + (j // ow + 0.5) / k) / sy) * W + int((x0 + (j % ow + 0.5) / k) / sx)) in near else 0
+               for j, a in enumerate(ink)]
+    keep = dilate([a > 0.3 for a in ink], ow, oh, max(4, ow // 28))
+    rgba = bytearray()
+    for a, inside in zip(ink, keep):
+        c = round(255 - a * (255 - 38))
+        rgba += bytes((c, round(c * 0.97), round(c * 0.93), 255 if inside else 0))
+    png = subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{ow}x{oh}",
+                          "-i", "-", "-f", "image2", "-c:v", "png", "-"], input=bytes(rgba), capture_output=True,
+                         timeout=10).stdout
+    if not png:
+        return False
+    write_atomic(path, png)
+    return True
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     done = sorted(OUT.glob("*.jpg"))
     previous = done[-1].name if done else None
     det = Detector(small(done[-1].read_bytes()) if done else None)
-    url = None
-    next_at = 0
+    status, stream, url, seq, checked = Status(), None, None, 0, 0
     while True:
-        time.sleep(max(0, next_at - time.monotonic()))
-        next_at = time.monotonic() + EVERY_S
-        cam = camera()
-        if cam is None:
-            if url != "":
-                print("no remote camera chosen in camera.json; waiting", flush=True)
-            url = ""
+        if time.monotonic() - checked > 1:   # the picker may switch cameras at any time
+            checked, cam = time.monotonic(), camera()
+            if cam is None or cam[0] != url:
+                if stream:
+                    stream.stop()
+                stream, url, seq, det.anchor = None, cam and cam[0], 0, None
+            if cam is None:
+                status.set("no-camera")
+                time.sleep(0.5)
+                continue
+            if stream is None:
+                print(f"watching {cam[1]['name']} on {cam[1]['host']}", flush=True)
+                stream = Stream(url[:-4] + ".mjpg")
+        px, seq = stream.next(seq)
+        if px is None:
+            if stream.error:
+                print(f"camera: {stream.error}", file=sys.stderr, flush=True)
+                status.set("camera-off", stream.error[:120])
+                stream.stop()
+                stream, url = None, None      # reconnect after a pause
+                time.sleep(2)
+            else:
+                status.set(status.state or "watching")   # keep the heartbeat going
             continue
-        if cam[0] != url:
-            url, det.anchor = cam[0], None
-            print(f"watching {cam[1]['name']} on {cam[1]['host']}", flush=True)
-        try:
+        t = time.monotonic()
+        got = det.feed(centred(px), t)
+        if not got:
+            status.set("moving" if det.moved_at and t - det.moved_at < STILL_S + 1 else "watching")
+            continue
+        try:                                  # hand on the full-size picture, not the thumbnail
             with urllib.request.urlopen(url, timeout=10) as r:
                 data = r.read(MAX_BYTES + 1)
         except OSError as e:
-            print(f"camera: {e}", file=sys.stderr, flush=True)
-            time.sleep(2)
+            print(f"camera snapshot: {e}", file=sys.stderr, flush=True)
             continue
         size = jpeg_size(data)
-        thumb = size and small(data)
-        if not thumb:
+        if not size:
             print("camera sent something that isn't a usable JPEG; skipped", file=sys.stderr, flush=True)
             continue
-        if got := det.feed(thumb, time.monotonic()):
-            previous = hand_on(data, size, *got, cam[1], previous)
-
+        previous = hand_on(data, size, *got, cam[1], previous)
+        meta = json.loads((OUT / previous.replace(".jpg", ".json")).read_text())
+        try:
+            cut = cutout(data, meta["changed_box"], size, STATUS / "cutout.png", got[1])
+        except (subprocess.SubprocessError, OSError):
+            cut = False
+        status.last = {"frame": previous[:-4], "at": time.time(), "reason": got[0], "box": meta["changed_box"],
+                       "width": size[0], "height": size[1], "cutout": cut}
+        status.set("settled", previous[:-4])
 
 if __name__ == "__main__":
     try:
