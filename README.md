@@ -83,6 +83,19 @@ The 📷 button in the viewer opens a camera picker with a live preview:
 The choice is stored in `camera.json` at the repository root for the capture stage.
 `HOST`/`PORT` env vars change where `viewer/serve.py` listens.
 
+### Capturing drawings
+
+```bash
+python3 scripts/capture.py
+```
+
+Watches the camera chosen in `camera.json` (network cameras for now) through the viewer's
+server and waits until the picture holds still. When the sheet shows something new, it
+writes `frames/settled/<YYYYmmdd-HHMMSS>.json` and then the camera's frame as
+`<same>.jpg`. The JSON gives `previous` (the last frame handed on), `reason` (`drawn`, or
+`big-change` for a new or moved sheet), and `changed_box` (where the change is, in
+pixels). Nothing is written while a hand moves over the paper or when nothing changed.
+
 ### Starting a new sheet
 
 ```bash
@@ -123,7 +136,8 @@ the on-screen error box; the rest of the world keeps running.
 ```
 viewer/          the engine (served at /viewer/)
 viewer/things/   one module per drawn object (empty in the repo)
-scripts/         start.sh (server + camera window), newworld.sh (archive + reset)
+scripts/         start.sh (server + camera window), capture.py (camera → frames/settled/),
+                 newworld.sh (archive + reset)
 BACKLOG.md       ideas and requests that are not scheduled work yet
 ```
 
