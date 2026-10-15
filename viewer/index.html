@@ -131,7 +131,10 @@ scene.add(world);
 // bubbles stay apart; layoutBubbles() stacks overlapping ones on screen every frame.
 const bubbles = new Set();
 const HUES = [210, 140, 330, 30, 270, 180, 0, 90, 300, 55], hues = new Map();
-const hueOf = s => { if (!hues.has(s)) hues.set(s, HUES[hues.size % HUES.length]); return hues.get(s); };   // distinct colour per speaker
+const hueOf = s => {                                  // a speaker's colour, the same after every reload
+  if (!hues.has(s)) { let h = 0; for (const c of s) h = (h * 31 + c.codePointAt(0)) >>> 0; hues.set(s, HUES[h % HUES.length]); }
+  return hues.get(s);
+};
 function bubble(parent, y, { name = false } = {}) {
   const cv = document.createElement('canvas');
   const ctx = cv.getContext('2d');
@@ -218,9 +221,9 @@ function bubble(parent, y, { name = false } = {}) {
 
 // keep visible bubbles from covering each other: nearer bubbles keep their place and are drawn
 // on top; farther ones move up or sideways on screen (via the sprite's centre, so in pixels)
-// until they're clear and still on screen. Eased, so nothing jumps.
+// until they're clear and still on screen. A bubble keeps its slot until it's really covered.
 const _bp = new THREE.Vector3(), _bs = new THREE.Vector3();
-function layoutBubbles() {
+function layoutBubbles(dt) {
   const list = [];
   for (const sp of bubbles) {
     if (!sp.parent) { bubbles.delete(sp); continue; }
@@ -235,25 +238,39 @@ function layoutBubbles() {
   }
   list.sort((a, b) => a.dist - b.dist);
   const placed = [];
+  const now = performance.now();
+  const overlap = r => { let ov = 0; for (const o of placed) ov += Math.max(0, Math.min(r.r, o.r) - Math.max(r.l, o.l)) * Math.max(0, Math.min(r.b, o.b) - Math.max(r.t, o.t)); return ov; };
+  const rect = (b, dx, dy) => ({ l: b.x + dx - b.w / 2, r: b.x + dx + b.w / 2, t: b.yb - dy - b.h, b: b.yb - dy });
+  const onScreen = r => r.t >= 4 && r.l >= 4 && r.r <= innerWidth - 4;
   list.forEach((b, i) => {
-    // first spot with no overlap; if the screen is too crowded, the spot with the least overlap
-    let best = null, bestOv = Infinity, bestR = null;
-    search: for (let k = 0; k <= 10; k++) {
-      for (const sx of [0, -1, 1, -2, 2, -3, 3]) {
-        const dx = sx * b.w * 0.55, dy = k * b.h * 0.5;
-        const r = { l: b.x + dx - b.w / 2, r: b.x + dx + b.w / 2, t: b.yb - dy - b.h, b: b.yb - dy };
-        if (r.t < 4 || r.l < 4 || r.r > innerWidth - 4) continue;              // stay on screen
-        let ov = 0;
-        for (const o of placed) ov += Math.max(0, Math.min(r.r, o.r) - Math.max(r.l, o.l)) * Math.max(0, Math.min(r.b, o.b) - Math.max(r.t, o.t));
-        if (ov < bestOv) { bestOv = ov; best = { dx, dy }; bestR = r; }
-        if (ov === 0) break search;
-      }
-    }
-    if (bestR) placed.push(bestR);
-    best ??= { dx: 0, dy: 0 };
     const u = b.sp.userData;
-    u.dx = (u.dx || 0) + (best.dx - (u.dx || 0)) * 0.2;
-    u.dy = (u.dy || 0) + (best.dy - (u.dy || 0)) * 0.2;
+    u.slot ??= { dx: 0, dy: 0 };
+    // sticky: keep the current slot while it's on screen and (almost) clear; only look for a new
+    // one when it's really covered, and not more often than every 400 ms per bubble
+    // back home (right above the speaker) as soon as that spot is clear again
+    if ((u.slot.dx || u.slot.dy) && now >= (u.movedAt || 0) + 400) {
+      const home = rect(b, 0, 0);
+      if (onScreen(home) && overlap(home) === 0) { u.slot = { dx: 0, dy: 0 }; u.movedAt = now; }
+    }
+    const cur = rect(b, u.slot.dx, u.slot.dy);
+    const tolerance = b.w * b.h * 0.04;
+    if (!(onScreen(cur) && overlap(cur) <= tolerance) && !(now < (u.movedAt || 0) + 400)) {
+      let best = null, bestOv = Infinity;
+      search: for (let k = 0; k <= 10; k++) {
+        for (const sx of [0, -1, 1, -2, 2, -3, 3]) {
+          const dx = sx * b.w * 0.55, dy = k * b.h * 0.5, r = rect(b, dx, dy);
+          if (!onScreen(r)) continue;
+          const ov = overlap(r);
+          if (ov < bestOv) { bestOv = ov; best = { dx, dy }; }
+          if (ov === 0) break search;
+        }
+      }
+      if (best && (best.dx !== u.slot.dx || best.dy !== u.slot.dy)) { u.slot = best; u.movedAt = now; }
+    }
+    placed.push(rect(b, u.slot.dx, u.slot.dy));
+    const k = 1 - Math.exp(-dt / 0.25);                              // glide (~0.25 s), same at any frame rate
+    u.dx = (u.dx || 0) + (u.slot.dx - (u.dx || 0)) * k;
+    u.dy = (u.dy || 0) + (u.slot.dy - (u.dy || 0)) * k;
     b.sp.center.set(0.5 - u.dx / b.w, -u.dy / b.h);
     b.sp.renderOrder = 10 + (list.length - i);          // nearest on top
   });
@@ -460,7 +477,7 @@ function animate() {
     if (performance.now() > cardAt) { cardAt = performance.now() + 250; try { refreshCard(); } catch {} }
   }
   stepMorph();
-  layoutBubbles();
+  layoutBubbles(dt);
   lighting.update(clock.elapsedTime, dt);
   controls.update();
   renderer.render(scene, camera);
