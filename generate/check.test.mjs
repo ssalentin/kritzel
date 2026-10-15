@@ -72,3 +72,11 @@ test('light: shape is checked, at most 3 lamps per thing', async () => {
   const far = withLights(1).replace("intensity: 1,", "intensity: 1, range: 50,");
   assert.ok((await buildCheck(far)).problems.some(p => p.includes('range must be 0-20')));
 });
+
+test('holds: the actor must exist and the circle must have room inside', async () => {
+  const jail = obstacles => thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(2, 1, 2), ctx.mat(1))); g.position.set(1, 0.5, 1); ctx.world.add(g);
+    return { obstacles: ${obstacles}, holds: [{ actor: 'spinne', x: 1, z: 1, r: 0.8 }] };`);
+  assert.deepEqual((await buildCheck(jail('[{ x: 0, z: 1, r: 0.15 }, { x: 2, z: 1, r: 0.15 }]'), { takenIds: ['spinne'] })).problems, []);
+  assert.ok((await buildCheck(jail('[{ x: 1, z: 1, r: 1.1 }]'), { takenIds: ['spinne'] })).problems.some(p => p.includes('no room inside')));
+  assert.ok((await buildCheck(jail('[]'), { takenIds: [] })).problems.some(p => p.includes('on the island nowhere')));
+});

@@ -1,6 +1,6 @@
 // The one question the live loop asks: here is what changed on the paper, write the modules.
 import { readFileSync } from 'node:fs';
-import { islandOf } from './generate.mjs';
+import { islandOf } from './place.mjs';
 
 const example = readFileSync(new URL('./examples/schnecke.js', import.meta.url), 'utf8');
 
