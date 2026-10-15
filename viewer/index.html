@@ -124,7 +124,13 @@ const lighting = createMood({ THREE, scene, key: sun, hemi, bounce });
 const world = new THREE.Group();
 scene.add(world);
 
-// speech bubble / label sprite, attached to an object
+// speech bubble / thought bubble / name label sprite, attached to an object.
+// Thoughts: text starting with 💭, *actions* and Zzz… are drawn as a cloud with little circles,
+// in italics and without babble. Every speaker gets a colour (border + name tag) so overlapping
+// bubbles stay apart; layoutBubbles() stacks overlapping ones on screen every frame.
+const bubbles = new Set();
+const HUES = [210, 140, 330, 30, 270, 180, 0, 90, 300, 55], hues = new Map();
+const hueOf = s => { if (!hues.has(s)) hues.set(s, HUES[hues.size % HUES.length]); return hues.get(s); };   // distinct colour per speaker
 function bubble(parent, y, { name = false } = {}) {
   const cv = document.createElement('canvas');
   const ctx = cv.getContext('2d');
@@ -132,7 +138,9 @@ function bubble(parent, y, { name = false } = {}) {
   sprite.renderOrder = 10;
   sprite.visible = false;            // hidden until there is something to say
   sprite.position.y = y;
+  sprite.userData = { baseY: y, shift: 0 };
   parent.add(sprite);
+  if (!name) bubbles.add(sprite);
   let last = null;
   return {
     sprite,
@@ -141,18 +149,58 @@ function bubble(parent, y, { name = false } = {}) {
       last = text;
       sprite.visible = !!text;
       if (!text) return;
-      if (!name) sound?.speak(parent, text);   // a speech bubble: soft babble
-      const font = name ? '600 44px system-ui' : '600 40px system-ui';
+      const thought = !name && (/^💭/u.test(text) || /^\*.+\*$/.test(text) || /^Zzz/.test(text));
+      if (thought) text = text.replace(/^💭\s*/u, '').replace(/^\*(.+)\*$/, '$1');
+      if (!name && !thought) sound?.speak(parent, text);   // a speech bubble: soft babble
+      const who = name ? '' : (actorsNow().find(a => a.rig?.g === parent)?.name || '');
+      const hue = hueOf(who || parent.uuid);
+      const font = name ? '600 44px system-ui' : thought ? 'italic 500 38px system-ui' : '600 40px system-ui';
       ctx.font = font;
-      const w = Math.ceil(ctx.measureText(text).width) + 48, h = 76;
-      cv.width = w; cv.height = h + (name ? 0 : 18);
+      const tw = Math.ceil(ctx.measureText(text).width);
+      const tag = who ? 30 : 0;                       // room for the name tag above the bubble
+      ctx.font = '700 24px system-ui';
+      const nameW = who ? Math.ceil(ctx.measureText(who).width) + 22 : 0;
       ctx.font = font;
-      ctx.fillStyle = name ? 'rgba(20,30,45,.82)' : '#fff';
-      ctx.beginPath(); ctx.roundRect(2, 2, w - 4, h - 4, 30); ctx.fill();
-      if (!name) { ctx.beginPath(); ctx.moveTo(w / 2 - 14, h - 4); ctx.lineTo(w / 2, h + 16); ctx.lineTo(w / 2 + 14, h - 4); ctx.fill(); }
-      ctx.fillStyle = name ? '#fff' : '#152030';
+      const w = Math.max(tw + 56, nameW + 40), h = 76, tail = name ? 0 : thought ? 34 : 18;
+      cv.width = w + 8; cv.height = tag + h + tail + 4;
+      const top = tag;
+      if (name) {
+        ctx.fillStyle = 'rgba(20,30,45,.82)';
+        ctx.beginPath(); ctx.roundRect(2, 2, w - 4, h - 4, 30); ctx.fill();
+      } else if (thought) {
+        // a cloud: overlapping circles along the edge, then two small circles trailing down
+        ctx.fillStyle = 'rgba(236,244,255,.96)'; ctx.strokeStyle = `hsl(${hue} 55% 55%)`; ctx.lineWidth = 3;
+        const cloud = () => {
+          ctx.beginPath();
+          ctx.roundRect(14, top + 10, w - 20, h - 22, 26);
+          for (let x = 34; x < w - 20; x += 34) { ctx.moveTo(x + 18, top + 12); ctx.arc(x, top + 14, 18, 0, Math.PI * 2); ctx.moveTo(x + 18, top + h - 14); ctx.arc(x, top + h - 14, 18, 0, Math.PI * 2); }
+          ctx.moveTo(34, top + h / 2); ctx.arc(20, top + h / 2, 16, 0, Math.PI * 2);
+          ctx.moveTo(w - 4, top + h / 2); ctx.arc(w - 18, top + h / 2, 16, 0, Math.PI * 2);
+        };
+        cloud(); ctx.stroke(); cloud(); ctx.fill();
+        for (const [cx, cy, r] of [[w / 2 - 6, top + h + 8, 9], [w / 2 - 16, top + h + 24, 6]]) {
+          ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        }
+      } else {
+        ctx.fillStyle = '#fff'; ctx.strokeStyle = `hsl(${hue} 60% 50%)`; ctx.lineWidth = 5;
+        const shape = () => {
+          ctx.beginPath(); ctx.roundRect(4, top + 4, w - 8, h - 8, 28);
+          ctx.moveTo(w / 2 - 14, top + h - 4); ctx.lineTo(w / 2, top + h + 14); ctx.lineTo(w / 2 + 14, top + h - 4);
+        };
+        shape(); ctx.stroke(); shape(); ctx.fill();
+      }
+      if (who) {                                    // name tag in the speaker's colour
+        ctx.font = '700 24px system-ui';
+        const nw = Math.ceil(ctx.measureText(who).width) + 22;
+        ctx.fillStyle = `hsl(${hue} 60% 42%)`;
+        ctx.beginPath(); ctx.roundRect(18, 0, nw, 30, 12); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.fillText(who, 29, 16);
+      }
+      ctx.font = font;
+      ctx.fillStyle = name ? '#fff' : thought ? '#3a4a66' : '#152030';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(text, w / 2, h / 2 + 1);
+      ctx.fillText(text, w / 2, top + h / 2 + 1);
       sprite.material.map?.dispose();
       const tex = new THREE.CanvasTexture(cv);
       tex.colorSpace = THREE.SRGBColorSpace;
@@ -163,6 +211,49 @@ function bubble(parent, y, { name = false } = {}) {
       sprite.center.set(0.5, 0);
     },
   };
+}
+
+// keep visible bubbles from covering each other: nearer bubbles keep their place and are drawn
+// on top; farther ones move up or sideways on screen (via the sprite's centre, so in pixels)
+// until they're clear and still on screen. Eased, so nothing jumps.
+const _bp = new THREE.Vector3(), _bs = new THREE.Vector3();
+function layoutBubbles() {
+  const list = [];
+  for (const sp of bubbles) {
+    if (!sp.parent) { bubbles.delete(sp); continue; }
+    if (!sp.visible || !sp.parent.visible) continue;
+    sp.getWorldPosition(_bp);
+    const dist = _bp.distanceTo(camera.position);
+    const perPx = 2 * dist * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) / innerHeight;
+    sp.getWorldScale(_bs);
+    _bp.project(camera);
+    if (_bp.z > 1) continue;
+    list.push({ sp, dist, x: (_bp.x + 1) / 2 * innerWidth, yb: (1 - _bp.y) / 2 * innerHeight, w: _bs.x / perPx, h: _bs.y / perPx });
+  }
+  list.sort((a, b) => a.dist - b.dist);
+  const placed = [];
+  list.forEach((b, i) => {
+    // first spot with no overlap; if the screen is too crowded, the spot with the least overlap
+    let best = null, bestOv = Infinity, bestR = null;
+    search: for (let k = 0; k <= 10; k++) {
+      for (const sx of [0, -1, 1, -2, 2, -3, 3]) {
+        const dx = sx * b.w * 0.55, dy = k * b.h * 0.5;
+        const r = { l: b.x + dx - b.w / 2, r: b.x + dx + b.w / 2, t: b.yb - dy - b.h, b: b.yb - dy };
+        if (r.t < 4 || r.l < 4 || r.r > innerWidth - 4) continue;              // stay on screen
+        let ov = 0;
+        for (const o of placed) ov += Math.max(0, Math.min(r.r, o.r) - Math.max(r.l, o.l)) * Math.max(0, Math.min(r.b, o.b) - Math.max(r.t, o.t));
+        if (ov < bestOv) { bestOv = ov; best = { dx, dy }; bestR = r; }
+        if (ov === 0) break search;
+      }
+    }
+    if (bestR) placed.push(bestR);
+    best ??= { dx: 0, dy: 0 };
+    const u = b.sp.userData;
+    u.dx = (u.dx || 0) + (best.dx - (u.dx || 0)) * 0.2;
+    u.dy = (u.dy || 0) + (best.dy - (u.dy || 0)) * 0.2;
+    b.sp.center.set(0.5 - u.dx / b.w, -u.dy / b.h);
+    b.sp.renderOrder = 10 + (list.length - i);          // nearest on top
+  });
 }
 
 function shadowAll(obj) {
@@ -362,6 +453,7 @@ function animate() {
     if (performance.now() > cardAt) { cardAt = performance.now() + 250; try { refreshCard(); } catch {} }
   }
   stepMorph();
+  layoutBubbles();
   lighting.update(clock.elapsedTime, dt);
   controls.update();
   renderer.render(scene, camera);
