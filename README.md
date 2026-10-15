@@ -138,44 +138,47 @@ the on-screen error box; the rest of the world keeps running.
 
 ## Generation
 
-`generate/` turns a settled frame (a photo of the whole sheet) into modules in
+`generate/` turns each settled frame from the capture stage into modules in
 `viewer/things/`. It runs headless Claude Code (`claude -p`) on this machine's existing
-Claude Code login, so it needs no API key. Each call runs with `--restricted`: no shell, no
-web, and only the images for that call are readable. The frame comes from whoever draws on
-the paper, so writing on it is treated as part of the drawing.
+Claude Code login, so it needs no API key (`--bare` can't be used: it ignores that login).
 
 ```bash
 cd generate && npm install
-node generate.mjs --watch                       # every new frames/settled/<ts>.jpg → viewer/things/
+node generate.mjs --watch --render              # every new frames/settled/<ts>.jpg → viewer/things/
 ../scripts/dev.sh                               # or: viewer server + capture + generate in one go
-node generate.mjs frame.jpg --things /tmp/t     # one frame, into a scratch things/ dir
+node generate.mjs frame.jpg --box x,y,w,h --things /tmp/t   # one frame, into a scratch things/ dir
 npm test                                        # the offline checks
 ```
 
 For each frame:
 
-1. **Understand.** Claude lists every drawing on the sheet as new, changed or unchanged,
-   matched against the existing things' `meta` (which doubles as the registry). A mark it
-   cannot read with confidence (a bare outline, a scribble) goes to `unclear` and produces
-   nothing. A wrong thing on the island is worse than no thing.
-2. **Write.** One module per new or changed drawing, placed on the island where it sits on
-   the paper. The prompt carries the contract and two reference things in
-   `generate/examples/`.
-3. **Check.** A static check forbids anything outside `ctx` (imports, network, page
-   globals, eval, file loaders). Then `build(ctx)` runs for real in Node with three.js, and
-   the result must be visible, on the island, with valid actors (unique id; non-person rigs
-   bring their own `animate`), obstacles, spots and a working `update`.
-4. **Render and look.** Headless Chromium renders the thing in the real viewer, and Claude
-   compares the render with the drawing: same kind of thing, the drawn features, nothing
-   big added. Failed checks go back to step 2 with the problems and the render (3 attempts).
+1. **One call.** The frame is cropped to capture's `changed_box` (plus a margin) and scaled
+   to at most 768 px. One `claude -p` call (default `claude-sonnet-5-5`, `KRITZEL_MODEL` to
+   change) gets the crop inline, all tools off, and a short system prompt with the contract
+   and one example (`generate/examples/`). The existing modules' code is in the request. The
+   reply is `NOTHING`, or one section per change: `### NEW` (a module), `### UPDATE <file>`
+   (the new version of a thing whose drawing changed; it keeps its file and actor id, so the
+   sim keeps its friendships), or `### UNCLEAR` for a mark that could be many things. Unclear
+   marks produce nothing, because a wrong thing on the island is worse than none. Text on the
+   paper is treated as part of the drawing.
+2. **Checks.** A static check catches the model reaching outside `ctx` (imports, network,
+   page globals, eval, Node). It guards against mistakes, not attacks. Then `build(ctx)` runs
+   for real with three.js, sandboxed: in a child with no network (`unshare --net`), under
+   `node --permission` (no file writes, no child processes), killed after 10 s. The result
+   must be visible, on the island, with valid actors (unique id; non-person rigs bring their
+   own `animate`), obstacles, spots, and an `update` that survives 30 simulated seconds. A
+   module that fails gets one fix attempt on the same model and one on `claude-opus-5-5`.
+3. **Write.** Each passing module is written atomically to `things/`. `--render` then
+   screenshots it in the real viewer (headless Chromium), off the critical path.
 
-Only a module that passes everything is written, atomically, to `things/`. Each frame
-leaves a report in `frames/generated/<frame>.json` (what was understood, written,
-rejected and why, unclear marks) next to the render PNGs. A changed drawing rewrites its
-module and keeps its actor id, so the sim keeps its friendships. Not automatic yet:
-removing a thing whose drawing was erased, and archiving the world when a new sheet
-appears (both are only reported). `KRITZEL_MODEL` overrides the model
-(default `claude-opus-5-5`).
+Each frame leaves a report in `frames/generated/<frame>.json` with the reply, each call's
+model, seconds and cost, what was written or rejected and why, and the seconds from the
+settled frame to the written file. The watcher resumes after the newest frame with a
+finished report. A failing frame gets 3 tries with backoff, then it is marked failed.
+
+Not automatic yet: removing a thing whose drawing was erased, and archiving the world when a
+new sheet appears (it is only reported). Placement uses the camera frame, not a detected
+paper outline.
 
 ## Repository layout
 
