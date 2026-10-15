@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# Kritzel: drawings on paper become a living 3D island.
+#
+#   ./kritzel setup    check what this machine needs, install the generator's packages once
+#   ./kritzel start    viewer + capture + generate (and the camera, if it is plugged in here)
+#   ./kritzel stop     stop what start started
+#   ./kritzel status   what runs, whether the camera answers, the last drawing
+#   ./kritzel camera   share this machine's camera (run it where the camera is plugged in)
+#
+# KRITZEL_PORT changes the viewer's port (default 8765). Logs and pid files live in .kritzel/.
+set -uo pipefail
+root=$(cd "$(dirname "$0")" && pwd)
+cd "$root"
+port=${KRITZEL_PORT:-8765}
+url="http://127.0.0.1:$port/viewer/"
+run="$root/.kritzel"
+mkdir -p "$run"
+
+ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; missing=1; }
+note() { printf '    %s\n' "$*"; }
+
+# a part runs if its pid file names a live process whose command line is still that part
+running() {
+  local pid; pid=$(cat "$run/$1.pid" 2>/dev/null) || return 1
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q -- "$2"
+}
+launch() {   # name, match, command...
+  local name=$1 match=$2; shift 2
+  if running "$name" "$match"; then echo "  $name: already running"; return; fi
+  setsid "$@" >>"$run/$name.log" 2>&1 < /dev/null &
+  echo $! > "$run/$name.pid"
+  echo "  $name: started (log: .kritzel/$name.log)"
+}
+has_camera() { compgen -G '/dev/video*' >/dev/null; }
+
+setup() {
+  missing=0
+  echo "Kritzel needs:"
+  if command -v python3 >/dev/null; then ok "python3 $(python3 -c 'import sys; print(sys.version.split()[0])')"
+  else bad "python3"; note "install it with your package manager (e.g. sudo apt install python3)"; fi
+  if command -v node >/dev/null && node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 13) ? 0 : 1)'; then
+    ok "node $(node -v)"
+  else bad "node 22.13 or newer$(command -v node >/dev/null && echo " (found $(node -v))")"; note "https://nodejs.org (the generator's safety sandbox needs it)"; fi
+  if command -v ffmpeg >/dev/null; then ok "ffmpeg"; else bad "ffmpeg"; note "sudo apt install ffmpeg (reads the camera)"; fi
+  if command -v convert >/dev/null && command -v identify >/dev/null; then ok "ImageMagick"; else bad "ImageMagick"; note "sudo apt install imagemagick (cuts out what was drawn)"; fi
+  if command -v unshare >/dev/null; then ok "unshare"; else bad "unshare (Linux util-linux)"; note "the drawing-to-code step runs on Linux; the camera can be on another machine"; fi
+  if ! command -v claude >/dev/null; then
+    bad "Claude Code"; note "npm install -g @anthropic-ai/claude-code, then: claude auth login"
+  elif claude auth status 2>/dev/null | grep -q '"loggedIn": true'; then ok "Claude Code, logged in"
+  else bad "Claude Code is not logged in"; note "run: claude auth login   (sign in with your Claude account; no API key needed)"; fi
+  if [ -d generate/node_modules/three ]; then ok "generator packages"
+  elif command -v npm >/dev/null; then
+    echo "  installing the generator's packages…"
+    if (cd generate && npm ci --no-audit --no-fund >/dev/null 2>&1); then ok "generator packages"; else bad "npm ci in generate/ failed"; fi
+  fi
+  if has_camera; then ok "a camera on this machine: $(ls /dev/video* | tr '\n' ' ')"
+  else note "no camera on this machine: run './kritzel camera' on the one it is plugged into"; fi
+  [ $missing = 0 ] && echo "Ready: ./kritzel start" || { echo "Fix the ✗ above, then run ./kritzel setup again."; return 1; }
+}
+
+start() {
+  [ -d generate/node_modules/three ] || { echo "Run ./kritzel setup first."; return 1; }
+  echo "Starting Kritzel:"
+  launch viewer "viewer/serve.py" env PORT="$port" python3 viewer/serve.py
+  for _ in $(seq 40); do curl -s -o /dev/null "$url" && break; sleep 0.25; done
+  has_camera && launch camera "scripts/camera_server.py" python3 scripts/camera_server.py
+  launch capture "scripts/capture.py" env VIEWER="http://127.0.0.1:$port" python3 -u scripts/capture.py
+  mkdir -p frames/generated
+  launch generate "generate.mjs --watch" node generate/generate.mjs --watch
+  echo
+  echo "Open $url"
+  [ -f camera.json ] || echo "Then click 📷 Kamera and choose your camera."
+  if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v xdg-open >/dev/null; then xdg-open "$url" >/dev/null 2>&1 &
+  elif [ "$(uname)" = Darwin ]; then open "$url"; fi
+}
+
+stop() {
+  for name in generate capture camera viewer; do
+    local pid; pid=$(cat "$run/$name.pid" 2>/dev/null) || continue
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid"
+      for _ in $(seq 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
+      kill -0 "$pid" 2>/dev/null && kill -9 "$pid"
+      echo "  $name: stopped"
+    fi
+    rm -f "$run/$name.pid"
+  done
+}
+
+status() {
+  for p in "viewer:viewer/serve.py" "camera:scripts/camera_server.py" "capture:scripts/capture.py" "generate:generate.mjs --watch"; do
+    running "${p%%:*}" "${p#*:}" && echo "  ${p%%:*}: running" || echo "  ${p%%:*}: not running"
+  done
+  curl -s -o /dev/null "$url" && echo "  viewer answers at $url" || echo "  viewer does not answer at $url"
+  if [ -f camera.json ]; then
+    echo "  camera chosen: $(python3 -c 'import json; c = json.load(open("camera.json")); print(c.get("name") or c.get("id"), "on", c.get("host", "this computer"))' 2>/dev/null)"
+    curl -s -m 2 -o /dev/null "http://127.0.0.1:$port/api/camera" && echo "  camera settings readable" || true
+  else echo "  no camera chosen yet: 📷 Kamera in the viewer"; fi
+  local last; last=$(ls frames/generated/2*.json 2>/dev/null | tail -1)
+  if [ -n "$last" ]; then python3 - "$last" <<'EOF'
+import json, sys
+r = json.load(open(sys.argv[1]))
+name = sys.argv[1].rsplit('/', 1)[-1][:-5]
+if r.get('error'): what = 'failed: ' + r['error'][:80]
+elif r.get('written'): what = ', '.join(w['name'] for w in r['written'])
+elif r.get('removed'): what = 'removed ' + ', '.join(x['file'] for x in r['removed'])
+elif r.get('unclear'): what = 'not recognised'
+else: what = 'nothing new'
+print(f'  last drawing ({name}): {what}')
+EOF
+  else echo "  no drawing yet"; fi
+}
+
+camera() {
+  has_camera || echo "No camera on this machine (/dev/video*): plug it in, or run this on the machine it is plugged into."
+  echo "Sharing this machine's cameras on port 8766 (Ctrl-C stops)."
+  echo "On another machine, this needs only Python 3 and ffmpeg:"
+  echo "  git clone $(git remote get-url origin 2>/dev/null || echo '<this repository>') kritzel && cd kritzel && ./kritzel camera"
+  exec python3 scripts/camera_server.py
+}
+
+case "${1:-}" in
+  setup|start|stop|status|camera) "$1" ;;
+  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
