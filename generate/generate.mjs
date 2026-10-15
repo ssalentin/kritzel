@@ -120,6 +120,13 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
     const sections = parseReply(r.text);
     if (!sections.length) log(`${name}: nothing new (${r.seconds.toFixed(1)}s)`);
     const renders = [];
+    // many removals at once is a new or moved sheet, not a child erasing: remove nothing and say so
+    const removes = sections.filter(s => s.kind === 'REMOVE');
+    if (removes.length > 2) {
+      for (const s of removes) report.rejected.push({ kind: s.kind, file: s.file, problems: [`${removes.length} removals in one frame: a new sheet? not removing`] });
+      log(`${name}: ${removes.length} REMOVEs in one reply: a new sheet? not removing any`);
+      sections.splice(0, sections.length, ...sections.filter(s => s.kind !== 'REMOVE'));
+    }
     for (const s of sections) {
       if (s.kind === 'UNCLEAR') { report.unclear.push(s.body); log(`${name}: UNCLEAR ${s.body}`); continue; }
       if (s.kind === 'REMOVE') {
@@ -222,7 +229,9 @@ async function watch(dir, opts) {
       }
       const box = side.previous && side.previous === last ? side.changed_box : null;
       status('building', newest);
-      const r = await processFrame(join(dir, newest), { ...opts, box, previous: box ? join(dir, last) : null });
+      // without a trusted box (frames skipped, paper moved) the whole sheet is compared with the last
+      // handled frame, so erasing or scribbling done meanwhile is still seen
+      const r = await processFrame(join(dir, newest), { ...opts, box, previous: last ? join(dir, last) : null });
       const names = r.written.map(w => w.name).join(', ');
       if (r.error) status('failed', newest, r.error.slice(0, 80));
       else if (r.written.length) status(r.written.every(w => w.kind === 'UPDATE') ? 'changed' : 'new', newest, names);
