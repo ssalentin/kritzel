@@ -35,7 +35,7 @@ NEW_PX = 15              # changed pixels that count: vs the still picture = mov
 INK_R = 2                # new ink must be this far (thumb px) from ink already there
 SLIDE = 5                # how far (thumb px, ×6 at 1080p) the paper may slide and still be the same sheet
 BIG = 0.04               # share changed that is a big change, not drawing
-STILL_S, BIG_S, EVERY_S = 3.0, 8.0, 0.5
+STILL_S, BIG_S, EVERY_S = 1.2, 8.0, 0.5   # a sample itself takes ~0.65 s (fetch + ffmpeg)
 MAX_BYTES = 20 << 20
 
 
@@ -204,8 +204,10 @@ def main():
     previous = done[-1].name if done else None
     det = Detector(small(done[-1].read_bytes()) if done else None)
     url = None
+    next_at = 0
     while True:
-        time.sleep(EVERY_S)
+        time.sleep(max(0, next_at - time.monotonic()))
+        next_at = time.monotonic() + EVERY_S
         cam = camera()
         if cam is None:
             if url != "":
