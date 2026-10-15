@@ -15,9 +15,9 @@ import { readFileSync, writeFileSync, renameSync, existsSync, readdirSync, mkdir
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname, basename } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { oneShot, MODEL, FALLBACK_MODEL } from './claude.mjs';
-import { staticCheck, buildCheck } from './check.mjs';
+import { staticCheck, buildCheck, metaOf } from './check.mjs';
 import { SYSTEM, userText, fixText } from './prompts.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -29,13 +29,8 @@ async function readThings(dir) {
   for (const file of readdirSync(dir).filter(f => /^[\w.-]+\.js$/.test(f)).sort()) {
     const code = readFileSync(join(dir, file), 'utf8');
     const ids = [...code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]);
-    const tmp = mkdtempSync(join(tmpdir(), 'kritzel-meta-'));
-    try {
-      writeFileSync(join(tmp, 'm.mjs'), code);
-      const m = await import(pathToFileURL(join(tmp, 'm.mjs')).href);   // top level only; build() is not run
-      out.push({ file, code, meta: { name: file, drawing: '?', ...m.meta }, ids });
-    } catch { out.push({ file, code, meta: { name: file, drawing: '(does not load)' }, ids }); }
-    finally { rmSync(tmp, { recursive: true, force: true }); }
+    const meta = await metaOf(code);         // runs the module's top level, sandboxed
+    out.push({ file, code, meta: { name: file, drawing: meta ? '?' : '(does not load)', ...meta }, ids });
   }
   return out;
 }

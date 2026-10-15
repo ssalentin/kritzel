@@ -38,3 +38,13 @@ test('a build that throws or adds nothing is caught', async () => {
   assert.match((await buildCheck(thing(`throw new Error('boom');`))).problems[0], /throws: boom/);
   assert.ok((await buildCheck(thing(`return {};`))).problems.some(p => p.includes('nothing visible')));
 });
+
+test('model code runs sandboxed: no file writes, no network, endless loops are killed', async () => {
+  const write = thing(`(0, eval)('pro' + 'cess').getBuiltinModule('fs').writeFileSync('/tmp/kritzel-pwned', 'x'); return {};`);
+  assert.match((await buildCheck(write)).problems.join(), /restricted|not defined|Access/);
+  const net = thing(`return fetch('http://127.0.0.1:8765/').then(() => { throw new Error('NET-OK'); }, () => { throw new Error('NET-BLOCKED'); });`);
+  assert.match((await buildCheck(net)).problems.join(), /NET-BLOCKED/);
+  const loop = thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(1, 1, 1), ctx.mat(1))); ctx.world.add(g);
+    return { update(t) { if (t > 5) for (;;) {} } };`);
+  assert.match((await buildCheck(loop)).problems.join(), /did not finish/);
+});
