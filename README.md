@@ -63,6 +63,22 @@ world.
   server only serves the viewer.
 - **Procedural sound:** Animal-Crossing-style babble and little effects, no sound files.
 
+## What you need
+
+- **A document camera looking straight down.** We use the
+  [IPEVO V4K](https://www.amazon.de/dp/B079DLTG9F) (8 MP, USB, MJPEG at 1080p30, on a
+  bendable arm). Any webcam works, but a camera fixed above the sheet gives steady,
+  sharp frames, and that's what the change detection relies on.
+- **A stable surface under the paper.** A board or desk mat the sheet can't slide on.
+  Capture forgives a little shift, but a sheet that moves every time a child leans on it
+  makes for false changes.
+- **Plain white paper.** A4 or larger, and keep the whole sheet inside the camera's view
+  (the outer edge of the frame is ignored).
+- **Good, even light.** A desk lamp or daylight from the side, no hard shadows from
+  hands or the camera arm. Warm room light works too; the viewer corrects for it.
+- **A computer with a browser** to show the world: a laptop, a tablet next to the
+  paper, or a TV.
+
 ## How it works
 
 ```
@@ -268,5 +284,8 @@ BACKLOG.md       ideas and requests that are not scheduled work yet
 ```
 
 ## Credits
+
+Inspired by posts on X showing children's drawings brought to life.
+
 
 Built with [three.js](https://threejs.org/) and [rot.js](https://ondras.github.io/rot.js/).
