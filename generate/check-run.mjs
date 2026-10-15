@@ -96,6 +96,13 @@ async function buildCheck(file, takenIds) {
       if (obstacles.some(o => num(o?.r) && o.r >= 0.5 * h.r && Math.hypot(o.x - h.x, o.z - h.z) < o.r))
         problems.push(`holds "${h.actor}" has no room inside: an obstacle covers its centre; model the walls as a ring of small obstacles`);
     }
+    // heldBy: this thing is held by a character and moves with it ({ actor, at: [x, y, z] } in the actor's space)
+    if (r.heldBy != null) {
+      const h = r.heldBy;
+      if (!h?.actor || !takenIds.includes(h.actor)) problems.push(`heldBy names actor "${h?.actor}", which is on the island nowhere`);
+      if (h?.at != null && !(Array.isArray(h.at) && h.at.length === 3 && h.at.every(num))) problems.push('heldBy.at must be [x, y, z] (right, up, forward from the actor)');
+      if (meshes && Math.max(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z) > 4) problems.push('a held thing must be hand-sized (under 4 across, beam included), built around (0, 0, 0)');
+    }
     // light (the engine's light contract): one object or a list of { kind, object3D, color, intensity, range, flicker }
     const lights = r.light == null ? [] : [].concat(r.light);
     for (const l of lights) {

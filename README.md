@@ -217,6 +217,10 @@ light: { kind: 'lamp', object3D: flame, color: 0xff8a3a, intensity: 1, range: 8,
 
 Make the light's own mesh glow with an emissive material (`mat(c, { emissive, emissiveIntensity })`).
 
+A thing a character holds (a flashlight in its hand) returns `heldBy: { actor, at: [x, y, z] }`:
+the engine hangs it on that actor at `at` (actor space: x right, y up, z forward), so it walks
+and turns along, its light included.
+
 A thing drawn around a character (a jail, a fence) can keep it inside: `holds: [{ actor, x, z, r }]`
 lets that actor walk only within the circle; it is brought in if it is outside, and walks free
 again when the holding thing is gone.
