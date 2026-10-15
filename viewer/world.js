@@ -116,12 +116,12 @@ export async function build(api, prevState = null) {
 
   async function loadThing(file, states, live = false) {
     const before = new Set(world.children);
-    const entry = { box: new THREE.Group(), actors: [], obstacles: [], spots: [], holds: [], update: null, light: [] };
+    const entry = { box: new THREE.Group(), actors: [], obstacles: [], spots: [], holds: [], heldBy: null, update: null, light: [] };
     let m = null;
     try {
       m = await import('./things/' + file + '?v=' + Date.now());
       const r = (await m.build(ctx)) || {};
-      Object.assign(entry, { actors: r.actors || [], obstacles: r.obstacles || [], spots: r.spots || [], holds: r.holds || [], update: r.update || null,
+      Object.assign(entry, { actors: r.actors || [], obstacles: r.obstacles || [], spots: r.spots || [], holds: r.holds || [], heldBy: r.heldBy || null, update: r.update || null,
         light: [].concat(r.light || []) });
     } catch (e) { report(`things/${file}: ${e.message}`); }
     // everything this thing put into the world goes into its own box, so it can be removed later
@@ -142,7 +142,15 @@ export async function build(api, prevState = null) {
     if (!entry) return;
     for (const a of entry.actors) brain?.removeActor(a.id);
     api.mood?.set(file, []);
-    world.remove(entry.box);
+    // things this one's actors hold go back to the world first, so they are not disposed with it
+    // (the actors' rigs hang in entry.free since placement, the rest in entry.box)
+    for (const e of loaded.values()) {
+      if (e === entry || !e.heldBy) continue;
+      let p = e.box.parent;
+      while (p && p !== entry.box && p !== entry.free) p = p.parent;
+      if (p && (p === entry.box || p === entry.free)) { world.add(e.box); e.box.position.set(0, 0, 0); }
+    }
+    entry.box.parent?.remove(entry.box);       // in the world, or in the hand of whoever held it
     if (entry.free) { world.remove(entry.free); entry.free.traverse(o => { o.geometry?.dispose(); [].concat(o.material || []).forEach(m => m.dispose()); }); }
     entry.box.traverse(o => {
       o.geometry?.dispose();
@@ -156,7 +164,21 @@ export async function build(api, prevState = null) {
     for (const e of loaded.values()) { trees.push(...e.obstacles); spots.push(...e.spots); }
     brain.setWorld({ trees, spots });
     brain.setHolds([...loaded.values()].flatMap(e => e.holds));
+    attachHeld();
   }
+  // a thing held by a character (a flashlight in Bana's hand): its box hangs on the actor's rig at
+  // heldBy.at (actor space: x right, y up, z forward), so it walks and turns along; back to the world
+  // if that actor is gone. Re-done after every reload, since a reloaded actor has a new rig.
+  function attachHeld() {
+    const byId = brain.byId();
+    for (const e of loaded.values()) {
+      if (!e.heldBy) continue;
+      const g = byId[e.heldBy.actor]?.rig?.g, at = Array.isArray(e.heldBy.at) && e.heldBy.at.length === 3 ? e.heldBy.at : [0, 1, 0.4];
+      if (g && e.box.parent !== g) { g.add(e.box); e.box.position.set(...at); }
+      else if (!g && e.box.parent !== world) { world.add(e.box); e.box.position.set(0, 0, 0); }
+    }
+  }
+
 
   const listing = await (await fetch('things/', { cache: 'no-store' })).text();
   for (const [, file] of listing.matchAll(/href="([\w.-]+\.js)"/g)) await loadThing(file);
@@ -165,6 +187,7 @@ export async function build(api, prevState = null) {
   const spots = [...loaded.values()].flatMap(e => e.spots);
   brain = sim.create({ THREE, actors, trees, pond, spots, islandR: 6.9, states: prevState, extra });
   brain.setHolds([...loaded.values()].flatMap(e => e.holds));
+  attachHeld();
 
   return {
     // engine calls this when only things/ changed: reload just those files

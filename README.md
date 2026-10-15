@@ -233,6 +233,10 @@ light: { kind: 'lamp', object3D: flame, color: 0xff8a3a, intensity: 1, range: 8,
 
 Make the light's own mesh glow with an emissive material (`mat(c, { emissive, emissiveIntensity })`).
 
+A thing a character holds (a flashlight in its hand) returns `heldBy: { actor, at: [x, y, z] }`:
+the engine hangs it on that actor at `at` (actor space: x right, y up, z forward), so it walks
+and turns along, its light included.
+
 A thing drawn around a character (a jail, a fence) can keep it inside: `holds: [{ actor, x, z, r }]`
 lets that actor walk only within the circle; it is brought in if it is outside, and walks free
 again when the holding thing is gone.
@@ -274,7 +278,7 @@ For each frame:
    (the new version of a thing whose drawing changed; it keeps its file and actor id, so the
    sim keeps its friendships), `### REMOVE <file>` (its drawing was erased), or `### UNCLEAR`
    for a mark that could be many things. The model sees the changed area before and now, so
-   it can tell what was erased; without a before picture nothing is removed, and only a thing
+   it can tell what was erased, struck through or scribbled over; without a before picture nothing is removed, and only a thing
    whose `meta.paper` lies in the changed area can be (hand-made things without it stay). A removed module
    is moved to `frames/removed/`, so undoing a wrong removal is one `mv`. Unclear
    marks produce nothing, because a wrong thing on the island is worse than none. Text on the
