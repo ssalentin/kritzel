@@ -174,7 +174,7 @@ async function watch(dir, opts) {
   if (!last && !readdirSync(opts.reportsDir).some(f => f.endsWith('.json'))) last = frames.at(-1) || null;
   log(`watching ${dir} → ${opts.thingsDir} (model ${MODEL}, fallback ${FALLBACK_MODEL}); handled up to ${last || '(nothing)'}`);
   const sleep = ms => new Promise(ok => setTimeout(ok, ms));
-  let tries = 0;
+  let tries = 0, triesFor = null;           // failed attempts, and for which frame
   for (;;) {
     const newest = list().at(-1);
     if (newest && newest !== last) {
@@ -193,6 +193,7 @@ async function watch(dir, opts) {
       // pinning its path at startup would not help; wait and try the same frame again, not counted
       if (/ENOENT/.test(r.error)) { await sleep(30_000); continue; }
       if (/not logged in|401|authenticat/i.test(r.error)) { log('claude is not logged in: waiting 10 min'); await sleep(600_000); continue; }
+      if (triesFor !== newest) { triesFor = newest; tries = 0; }   // a newer frame starts with a clean count
       if (++tries < ATTEMPTS) { await sleep(20_000 * 2 ** (tries - 1)); continue; }
       log(`${newest}: FAILED after ${ATTEMPTS} attempts, moving on: ${r.error}`);
       last = newest; tries = 0;
