@@ -152,7 +152,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
         // and only a thing that sits in the area that changed: one confusion (or "REMOVE bana.js" written on
         // the paper) must not take away something drawn elsewhere. Things without meta.paper (hand-made) stay.
         const p = t?.meta.paper, inArea = p && p.x >= area[0] && p.x <= area[2] && p.y >= area[1] && p.y <= area[3];
-        const why = !before ? 'no before picture to compare' : !t ? 'no such thing' : !p ? 'it has no meta.paper position: remove it by hand' : !inArea ? `it is at paper ${JSON.stringify(p)}, outside the changed area` : null;
+        const why = !before ? 'no before picture to compare' : !t ? 'no such thing' : !p ? 'it has no meta.paper position: remove it by hand' : p.stale ? 'its paper position is unknown since the sheet moved too far' : !inArea ? `it is at paper ${JSON.stringify(p)}, outside the changed area` : null;
         if (why) { report.rejected.push({ kind: s.kind, file: s.file, problems: [why] }); log(`${name}: REMOVE ${s.file} ignored: ${why}`); continue; }
         const bin = join(dirname(reportsDir), 'removed');
         mkdirSync(bin, { recursive: true });
@@ -222,8 +222,13 @@ export async function movePaperAlong(dir, upTo, { thingsDir, reportsDir }) {
     try { side = JSON.parse(readFileSync(join(dir, f.replace('.jpg', '.json')), 'utf8')); } catch {}
     const A = side.affine;
     if (Array.isArray(A) && A.length === 6 && (A[2] || A[5] || A[0] !== 1 || A[4] !== 1 || A[1] || A[3])) {
-      for (const k of Object.keys(paper)) if (k !== '_through') paper[k] = movePaper(paper[k], A, side.width || 1920, side.height || 1080);
+      for (const k of Object.keys(paper)) if (k !== '_through') paper[k] = { ...paper[k], ...movePaper(paper[k], A, side.width || 1920, side.height || 1080) };   // keeps stale
       log(`${f}: sheet moved by ${A[2]}, ${A[5]} px: paper positions moved along`);
+    } else if (A == null && side.reason === 'big-change') {
+      // moved too far (or a new sheet) to measure: where things are on the paper is unknown now. Stale
+      // positions never satisfy the REMOVE guard; a thing gets a fresh one when it is next written.
+      for (const k of Object.keys(paper)) if (k !== '_through' && paper[k]) paper[k] = { ...paper[k], stale: true };
+      log(`${f}: big change without a measured move: paper positions marked stale`);
     }
     paper._through = f;
   }

@@ -45,7 +45,7 @@ const MAX_CODE = 9000;
 
 // place: the changed area's centre on the island and on the paper; height: its drawn height in island units
 export function userText({ existing, place, height, takenIds, hasBefore = false }) {
-  const where = t => t.meta.paper ? `, at paper ${JSON.stringify(t.meta.paper)} = island [${islandOf(t.meta.paper.x, t.meta.paper.y)}]` : '';
+  const where = t => t.meta.paper && !t.meta.paper.stale ? `, at paper ${JSON.stringify(t.meta.paper)} = island [${islandOf(t.meta.paper.x, t.meta.paper.y)}]` : '';
   const things = existing.map(t => `--- ${t.file}: ${t.meta.name} (${t.meta.drawing})${where(t)}${t.ids.length ? `, actors: ${t.ids.join(', ')}` : ''}\n` +
     (t.code.length <= MAX_CODE ? t.code : '(code too long to show; an UPDATE must be a complete new module)')).join('\n');
   return (hasBefore

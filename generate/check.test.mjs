@@ -103,4 +103,10 @@ test('sheet moves: paper positions follow capture\'s affine, frame by frame, onc
   assert.equal(p._through, '20261016-030300.jpg');
   await movePaperAlong(settled, '20261016-030300.jpg', { thingsDir: things, reportsDir: reports });   // nothing new: no second move
   assert.deepEqual(JSON.parse(readFileSync(join(reports, 'paper.json'), 'utf8'))['mond.js'], { x: 0.6, y: 0.2 });
+  // a big change capture could not measure: positions are unknown now, and stay marked through later moves
+  writeFileSync(join(settled, '20261016-030400.json'), JSON.stringify({ reason: 'big-change', affine: null })); writeFileSync(join(settled, '20261016-030400.jpg'), '');
+  frame('20261016-030500', [1, 0, 0, 0, 1, 19.2]);
+  await movePaperAlong(settled, '20261016-030500.jpg', { thingsDir: things, reportsDir: reports });
+  const q = JSON.parse(readFileSync(join(reports, 'paper.json'), 'utf8'))['mond.js'];
+  assert.equal(q.stale, true);
 });
