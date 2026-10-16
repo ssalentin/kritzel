@@ -13,6 +13,7 @@ const EFFORT = EFFORTS.includes(process.env.KRITZEL_EFFORT) ? process.env.KRITZE
 export const FALLBACK_MODEL = process.env.KRITZEL_FALLBACK_MODEL || 'claude-opus-5-5';
 
 // images: JPEG Buffers, in order. Returns { text, cost, seconds, model }.
+// onText(textSoFar), if given, is called as the reply streams in (to narrate what is being built).
 // Claude Code updates itself in place: for a few seconds the claude binary is missing (spawn ENOENT).
 // Wait and try again, so a self-update never costs a drawing.
 export async function oneShot(opts, tries = 3) {
@@ -25,19 +26,31 @@ export async function oneShot(opts, tries = 3) {
   }
 }
 
-function callOnce({ system, text, images, model = MODEL, effort = EFFORT, timeoutMs = 3 * 60_000 }) {
+function callOnce({ system, text, images, model = MODEL, effort = EFFORT, timeoutMs = 3 * 60_000, onText = null }) {
   const msg = { type: 'user', message: { role: 'user', content: [
     ...images.map(i => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: i.toString('base64') } })),
     { type: 'text', text },
   ] } };
   const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
     '--model', model, '--effort', effort, '--tools', '', '--setting-sources', '', '--strict-mcp-config',
-    '--no-session-persistence', '--system-prompt', system];
+    '--no-session-persistence', '--system-prompt', system, ...(onText ? ['--include-partial-messages'] : [])];
   const t0 = Date.now();
   return new Promise((resolve, reject) => {
     const p = track(spawn('claude', args, { cwd: tmpdir(), stdio: ['pipe', 'pipe', 'pipe'] }));   // outside any repo
-    let out = '', err = '';
-    p.stdout.on('data', d => { out += d; });
+    let out = '', err = '', seen = 0, sofar = '';
+    p.stdout.on('data', d => {
+      out += d;
+      if (!onText) return;
+      const end = out.lastIndexOf('\n');
+      if (end < seen) return;
+      const before = sofar.length;
+      for (const l of out.slice(seen, end).split('\n')) {      // whole lines only: text deltas of the reply
+        if (!l.includes('text_delta')) continue;
+        try { const e = JSON.parse(l).event; if (e?.delta?.type === 'text_delta') sofar += e.delta.text; } catch { /* not ours */ }
+      }
+      seen = end + 1;
+      if (sofar.length > before) try { onText(sofar); } catch { /* narration never breaks the call */ }
+    });
     p.stderr.on('data', d => { err += d; });
     const timer = setTimeout(() => { p.kill('SIGTERM'); reject(new Error(`claude -p (${model}) timed out after ${timeoutMs / 1000}s`)); }, timeoutMs);
     p.on('error', e => { clearTimeout(timer); reject(e); });
