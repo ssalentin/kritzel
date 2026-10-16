@@ -156,7 +156,7 @@ export function createStatus({ THREE, scene, el, world, banner }) {
       for (const [f, l] of lights) if (l.claimed && !l.dying) retire(f);
       const b = new THREE.Box3().setFromObject(box);
       if (!b.isEmpty()) confetti(foot?.x ?? (b.min.x + b.max.x) / 2, Math.min(b.max.y, 3), foot?.z ?? (b.min.z + b.max.z) / 2);
-      if (banner && name) { banner.textContent = `${name}!`; banner.classList.remove('on'); void banner.offsetWidth; banner.classList.add('on'); }
+      if (banner && name) { banner.textContent = `${name.length > 24 ? name.slice(0, 23) + '…' : name}!`; banner.classList.remove('on'); void banner.offsetWidth; banner.classList.add('on'); }
       const kids = box.children.map(o => [o, o.scale.clone()]);
       for (const [o] of kids) o.scale.multiplyScalar(0.001);
       growing.push({ kids, born: performance.now() });
