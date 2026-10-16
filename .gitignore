@@ -2,6 +2,7 @@
 frames/
 *.jpg
 !worlds/**/*.jpg
+!docs/*.jpg
 
 # runtime files
 *.log
