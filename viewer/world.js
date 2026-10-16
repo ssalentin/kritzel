@@ -5,10 +5,10 @@ export const caption = '';
 
 // prevState: characters' saved state (position, mood, friendships) so a reload doesn't reset them
 export async function build(api, prevState = null) {
-  const { THREE, world, camera, bubble, shadowAll, report } = api;
+  const { THREE, scene, world, camera, bubble, shadowAll, report } = api;
   const v = '?v=' + Date.now();
-  const [sim, islandMod, charMod, extra] = await Promise.all(
-    ['sim', 'island', 'characters', 'sim-extra'].map(f => import(`./${f}.js${v}`)));
+  const [sim, islandMod, charMod, extra, waterMod] = await Promise.all(
+    ['sim', 'island', 'characters', 'sim-extra', 'water'].map(f => import(`./${f}.js${v}`)));
 
   // shared look: soft pastel low-poly materials (flat shaded unless asked otherwise)
   const mat = (color, opts = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.7, flatShading: true, ...opts });
@@ -44,7 +44,10 @@ export async function build(api, prevState = null) {
   const env = { cover: 0 };
   // sound for things: ctx.sound.fx(name, object3D) — names: plopp, melodie, buh, mampf, piep, quak, staunen, rascheln, herz
   const sound = { fx: (name, obj) => api.sound?.fx(name, obj) };
-  const ctx = { THREE, world, bubble, shadowAll, mat, limb, rand, makePerson, pond, trees, SUN_POS, islandR: 6.9, env, sound };
+  // water for drawn things: ctx.water.pond(x, z, r), .waterfall(from, to, width), .river(points, width)
+  const water = waterMod.makeWater({ THREE, scene });
+  const ctx = { THREE, world, bubble, shadowAll, mat, limb, rand, makePerson, pond, trees, SUN_POS, islandR: 6.9, env, sound,
+    water: { pond: water.pond, waterfall: water.waterfall, river: water.river } };
   const loaded = new Map();               // file → { box, actors, obstacles, spots, update }
   let brain = null;
 
@@ -138,7 +141,9 @@ export async function build(api, prevState = null) {
     let m = null;
     try {
       m = await import('./things/' + file + '?v=' + Date.now());
+      water.begin();
       const r = (await m.build(ctx)) || {};
+      if (water.ignored()) report(`things/${file}: ${water.ignored()} water piece(s) left out (at most 6 per thing)`);
       Object.assign(entry, { actors: r.actors || [], obstacles: r.obstacles || [], spots: r.spots || [], holds: r.holds || [], heldBy: r.heldBy || null, update: r.update || null,
         light: [].concat(r.light || []) });
     } catch (e) { report(`things/${file}: ${e.message}`); }
@@ -224,6 +229,7 @@ export async function build(api, prevState = null) {
     brain: () => brain,                   // for UI in index.html (e.g. click a character); sim exposes its actors
     update(t, dt) {
       island.update(t);
+      water.tick(t);
       for (const e of loaded.values()) {
         if (!e.update) continue;
         try { e.update(t, dt, env); } catch (err) { report('things: ' + err.message); e.update = null; }

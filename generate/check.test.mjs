@@ -82,3 +82,12 @@ test('holds: the actor must exist and the circle must have room inside', async (
   assert.ok((await buildCheck(jail('[{ x: 1, z: 1, r: 1.1 }]'), { takenIds: ['spinne'] })).problems.some(p => p.includes('no room inside')));
   assert.ok((await buildCheck(jail('[]'), { takenIds: [] })).problems.some(p => p.includes('on the island nowhere')));
 });
+
+test('water: more than 6 pieces or oversized ones are reported', async () => {
+  const many = thing(`const g = new ctx.THREE.Group(); for (let i = 0; i < 7; i++) g.add(ctx.water.pond(i * 0.5 - 1.5, 0, 0.3)); ctx.world.add(g); return {};`);
+  assert.ok((await buildCheck(many)).problems.some(p => p.includes('at most 6')));
+  const big = thing(`const g = new ctx.THREE.Group(); g.add(ctx.water.river([[0, 0], [1, 1]], 5)); ctx.world.add(g); return {};`);
+  assert.ok((await buildCheck(big)).problems.some(p => p.includes('width 5 is over the limit 3')));
+  const ok = thing(`const g = new ctx.THREE.Group(); g.add(ctx.water.pond(0, 0, 1)); g.add(ctx.water.waterfall([0, 2, 0], [1, 0, 0], 0.6)); ctx.world.add(g); return {};`);
+  assert.deepEqual((await buildCheck(ok)).problems, []);
+});

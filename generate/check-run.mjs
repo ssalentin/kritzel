@@ -31,7 +31,31 @@ async function makeCtx() {
   const { makeCharacters } = await import(pathToFileURL(join(VIEWER, 'characters.js')).href);
   const { makePerson } = makeCharacters({ THREE, world, mat, limb, bubble, shadowAll });
   const env = { cover: 0, actors: [] };
-  return { THREE, world, bubble, shadowAll, mat, limb, rand, makePerson, pond: { x: 0, z: 0, r: 0 }, trees: [],
+  // ctx.water without a browser (no canvas textures here): same calls, plain shapes of the same size
+  const blue = mat(0x5fb4e3, { transparent: true, opacity: 0.85 });
+  const v3 = p => new THREE.Vector3(p[0], p.length > 2 ? p[1] : 0.04, p.length > 2 ? p[2] : p[1]);
+  const waterUse = { calls: 0, problems: new Set() };
+  const limit = (v, hi, what) => { if (v > hi) waterUse.problems.add(`${what} ${v} is over the limit ${hi}; it gets clamped`); };
+  const water = {
+    pond(x, z, r = 1.2) {
+      waterUse.calls++; limit(r, 4, 'ctx.water.pond r'); const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.05, 24), blue); m.position.set(x, 0.03, z); return m; },
+    waterfall(from, to, width = 0.6) {
+      waterUse.calls++; limit(width, 3, 'ctx.water.waterfall width');
+      const a = new THREE.Vector3(...from), b = new THREE.Vector3(...to);
+      const m = new THREE.Mesh(new THREE.BoxGeometry(width, Math.max(0.05, a.y - b.y), Math.max(0.05, Math.hypot(a.x - b.x, a.z - b.z))), blue);
+      m.position.copy(a).lerp(b, 0.5); m.lookAt(b.x, m.position.y, b.z); return m;
+    },
+    river(points, width = 0.7) {
+      waterUse.calls++; limit(width, 3, 'ctx.water.river width'); limit(points.length, 32, 'ctx.water.river points');
+      const g = new THREE.Group(), pts = points.map(v3);
+      for (let i = 1; i < pts.length; i++) {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(width, 0.05, pts[i].distanceTo(pts[i - 1])), blue);
+        m.position.copy(pts[i]).lerp(pts[i - 1], 0.5); m.lookAt(pts[i]); g.add(m);
+      }
+      return g;
+    },
+  };
+  return { THREE, world, bubble, shadowAll, mat, limb, rand, makePerson, water, waterUse, pond: { x: 0, z: 0, r: 0 }, trees: [],
     SUN_POS: new THREE.Vector3(2.5, 6.8, -6.5), islandR: ISLAND_R, env, sound: { fx() {} } };
 }
 
@@ -48,6 +72,8 @@ async function buildCheck(file, takenIds) {
     const ctx = await makeCtx();
     let r;
     try { r = (await m.build(ctx)) || {}; } catch (e) { return { problems: [...problems, `build(ctx) throws: ${e.message}`], info }; }
+    if (ctx.waterUse.calls > 6) problems.push(`${ctx.waterUse.calls} ctx.water pieces: at most 6 per thing (the rest are left out); join them into fewer, longer pieces`);
+    problems.push(...ctx.waterUse.problems);
 
     const box = new THREE.Box3().setFromObject(ctx.world);
     let meshes = 0;
