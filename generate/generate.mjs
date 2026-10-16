@@ -20,22 +20,31 @@ import { oneShot, MODEL, FALLBACK_MODEL } from './claude.mjs';
 import { live } from './children.mjs';
 import { staticCheck, buildCheck, metaOf } from './check.mjs';
 import { SYSTEM, userText, fixText } from './prompts.mjs';
-import { islandOf } from './place.mjs';
+import { islandOf, movePaper } from './place.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const log = (...a) => console.error(new Date().toISOString().slice(11, 19), ...a);
 
 // ---------- existing things: their meta is the registry ----------
-async function readThings(dir) {
+async function readThings(dir, paper = {}) {
   const out = [];
   for (const file of readdirSync(dir).filter(f => /^[\w.-]+\.js$/.test(f)).sort()) {
     const code = readFileSync(join(dir, file), 'utf8');
     const ids = [...code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]);
     const meta = await metaOf(code);         // runs the module's top level, sandboxed
-    out.push({ file, code, meta: { name: file, drawing: meta ? '?' : '(does not load)', ...meta }, ids });
+    const m = { name: file, drawing: meta ? '?' : '(does not load)', ...meta };
+    if (paper[file]) m.paper = paper[file];  // moved along with the sheet since it was written
+    out.push({ file, code, meta: m, ids });
   }
   return out;
 }
+
+// Where each thing is on the paper NOW. meta.paper is where it was when its module was written; when
+// the sheet moves, capture reports the move (affine) and the watcher moves these positions along, so
+// matching and the REMOVE guard keep pointing at the right drawing. { file: { x, y }, _through: frame }
+const paperPath = reportsDir => join(reportsDir, 'paper.json');
+function readPaper(reportsDir) { try { return JSON.parse(readFileSync(paperPath(reportsDir), 'utf8')); } catch { return {}; } }
+function writePaper(reportsDir, map) { const p = paperPath(reportsDir); writeFileSync(p + '.tmp', JSON.stringify(map, null, 1)); renameSync(p + '.tmp', p); }
 
 const slug = s => s.toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
   .normalize('NFKD').replace(/[^\w]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'ding';
@@ -115,7 +124,8 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
   const report = { frame, box, previous, started: new Date().toISOString(), calls: [], written: [], removed: [], rejected: [], unclear: [] };
   const save = () => writeFileSync(join(reportsDir, name + '.json'), JSON.stringify(report, null, 1));
   try {
-    const existing = await readThings(thingsDir);
+    const paper = readPaper(reportsDir);
+    const existing = await readThings(thingsDir, paper);
     const { image, before, area, place, height } = cropOf(frame, box, previous);
     const images = before ? [before, image] : [image];
     const files = new Set(existing.map(t => t.file.replace(/\.js$/, '')));
@@ -142,11 +152,12 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
         // and only a thing that sits in the area that changed: one confusion (or "REMOVE bana.js" written on
         // the paper) must not take away something drawn elsewhere. Things without meta.paper (hand-made) stay.
         const p = t?.meta.paper, inArea = p && p.x >= area[0] && p.x <= area[2] && p.y >= area[1] && p.y <= area[3];
-        const why = !before ? 'no before picture to compare' : !t ? 'no such thing' : !p ? 'it has no meta.paper position: remove it by hand' : !inArea ? `it is at paper ${JSON.stringify(p)}, outside the changed area` : null;
+        const why = !before ? 'no before picture to compare' : !t ? 'no such thing' : !p ? 'it has no meta.paper position: remove it by hand' : p.stale ? 'its paper position is unknown since the sheet moved too far' : !inArea ? `it is at paper ${JSON.stringify(p)}, outside the changed area` : null;
         if (why) { report.rejected.push({ kind: s.kind, file: s.file, problems: [why] }); log(`${name}: REMOVE ${s.file} ignored: ${why}`); continue; }
         const bin = join(dirname(reportsDir), 'removed');
         mkdirSync(bin, { recursive: true });
         renameSync(join(thingsDir, t.file), join(bin, `${name}-${t.file}`));
+        delete paper[t.file]; writePaper(reportsDir, paper);
         report.removed.push({ file: t.file, kept: join(bin, `${name}-${t.file}`), why: s.body.slice(0, 200) });
         log(`${name}: REMOVED ${t.file} (erased from the paper; kept as ${join(bin, `${name}-${t.file}`)})`);
         continue;
@@ -162,6 +173,8 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
       files.add(base);
       const file = base + '.js';
       atomicWrite(join(thingsDir, file), f.code);
+      const pm = f.code.match(/paper:\s*\{\s*x:\s*([\d.]+),\s*y:\s*([\d.]+)/);
+      if (pm) { paper[file] = { x: +pm[1], y: +pm[2] }; writePaper(reportsDir, paper); }
       const latency = +((Date.now() - settledAt) / 1000).toFixed(1);
       const ids = [...f.code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]);
       report.written.push({ kind: s.kind, file, name: thingName, model: f.model, latency, ids, ...(f.warnings.length && { warnings: f.warnings }) });
@@ -193,6 +206,33 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
     report.finished = new Date().toISOString();
     save();
   }
+}
+
+// apply the sheet moves of every frame after paper._through up to `upTo`, in order (things without an
+// entry yet start from their meta.paper). The first time, there is no history to replay: start here.
+export async function movePaperAlong(dir, upTo, { thingsDir, reportsDir }) {
+  const paper = readPaper(reportsDir);
+  const frames = readdirSync(dir).filter(f => /^\d{8}-\d{6}\.jpg$/.test(f) && f <= upTo).sort();
+  if (!paper._through) { paper._through = frames.at(-2) || upTo; }
+  const todo = frames.filter(f => f > paper._through);
+  if (!todo.length) return;
+  for (const t of await readThings(thingsDir)) if (!paper[t.file] && t.meta.paper) paper[t.file] = t.meta.paper;
+  for (const f of todo) {
+    let side = {};
+    try { side = JSON.parse(readFileSync(join(dir, f.replace('.jpg', '.json')), 'utf8')); } catch {}
+    const A = side.affine;
+    if (Array.isArray(A) && A.length === 6 && (A[2] || A[5] || A[0] !== 1 || A[4] !== 1 || A[1] || A[3])) {
+      for (const k of Object.keys(paper)) if (k !== '_through') paper[k] = { ...paper[k], ...movePaper(paper[k], A, side.width || 1920, side.height || 1080) };   // keeps stale
+      log(`${f}: sheet moved by ${A[2]}, ${A[5]} px: paper positions moved along`);
+    } else if (A == null && side.reason === 'big-change') {
+      // moved too far (or a new sheet) to measure: where things are on the paper is unknown now. Stale
+      // positions never satisfy the REMOVE guard; a thing gets a fresh one when it is next written.
+      for (const k of Object.keys(paper)) if (k !== '_through' && paper[k]) paper[k] = { ...paper[k], stale: true };
+      log(`${f}: big change without a measured move: paper positions marked stale`);
+    }
+    paper._through = f;
+  }
+  writePaper(reportsDir, paper);
 }
 
 // ---------- watch frames/settled ----------
@@ -243,6 +283,7 @@ async function watch(dir, opts) {
       // frame, so a scribble that appeared in a skipped frame is still seen
       const box = side.previous && side.previous === lastGenerated ? side.changed_box : null;
       status('building', newest);
+      await movePaperAlong(dir, newest, opts);
       const r = await processFrame(join(dir, newest), { ...opts, box, bigChange: movedSince || side.reason === 'big-change', previous: lastGenerated ? join(dir, lastGenerated) : null });
       const names = r.written.map(w => w.name).join(', ');
       if (r.error) status('failed', newest, r.error.slice(0, 80));
