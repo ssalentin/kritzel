@@ -10,7 +10,7 @@ export const DIALOGUES = [
   { w: 3, when: c => c.newest, end: 'look', turns: [
     ['a', 'Hast du das Neue gesehen? Da drüben: {thing}!', 'Have you seen the new thing? Over there: {thing}!'],
     ['b', 'Nein! Was ist das denn?', 'No! What is it?'],
-    ['a', 'Ganz neu auf der Insel. Komm, wir schauen!', 'It just arrived. Let\'s go look!'] ] },
+    ['a', 'Ganz neu im Buch. Komm, wir schauen!', 'It just arrived. Let\'s go look!'] ] },
   { w: 2, when: c => c.newest && c.r > 0.5, end: 'look', turns: [
     ['a', '{b}, da drüben ist was Neues!', '{b}, there\'s something new over there!'],
     ['b', 'Echt? Ist es nett?', 'Really? Is it nice?'],
@@ -70,7 +70,7 @@ export const DIALOGUES = [
     ['b', 'Versprochen… vielleicht!', 'Promise… maybe!'] ] },
   { w: 1, when: () => true, end: 'stroll', turns: [
     ['a', 'Schöner Tag heute, oder?', 'Lovely day, isn\'t it?'],
-    ['b', 'Ja! Die Insel ist so schön.', 'Yes! The island is so pretty.'],
+    ['b', 'Ja! Das Buch ist so schön.', 'Yes! The book is so pretty.'],
     ['a', 'Komm, wir gehen ein Stück.', 'Come on, let\'s walk a bit.'] ] },
 ];
 

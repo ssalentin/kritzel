@@ -13,7 +13,7 @@ export const LINES = {
   },
   chat: {
     sqichy: ['Willst du mein Schwert sehen?', 'Der Teich ist heute warm.', 'Ich bin ein Ritter, weißt du.', 'Blubb blubb.', 'Mein Hut hat Federn!'],
-    person: ['Was für ein schöner Tag!', 'Schau mal, Blumen!', 'Wo gehen wir hin?', 'Ich hab Hunger.', 'Hast du die Wolke gesehen?', 'Die Insel ist winzig!'],
+    person: ['Was für ein schöner Tag!', 'Schau mal, Blumen!', 'Wo gehen wir hin?', 'Ich hab Hunger.', 'Hast du die Wolke gesehen?', 'Das Buch ist riesig!'],
   },
   reply: {
     sqichy: ['Genau! Blubb.', 'Haha! Hallo!', 'Sehr wahr.', '*wackelt fröhlich*'],
@@ -65,7 +65,7 @@ export const LINES_EN = {
   },
   chat: {
     sqichy: ['Do you want to see my sword?', 'The pond is warm today.', 'I\'m a knight, you know.', 'Blub blub.', 'My hat has feathers!'],
-    person: ['What a lovely day!', 'Look, flowers!', 'Where are we going?', 'I\'m hungry.', 'Did you see the cloud?', 'The island is tiny!'],
+    person: ['What a lovely day!', 'Look, flowers!', 'Where are we going?', 'I\'m hungry.', 'Did you see the cloud?', 'This book is huge!'],
   },
   reply: {
     sqichy: ['Exactly! Blub.', 'Haha! Hello!', 'Very true.', '*wiggles happily*'],
