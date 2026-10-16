@@ -44,6 +44,8 @@
   #card .rel { margin-top: 4px; font-size: 13px; }
   #snd { position: fixed; right: 16px; top: 12px; font: 13px system-ui, sans-serif; color: var(--fg); background: var(--panel);
     border: 0; border-radius: 10px; padding: 6px 10px; cursor: pointer; opacity: .8; }
+  #langBtn b { text-decoration: underline; text-underline-offset: 3px; }
+  #langBtn span { opacity: .55; }
   #langBtn { position: fixed; right: 232px; top: 12px; font: 600 13px system-ui, sans-serif; color: var(--fg); background: var(--panel);
     border: 0; border-radius: 10px; padding: 6px 10px; cursor: pointer; opacity: .8; }
   #camBtn { position: fixed; right: 124px; top: 12px; font: 13px system-ui, sans-serif; color: var(--fg); background: var(--panel);
@@ -320,7 +322,7 @@ onLang(() => {
   document.querySelector('#cam select').setAttribute('aria-label', t('cameraSelect'));
   document.querySelector('#cam .refresh').title = t('cameraRefresh');
   document.querySelector('#cam img').alt = t('cameraImage');
-  langBtn.textContent = t('langBtn');
+  langBtn.replaceChildren(...['de', 'en'].flatMap((l, i) => [...(i ? [' | '] : []), Object.assign(document.createElement(l === lang() ? 'b' : 'span'), { textContent: l.toUpperCase() })]));
   langBtn.title = t('langTitle');
 });
 langBtn.addEventListener('click', e => { e.stopPropagation(); setLang(lang() === 'de' ? 'en' : 'de'); });

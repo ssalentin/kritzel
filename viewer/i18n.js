@@ -1,12 +1,12 @@
 // German / English for the viewer: every UI text lives here. The characters' speech lines are
 // in sim.js and sim-extra.js (LINES and LINES_EN); a drawn thing's own lines may be a plain array
 // (German) or { de: [...], en: [...] } — pickLines() takes either.
-// The choice is kept in localStorage; without one, the browser's language decides (German → de).
+// The choice is kept in localStorage; without one the page is German.
 
 const KEY = 'kritzelLang';
 let cur = (() => {
   try { const v = localStorage.getItem(KEY); if (v === 'de' || v === 'en') return v; } catch {}
-  return (navigator.language || '').toLowerCase().startsWith('de') ? 'de' : 'en';
+  return 'de';                                   // German first; the button switches
 })();
 const listeners = new Set();
 
