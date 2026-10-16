@@ -2,7 +2,9 @@
 // A thing declares itself a light source by returning `light` from build() (see README):
 //   sun  → day        moon → night        lamp → a warm light where it stands (fire, candle, lantern)
 // With no sun or moon on the sheet the world sits in a soft dusk. Every change eases in over a
-// few seconds; nothing snaps.
+// few seconds; nothing snaps. Drawn weather (weather.js) greys and dims the sky on top of that.
+
+import { createWeather } from './weather.js';
 
 const PRESETS = {
   // sky: CSS backdrop (centre, middle, edge); env: room-environment light; key: sun/moon light;
@@ -34,6 +36,11 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
   let name = 'dusk', frame = 0, envApplied = -1;
   const sources = new Map();          // thing id → [{ kind, obj, color, intensity, flicker, pl }]
   const tmp = new THREE.Vector3();
+
+  const weather = createWeather({ THREE, scene }), weatherIds = new Set();
+  const GREY = [new THREE.Color('#b9bcc6'), new THREE.Color('#7d8291'), new THREE.Color('#4a4e5c')], WHITE = new THREE.Color('#f4f6ff');
+  const shown = [new THREE.Color(), new THREE.Color(), new THREE.Color()];
+  let envShown = 0;
 
   // a few stars far out, fading in as night falls
   const starPos = [];
@@ -109,14 +116,15 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
     for (const f of ['env', 'keyInt', 'hemiInt', 'bounce', 'lamp', 'night']) cur[f] += (goal[f] - cur[f]) * k;
     cur.dir.lerp(goalDir, k);
 
+    const w = weather.update(t, dt);         // rain and storms dim and grey it, lightning flashes
     key.color.copy(cur.keyColor);
-    key.intensity = cur.keyInt;
+    key.intensity = cur.keyInt * (1 - w.dim) + w.flash * 2.5;
     key.position.copy(cur.dir).normalize().multiplyScalar(20);
     hemi.color.copy(cur.hemiSky);
     hemi.groundColor.copy(cur.hemiGround);
-    hemi.intensity = cur.hemiInt;
+    hemi.intensity = cur.hemiInt * (1 - w.dim * 0.5) + w.flash * 1.5;
     bounce.intensity = cur.bounce;
-    const starAlpha = Math.max(0, (cur.night - 0.4) / 0.6);
+    const starAlpha = Math.max(0, (cur.night - 0.4) / 0.6) * (1 - w.grey);   // clouds hide the stars
     stars.visible = starAlpha > 0.01;
     stars.material.opacity = starAlpha * (0.85 + 0.15 * Math.sin(t * 1.7));
     stars.rotation.y = t * 0.004;
@@ -129,22 +137,27 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
       s.pl.intensity = s.base * flick;
     }
 
-    const vars = { '--sky0': cur.sky[0], '--sky1': cur.sky[1], '--sky2': cur.sky[2], '--ink': cur.ink };
+    cur.sky.forEach((c, i) => shown[i].copy(c).lerp(GREY[i], w.grey * 0.8).lerp(WHITE, w.flash * 0.7));
+    const vars = { '--sky0': shown[0], '--sky1': shown[1], '--sky2': shown[2], '--ink': cur.ink };
     for (const [v, c] of Object.entries(vars)) {
       const hex = '#' + c.getHexString();
       if (css[v] !== hex) { css[v] = hex; document.documentElement.style.setProperty(v, hex); }
     }
 
     // the room environment gives most of the light: dim it on every material (new things included)
-    if (Math.abs(cur.env - envApplied) > 0.002 || ++frame % 30 === 0) {
-      envApplied = cur.env;
-      scene.traverse(o => { if (o.material) for (const m of [].concat(o.material)) if ('envMapIntensity' in m) m.envMapIntensity = cur.env; });
+    envShown = cur.env * (1 - w.dim) + w.flash * 0.8;
+    if (Math.abs(envShown - envApplied) > 0.002 || ++frame % 30 === 0) {
+      envApplied = envShown;
+      scene.traverse(o => { if (o.material) for (const m of [].concat(o.material)) if ('envMapIntensity' in m) m.envMapIntensity = envShown; });
     }
   }
 
   return {
     set,
-    reset() { for (const id of [...sources.keys()]) forget(id); },
+    reset() { for (const id of [...sources.keys()]) forget(id); for (const id of [...weatherIds]) weather.set(id, []); weatherIds.clear(); },
+    // the weather one drawn thing declares ({ kind } or a list; [] removes it)
+    setWeather(id, list) { weather.set(id, list); if ([].concat(list || []).length) weatherIds.add(id); else weatherIds.delete(id); },
+    weather: () => weather.state(),
     update,
     get name() { return name; },
     get night() { return cur.night; },   // 0 day, ~0.3 dusk, 1 night (eased)

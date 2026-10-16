@@ -137,7 +137,7 @@ export async function build(api, prevState = null) {
 
   async function loadThing(file, states, live = false) {
     const before = new Set(world.children);
-    const entry = { box: new THREE.Group(), actors: [], obstacles: [], spots: [], holds: [], heldBy: null, update: null, light: [] };
+    const entry = { box: new THREE.Group(), actors: [], obstacles: [], spots: [], holds: [], heldBy: null, update: null, light: [], weather: [] };
     let m = null;
     try {
       m = await import('./things/' + file + '?v=' + Date.now());
@@ -145,7 +145,7 @@ export async function build(api, prevState = null) {
       const r = (await m.build(ctx)) || {};
       if (water.ignored()) report(`things/${file}: ${water.ignored()} water piece(s) left out (at most 6 per thing)`);
       Object.assign(entry, { actors: r.actors || [], obstacles: r.obstacles || [], spots: r.spots || [], holds: r.holds || [], heldBy: r.heldBy || null, update: r.update || null,
-        light: [].concat(r.light || []) });
+        light: [].concat(r.light || []), weather: [].concat(r.weather || []) });
     } catch (e) { report(`things/${file}: ${e.message}`); }
     // everything this thing put into the world goes into its own box, so it can be removed later
     for (const o of [...world.children]) if (!before.has(o)) entry.box.add(o);
@@ -159,6 +159,7 @@ export async function build(api, prevState = null) {
       // spots (setWorld); only a thing with neither needs it here, so nobody is called twice
       if (entry.foot && !entry.actors.length && !entry.obstacles.length && !entry.spots.length) brain?.inspect?.(entry.foot.x, entry.foot.z);
     }
+    api.mood?.setWeather?.(file, entry.weather);
     const dropped = api.mood?.set(file, entry.light, entry.box);
     if (dropped) report(`things/${file}: ${dropped} lamp(s) left dark (at most 3 per thing, 8 in all)`);
     loaded.set(file, entry);
@@ -170,6 +171,7 @@ export async function build(api, prevState = null) {
     if (!entry) return;
     for (const a of entry.actors) brain?.removeActor(a.id);
     api.mood?.set(file, []);
+    api.mood?.setWeather?.(file, []);
     // things this one's actors hold go back to the world first, so they are not disposed with it
     // (the actors' rigs hang in entry.free since placement, the rest in entry.box)
     for (const e of loaded.values()) {
@@ -239,6 +241,7 @@ export async function build(api, prevState = null) {
       env.actors = brain.actors?.() || [];   // living props (e.g. a tree with a face) can react to who is near
       env.night = api.mood?.night ?? 0;      // 0 day … 1 night: characters get sleepy and gather at lamps
       env.lamps = api.mood?.lamps() ?? [];
+      env.weather = api.mood?.weather?.() || {};   // rain, snow, rainbow, lightning (and its flash)
       brain.update(t, dt, env);
     },
   };

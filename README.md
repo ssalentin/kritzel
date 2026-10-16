@@ -95,6 +95,8 @@ camera ──► frame ──► generation (generate/) ────────
 - **`viewer/mood.js`** — light and time of day: a drawn sun makes it day, a moon makes
   it night, lamps and fires light their surroundings; with neither sun nor moon the world
   sits in a soft dusk. Backdrop, light colours and lamps ease over a few seconds.
+- **`viewer/weather.js`** — weather you can draw: rain (with puddles), snow, a rainbow,
+  lightning; `mood.js` greys and dims the sky for it and the characters react.
 - **`viewer/world.js`** — builds one world: the island plus every file in `things/`.
   Things can be added, changed or removed live; every character's position, mood and
   friendships survive reloads (even a full page reload, via `sessionStorage`).
@@ -262,6 +264,13 @@ again when the holding thing is gone.
 (6.9) and `env` (`env.actors` lists who is around, `env.night` goes from 0 by day to 1
 at night, `env.lamps` lists where lamps and fires stand). A thing that throws is reported in
 the on-screen error box; the rest of the world keeps running.
+
+**Weather.** A thing that brings weather (a rain cloud, snowflakes, a rainbow, a storm cloud)
+returns `weather: { kind: 'rain' | 'snow' | 'rainbow' | 'lightning' }` (or a list). It lasts as long
+as the thing is on the island and eases in and out. Rain greys the sky, falls and leaves puddles
+on the grass; snow drifts down; a rainbow arcs behind the island and everyone cheers; lightning
+flashes every few seconds and scares the characters. In rain and storms they go in through
+house doors.
 
 **Speech in two languages.** A character's own `lines` (per group, e.g. `lines: { rest: … }`)
 and a spot's `lines` can be a plain array (German) or `{ de: [...], en: [...] }`; the viewer

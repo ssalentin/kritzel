@@ -340,6 +340,7 @@ let current = null;
 window.__paperWorld = () => current;      // debug handles (inspection from devtools / tests)
 window.__lighting = () => lighting;
 window.__status = status;
+window.__render = () => renderer.render(scene, camera);   // one frame on demand (tests that step the world themselves)
 
 function clearWorld() {
   world.traverse(o => {
@@ -378,7 +379,7 @@ const stampOf = async f => {
 async function poll() {
   try {
     // the page itself changed (engine or style): reload fully (state is kept via sessionStorage)
-    const ps = (await stampOf(location.pathname)) + (await stampOf('sound.js')) + (await stampOf('camera.js')) + (await stampOf('mood.js')) + (await stampOf('status.js')) + (await stampOf('i18n.js'));
+    const ps = (await stampOf(location.pathname)) + (await stampOf('sound.js')) + (await stampOf('camera.js')) + (await stampOf('mood.js')) + (await stampOf('status.js')) + (await stampOf('i18n.js')) + (await stampOf('weather.js'));
     if (pageStamp === null) pageStamp = ps;
     else if (ps !== pageStamp) { try { sessionStorage.setItem('paperWorldState', JSON.stringify(current?.snapshot?.())); } catch {} location.reload(); return; }
 
