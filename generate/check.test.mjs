@@ -82,3 +82,25 @@ test('holds: the actor must exist and the circle must have room inside', async (
   assert.ok((await buildCheck(jail('[{ x: 1, z: 1, r: 1.1 }]'), { takenIds: ['spinne'] })).problems.some(p => p.includes('no room inside')));
   assert.ok((await buildCheck(jail('[]'), { takenIds: [] })).problems.some(p => p.includes('on the island nowhere')));
 });
+
+test('sheet moves: paper positions follow capture\'s affine, frame by frame, once', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const { movePaperAlong } = await import('./generate.mjs');
+  const d = mkdtempSync(join(tmpdir(), 'kritzel-paper-')), settled = join(d, 'settled'), things = join(d, 'things'), reports = join(d, 'reports');
+  for (const p of [settled, things, reports]) mkdirSync(p);
+  writeFileSync(join(things, 'mond.js'), thing('return {};').replace("drawing: 'y' }", "drawing: 'y', paper: { x: 0.5, y: 0.25 } }"));
+  const frame = (ts, affine) => { writeFileSync(join(settled, ts + '.json'), JSON.stringify({ affine, width: 1920, height: 1080 })); writeFileSync(join(settled, ts + '.jpg'), ''); };
+  frame('20261016-030000', null);
+  writeFileSync(join(reports, 'paper.json'), JSON.stringify({ _through: '20261016-030000.jpg' }));
+  frame('20261016-030100', [1, 0, 96, 0, 1, -54]);   // the sheet moved right and up
+  frame('20261016-030200', null);                     // not measured: no move
+  frame('20261016-030300', [1, 0, 96, 0, 1, 0]);
+  await movePaperAlong(settled, '20261016-030300.jpg', { thingsDir: things, reportsDir: reports });
+  const p = JSON.parse(readFileSync(join(reports, 'paper.json'), 'utf8'));
+  assert.deepEqual(p['mond.js'], { x: 0.6, y: 0.2 });   // (960 + 192) / 1920, (270 - 54) / 1080
+  assert.equal(p._through, '20261016-030300.jpg');
+  await movePaperAlong(settled, '20261016-030300.jpg', { thingsDir: things, reportsDir: reports });   // nothing new: no second move
+  assert.deepEqual(JSON.parse(readFileSync(join(reports, 'paper.json'), 'utf8'))['mond.js'], { x: 0.6, y: 0.2 });
+});
