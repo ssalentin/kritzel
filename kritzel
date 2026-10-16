@@ -53,7 +53,7 @@ setup() {
   elif command -v npm >/dev/null; then
     echo "  installing the generator's packages…"
     if (cd generate && npm ci --no-audit --no-fund >/dev/null 2>&1); then ok "generator packages"; else bad "npm ci in generate/ failed"; fi
-  fi
+  else bad "npm (comes with node)"; note "needed once to install the generator's packages"; fi
   if has_camera; then ok "a camera on this machine: $(ls /dev/video* | tr '\n' ' ')"
   else note "no camera on this machine: run './kritzel camera' on the one it is plugged into"; fi
   [ $missing = 0 ] && echo "Ready: ./kritzel start" || { echo "Fix the ✗ above, then run ./kritzel setup again."; return 1; }
@@ -62,7 +62,9 @@ setup() {
 start() {
   [ -d generate/node_modules/three ] || { echo "Run ./kritzel setup first."; return 1; }
   echo "Starting Kritzel:"
-  launch viewer "viewer/serve.py" env PORT="$port" python3 viewer/serve.py
+  if ! running viewer "viewer/serve.py" && curl -s -o /dev/null "$url"; then
+    echo "  viewer: something already answers on port $port (not started by ./kritzel); using it"
+  else launch viewer "viewer/serve.py" env PORT="$port" python3 viewer/serve.py; fi
   for _ in $(seq 40); do curl -s -o /dev/null "$url" && break; sleep 0.25; done
   has_camera && launch camera "scripts/camera_server.py" python3 scripts/camera_server.py
   launch capture "scripts/capture.py" env VIEWER="http://127.0.0.1:$port" python3 -u scripts/capture.py
@@ -90,7 +92,9 @@ stop() {
 
 status() {
   for p in "viewer:viewer/serve.py" "camera:scripts/camera_server.py" "capture:scripts/capture.py" "generate:generate.mjs --watch"; do
-    running "${p%%:*}" "${p#*:}" && echo "  ${p%%:*}: running" || echo "  ${p%%:*}: not running"
+    if running "${p%%:*}" "${p#*:}"; then echo "  ${p%%:*}: running"
+    elif [ "${p%%:*}" = viewer ] && curl -s -o /dev/null "$url"; then echo "  viewer: running (not started by ./kritzel)"
+    else echo "  ${p%%:*}: not running"; fi
   done
   curl -s -o /dev/null "$url" && echo "  viewer answers at $url" || echo "  viewer does not answer at $url"
   if [ -f camera.json ]; then
@@ -115,6 +119,7 @@ EOF
 camera() {
   has_camera || echo "No camera on this machine (/dev/video*): plug it in, or run this on the machine it is plugged into."
   echo "Sharing this machine's cameras on port ${CAMERA_PORT:-8766} (Ctrl-C stops)."
+  [ "${CAMERA_PORT:-8766}" = 8766 ] || echo "Note: the viewer looks for cameras on port 8766 only."
   echo "On another machine, this needs only Python 3 and ffmpeg:"
   echo "  git clone $(git remote get-url origin 2>/dev/null || echo '<this repository>') kritzel && cd kritzel && ./kritzel camera"
   exec python3 scripts/camera_server.py
