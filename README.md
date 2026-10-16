@@ -5,7 +5,8 @@
 <h1 align="center">Kritzel</h1>
 
 <p align="center"><b>Draw on paper. Watch it come alive in a pop-up book.</b><br>
-A camera watches your sheet of paper. Every drawing, sticker or cut-out picture becomes a living thing on the pages of a 3D pop-up book.</p>
+A camera watches your sheet of paper. Every drawing, sticker or cut-out picture becomes a living thing on the pages of a 3D pop-up book.<br>
+Kritzel speaks English and German.</p>
 
 <p align="center"><sub><i>Kritzel</i> /ˈkʁɪtsl̩/, say <b>KRIT-sl</b> (rhymes with <i>pretzel</i>): German for <i>a scribble</i>.</sub></p>
 
@@ -17,7 +18,7 @@ A camera watches your sheet of paper. Every drawing, sticker or cut-out picture 
 </p>
 
 <p align="center">
-  <img src="docs/book-world.jpg" alt="The whole pop-up book at dusk: two cream pages with a red-brown cover; in the middle, creatures coloured in with pencil stand around a pond and a lighthouse, and Kastanientier and Giraffe talk in speech bubbles." width="100%">
+  <img src="docs/book-world.jpg" alt="The whole pop-up book at dusk: two cream pages with a red-brown cover; in the middle, creatures coloured in with pencil stand around a pond and a lighthouse, and two of them, a chestnut animal and a giraffe, talk in speech bubbles." width="100%">
 </p>
 
 ## What it does
@@ -33,30 +34,30 @@ look whenever something new arrives.
   candle or a campfire** and everyone gathers in its warm light.
 - **Draw weather:** a rain cloud brings rain and puddles (they hop in them), snowflakes bring
   snow, a rainbow makes everyone cheer, lightning sends them running for cover.
-- **Label a drawing** ("Vogel", "Fels", "Haus!" with an arrow) and it is read as that.
+- **Label a drawing** ("bird", "rock", "house!" with an arrow, in English or German) and it
+  is read as that.
   **Cross something out** or scribble over it and it goes away; colouring in never does.
 - **Stickers, cut-outs and brochure pictures** come alive too: a LEGO snake from a booklet
   becomes a brick snake on the page.
 - **Tap a character** and it hops and says hello; tap a thing and it wiggles; a long press
   follows a character with the camera.
 
-The world can grow sheet by sheet (**Hinzufügen**), or always show exactly what is on the
-paper right now (**Wechseln**). **Neue Welt** turns the page to an empty one; old worlds are
-kept.
+The world can grow sheet by sheet (**Add**), or always show exactly what is on the paper
+right now (**Switch**). **New world** turns the page to an empty one; old worlds are kept.
 
 <p align="center">
-  <img src="docs/book-close.jpg" alt="Close-up of the book: a bear, an egg-shaped creature with a waving arm, a creature with stalk eyes and a striped tower, all coloured in with visible pencil strokes and dark outlines; one of them says 'Eins, zwei, drei!'" width="100%">
+  <img src="docs/book-close.jpg" alt="Close-up of the book: a bear, an egg-shaped creature with a waving arm, a creature with stalk eyes and a striped tower, all coloured in with visible pencil strokes and dark outlines; one of them says 'Eins, zwei, drei!' (one, two, three)" width="100%">
 </p>
 
 ### From paper to book in seconds
 
 <p align="center">
-  <img src="docs/how-it-works.svg" alt="How a drawing comes alive: 1, draw on paper or lay down a sticker; 2, the camera above watches and waits until your hand is gone; 3, Kritzel notices the new drawing and a warm light shows where it will stand, after about 1.5 seconds; 4, Claude reads the drawing and writes a small, safety-checked 3D program; 5, about 15 seconds after the pen lifts, the creature pops up out of the book and starts walking and talking." width="100%">
+  <img src="docs/how-it-works.svg" alt="How a drawing comes alive: 1, draw on paper or lay down a sticker; 2, the camera above watches and waits until your hand is gone; 3, Kritzel notices the new drawing, asks what have we got here, and a warm light shows where it will stand, after about 1.5 seconds; 4, Claude reads the drawing and writes a small, safety-checked 3D program; 5, about 15 seconds after the pen lifts, the creature pops up out of the book and starts walking and talking." width="100%">
 </p>
 
 About **1.5 seconds** after the pen lifts, a warm light appears where the new thing will
-stand, and the status pill says what Kritzel is looking at: *„Was haben wir denn da? Ein Affe,
-ein Baum …"*. About **15 seconds** later the thing pops up out of the page with confetti and
+stand, and the status pill says what Kritzel is looking at: *"What have we got here? A monkey,
+a tree …"*. About **15 seconds** later the thing pops up out of the page with confetti and
 its name, and the others walk over to look. A whole new sheet takes about 24 seconds.
 
 ## What else it can do
@@ -65,8 +66,8 @@ its name, and the others walk over to look. A whole new sheet takes about 24 sec
   crawl, fly, swim or climb, depending on what they are, and keep out of each other's way.
 - **Short dialogues** in speech bubbles, every line an answer to the one before, with a name
   and a colour for each speaker; thoughts float up in thought clouds.
-- **German and English:** switch with DE | EN at the top right, for the buttons and for what the
-  characters say.
+- **English and German:** switch with DE | EN at the top right, for the buttons and for what
+  the characters say. Labels on the paper can be in either language.
 - **A look that belongs together:** everything is coloured in with pencil strokes and outlined,
   whether you drew it or Kritzel added it.
 - **The camera can be anywhere at home:** a document camera on another computer works too.
@@ -96,7 +97,8 @@ git clone https://github.com/ssalentin/kritzel.git && cd kritzel
 ./kritzel start     # starts everything and opens the book in your browser
 ```
 
-Then click **📷 Kamera** in the book, choose your camera, and start drawing.
+Then click **📷 Camera** in the book, choose your camera, and start drawing. Switch the
+language with DE | EN at the top right.
 `./kritzel stop` stops everything.
 
 If the camera is plugged into another computer at home, run this there once:
