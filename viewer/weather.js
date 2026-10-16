@@ -81,7 +81,8 @@ export function createWeather({ THREE, scene }) {
     if (rain.visible) drops.forEach((d, i) => {
       d.y -= d.v * dt;
       if (d.y < 0) { d.y = 11 + rnd() * 2; d.x = (rnd() - 0.5) * 18; d.z = (rnd() - 0.5) * 18; }
-      rainPos.set([d.x, d.y, d.z, d.x - 0.03, d.y + 0.35, d.z], i * 6);
+      const j = i * 6;                         // straight into the buffer: no array per drop per frame
+      rainPos[j] = d.x; rainPos[j + 1] = d.y; rainPos[j + 2] = d.z; rainPos[j + 3] = d.x - 0.03; rainPos[j + 4] = d.y + 0.35; rainPos[j + 5] = d.z;
     });
     rain.geometry.attributes.position.needsUpdate = rain.visible;
 
@@ -90,7 +91,7 @@ export function createWeather({ THREE, scene }) {
     if (snow.visible) flakes.forEach((f, i) => {
       f.y -= f.v * dt;
       if (f.y < 0) { f.y = 11 + rnd() * 2; f.x = (rnd() - 0.5) * 18; f.z = (rnd() - 0.5) * 18; }
-      snowPos.set([f.x + Math.sin(t * 0.8 + f.p) * 0.3, f.y, f.z + Math.cos(t * 0.6 + f.p) * 0.3], i * 3);
+      snowPos[i * 3] = f.x + Math.sin(t * 0.8 + f.p) * 0.3; snowPos[i * 3 + 1] = f.y; snowPos[i * 3 + 2] = f.z + Math.cos(t * 0.6 + f.p) * 0.3;
     });
     snow.geometry.attributes.position.needsUpdate = snow.visible;
 
