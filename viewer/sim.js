@@ -8,6 +8,7 @@
 //    whose outcome changes the relationship.
 import * as ROT from 'rot-js';
 import { sound } from './sound.js';
+import { lang, pickLines } from './i18n.js';
 
 const N = 33, C = 16, CELL = 0.45, TICK = 0.13;
 
@@ -21,6 +22,18 @@ const LINES = {
   night: { sqichy: ['Blubb… Nacht!'], person: ['Gute Nacht!', 'Es wird dunkel…', 'Schau, der Mond!'] },
   day: { sqichy: ['Blubb, Morgen!'], person: ['Guten Morgen!', 'Die Sonne ist da!'] },
   warm: { person: ['Schön warm hier.', 'Ahh, Licht!', 'Kommt alle ans Feuer!'] },
+};
+// the same in English (i18n.js decides which one is spoken)
+const LINES_EN = {
+  sun: { sqichy: ['Hey! Who stole the sun?'], person: ['Brrr…', 'Just a cloud!', 'Whoa, dark!'] },
+  rest: { sqichy: ['*bubbles quietly*'], person: ['Phew, a little break.', 'Zzz…', '*yawns*'] },
+  splash: { sqichy: ['Splash!', 'Ahh, water!'] },
+  scared: { person: ['Help!', 'Get me out of here!', 'Eeek!'] },
+  birds: { sqichy: ['Birds! Blub!', 'Come down, birds!'], person: ['Look, birds!', 'They\'re flying so low!', 'Hello, birds!'] },
+  tagCaught: { person: ['Got you!', 'Caught you!'] },
+  night: { sqichy: ['Blub… night!'], person: ['Good night!', 'It\'s getting dark…', 'Look, the moon!'] },
+  day: { sqichy: ['Blub, morning!'], person: ['Good morning!', 'The sun is here!'] },
+  warm: { person: ['Nice and warm here.', 'Ahh, light!', 'Everyone to the fire!'] },
 };
 
 export function create({ THREE, actors, trees, pond, spots = [], islandR, states = null, seed = Date.now() % 100000, extra = null }) {
@@ -153,8 +166,10 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
 
   const say = (a, text, dur = 2.4, delay = 0) => pending.push({ a, text, at: now + delay, dur });
   const line = (a, group) => {
-    if (a.lines?.[group]?.length) return pick(a.lines[group]);
-    const pool = LINES[group]?.[a.kind === 'squid' ? 'sqichy' : 'person'] || LINES[group]?.person;
+    const own = pickLines(a.lines?.[group]);     // a drawn character's own lines: array (German) or { de, en }
+    if (own?.length) return pick(own);
+    const L = lang() === 'en' ? LINES_EN : LINES;
+    const pool = L[group]?.[a.kind === 'squid' ? 'sqichy' : 'person'] || L[group]?.person;
     return pool ? pick(pool) : '';
   };
   // bodies, not grid cells, must not overlap: every actor has a footprint radius (world units)
@@ -281,6 +296,7 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
 
   const X = extra || {};
   Object.assign(LINES, X.LINES);
+  Object.assign(LINES_EN, X.LINES_EN);
   // what extra interactions get: the sim's helpers, so they stay generic
   const api = { busy, say, line, bond, now: () => now, R, pick, rel, actors: () => actors, nearest: nearestCell, step: stepToward, pass: passable, spots: () => spots, spotCell, cover: () => coverNow, seen: (x, y) => { const c = new Set(); fov.compute(x, y, 12, (cx, cy) => c.add(cx + ',' + cy)); return c; } };
   const INT = Object.fromEntries(Object.entries(X.INTERACTIONS || {}).map(([k, f]) => [k, (a, b) => f(a, b, api)]));
@@ -322,7 +338,7 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
         if (Math.hypot(sx - g.spot.x, sz - g.spot.z) < 1.4) {
           busy(a, null, 'talk', 2.6);
           a.face = Math.atan2(g.spot.x - sx, g.spot.z - sz);
-          say(a, pick(g.spot.lines || ['Mmh!']), 2.2); sound.at(a.rig.g).mampf();
+          say(a, pick(pickLines(g.spot.lines) || ['Mmh!']), 2.2); sound.at(a.rig.g).mampf();
           if (g.spot.kind === 'egg') { g.spot.found = true; a.eggs = (a.eggs || 0) + 1; } else { a.hunger = 0; a.energy = Math.min(1, a.energy + 0.35); }
         } else if (!stepToward(a, g.cell[0], g.cell[1])) a.goal = null;
         break;

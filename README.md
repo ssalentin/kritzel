@@ -113,7 +113,11 @@ camera ──► frame ──► generation (generate/) ────────
   spatialised relative to the camera. Off until the user clicks.
 - **`viewer/serve.py`** — a no-cache static server on `127.0.0.1:8765`.
 
-The UI text is German (the world is made for drawing with kids).
+The viewer speaks German or English (the world is made for drawing with kids): the DE/EN
+button next to 📷 switches all UI texts and the characters' speech; the choice is kept in
+the browser, and without one the browser's language decides. UI texts live in
+`viewer/i18n.js`; speech lines in `viewer/sim.js` and `viewer/sim-extra.js` (`LINES` and
+`LINES_EN`).
 
 ## Quick start
 
@@ -252,6 +256,10 @@ again when the holding thing is gone.
 (6.9) and `env` (`env.actors` lists who is around, `env.night` goes from 0 by day to 1
 at night, `env.lamps` lists where lamps and fires stand). A thing that throws is reported in
 the on-screen error box; the rest of the world keeps running.
+
+**Speech in two languages.** A character's own `lines` (per group, e.g. `lines: { rest: … }`)
+and a spot's `lines` can be a plain array (German) or `{ de: [...], en: [...] }`; the viewer
+speaks the current language and falls back to German.
 
 **Where a new thing stands.** The engine, not the model, has the last word: a thing that
 appears while the page is open is moved to the free spot nearest to `meta.paper` (where it

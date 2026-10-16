@@ -84,8 +84,8 @@ export function createSound(THREE, camera) {
   const ALIAS = { plop: 'plopp', tune: 'melodie', chirp: 'piep', babble: null };
   // words in a speech bubble that also trigger an effect
   const WORDS = [
-    [/quak/i, 'quak'], [/piep|tschilp|zwitscher|tirili/i, 'piep'], [/\bbuh\b/i, 'buh'], [/mampf|lecker|mmh/i, 'mampf'],
-    [/^o+h*!*$|ooo/i, 'staunen'], [/juhu|juchhe|party|tanz/i, 'melodie'], [/fünf|five/i, 'plopp'], [/♥/, 'herz'], [/rasch|wurzel/i, 'rascheln'],
+    [/quak|quack/i, 'quak'], [/piep|tschilp|zwitscher|tirili|tweet|chirp/i, 'piep'], [/\bbuh\b|\bboo\b/i, 'buh'], [/mampf|lecker|mmh|yum|delicious/i, 'mampf'],
+    [/^o+h*!*$|ooo/i, 'staunen'], [/juhu|juchhe|party|tanz|yay|woohoo|danc/i, 'melodie'], [/fünf|five/i, 'plopp'], [/♥/, 'herz'], [/rasch|wurzel|rustl/i, 'rascheln'],
   ];
 
   const api = {

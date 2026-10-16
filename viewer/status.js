@@ -1,6 +1,7 @@
 // What the pipeline is doing, for the person at the paper: a small pill in the corner (from
 // GET /api/status, written by capture and generate) and, the moment a new drawing is seen, a
 // warm glowing light on the free spot of the island where its 3D thing will grow out of it.
+import { t } from './i18n.js';
 
 const RESULT_S = 10;       // how long "✓ neu: …" / "✗ nicht erkannt" stays up
 const SEEN_S = 6;          // how long "✏️ neue Zeichnung erkannt" stays up (if generate is slower to start)
@@ -95,19 +96,19 @@ export function createStatus({ THREE, scene, el, world, banner }) {
   function view(now) {
     const c = st?.capture || {}, g = st?.generate || {}, last = c.last;
     const thumb = last?.cutout && now - last.at < 300 ? last.frame : null;
-    if (g.alive && g.state === 'building') return { tone: 'busy', text: `🎨 wird gebaut… ${Math.max(0, Math.round(now - g.since))} s`, thumb };
+    if (g.alive && g.state === 'building') return { tone: 'busy', text: t('building', Math.max(0, Math.round(now - g.since))), thumb };
     if (g.alive && now - g.since < RESULT_S) {
-      if (g.state === 'new') return { tone: 'ok', text: `✓ neu: ${g.detail || 'Ding'}`, thumb };
-      if (g.state === 'changed') return { tone: 'ok', text: `↻ geändert: ${g.detail || 'Ding'}`, thumb };
-      if (g.state === 'unclear' || g.state === 'failed') return { tone: 'warn', text: '✗ nicht erkannt', thumb };
+      if (g.state === 'new') return { tone: 'ok', text: t('made', g.detail), thumb };
+      if (g.state === 'changed') return { tone: 'ok', text: t('changed', g.detail), thumb };
+      if (g.state === 'unclear' || g.state === 'failed') return { tone: 'warn', text: t('unclear'), thumb };
     }
-    if (last && now - last.at < SEEN_S) return { tone: 'busy', text: '✏️ neue Zeichnung erkannt', thumb };
-    if (!c.alive) return { tone: 'bad', text: '⚠ Kamera-Beobachter aus' };
-    if (c.state === 'camera-off') return { tone: 'bad', text: 'Kamera aus' };
-    if (c.state === 'no-camera') return { tone: 'bad', text: 'keine Kamera gewählt' };
-    if (c.state === 'moving') return { tone: 'ok', text: '✋ Bewegung…' };
-    if (now - connectedAt < 3) return { tone: 'ok', text: 'Kamera verbunden' };
-    return { tone: 'ok', text: '👀 beobachtet das Papier', calm: true };
+    if (last && now - last.at < SEEN_S) return { tone: 'busy', text: t('seen'), thumb };
+    if (!c.alive) return { tone: 'bad', text: t('captureOff') };
+    if (c.state === 'camera-off') return { tone: 'bad', text: t('cameraOff') };
+    if (c.state === 'no-camera') return { tone: 'bad', text: t('noCamera') };
+    if (c.state === 'moving') return { tone: 'ok', text: t('moving') };
+    if (now - connectedAt < 3) return { tone: 'ok', text: t('connected') };
+    return { tone: 'ok', text: t('watching'), calm: true };
   }
 
   function render() {
@@ -123,6 +124,7 @@ export function createStatus({ THREE, scene, el, world, banner }) {
     if (img.getAttribute('src') !== src) { if (src) img.src = src; else img.removeAttribute('src'); }
     img.hidden = !src;
     gen.hidden = !!st.generate?.alive;
+    if (gen.textContent !== t('generatorOff')) gen.textContent = t('generatorOff');
     dot.title = v.text;
   }
 
