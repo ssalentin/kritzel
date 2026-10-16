@@ -428,7 +428,8 @@ function bakeAO(THREE, container) {
 // ---------- preview: ?style=origami — every drawn thing as folded paper ----------
 // few large facets (primitives rebuilt with few segments, everything flat-shaded), matte paper
 // with a faint grain, and soft crease lines along the folds. Preview only: no thing has to cooperate.
-const STYLE = new URLSearchParams(location.search).get('style');
+// the look of drawn things: coloured pencil by default; ?style=plain|cutout|origami to compare
+const STYLE = new URLSearchParams(location.search).get('style') || 'crayon';
 const ORIGAMI = STYLE === 'origami';
 let grain = null;
 function paperGrain(THREE) {
@@ -514,8 +515,11 @@ function cutout(THREE, root) {
 // pencil outline. Stand-in for the child's real strokes from the frame.
 const crayonTex = new Map();
 function crayonStrokes(THREE, color) {
-  const key = color.getHexString();
+  // colours are rounded to 32 steps per channel, so a world never holds more than a few dozen textures
+  const q = color.clone(); q.r = Math.round(q.r * 31) / 31; q.g = Math.round(q.g * 31) / 31; q.b = Math.round(q.b * 31) / 31;
+  const key = q.getHexString();
   if (crayonTex.has(key)) return crayonTex.get(key);
+  color = q;
   const cv = document.createElement('canvas'); cv.width = cv.height = 512;
   const g = cv.getContext('2d');
   g.fillStyle = '#fbf7ee'; g.fillRect(0, 0, 512, 512);
