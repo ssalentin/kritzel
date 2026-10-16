@@ -53,6 +53,7 @@ function callOnce({ system, text, images, model = MODEL, effort = EFFORT, timeou
       if (res.is_error || res.subtype !== 'success') return reject(new Error(`claude -p (${model}) failed: ${String(res.result).slice(0, 300)}`));
       resolve({ text: String(res.result || ''), cost: res.total_cost_usd, seconds: (Date.now() - t0) / 1000, model });
     });
-    p.stdin.end(JSON.stringify(msg) + '\n');
+    p.stdin.on('error', () => {});      // the call was cancelled (or claude died) before it read its input: not an error here
+    if (!p.killed) p.stdin.end(JSON.stringify(msg) + '\n');
   });
 }

@@ -21,6 +21,7 @@ import { live } from './children.mjs';
 import { staticCheck, buildCheck, metaOf } from './check.mjs';
 import { SYSTEM, userText, fixText } from './prompts.mjs';
 import { islandOf, movePaper } from './place.mjs';
+import { triage, TRIAGE_MODEL } from './triage.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const log = (...a) => console.error(new Date().toISOString().slice(11, 19), ...a);
@@ -117,7 +118,7 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
 }
 
 // ---------- one settled frame ----------
-export async function processFrame(frame, { thingsDir, reportsDir, box = null, previous = null, bigChange = false, render = false }) {
+export async function processFrame(frame, { thingsDir, reportsDir, box = null, previous = null, bigChange = false, render = false, useTriage = true, onTriage = null }) {
   mkdirSync(reportsDir, { recursive: true });
   const name = basename(frame).replace(/\.\w+$/, '');
   const settledAt = statSync(frame).mtimeMs;
@@ -126,14 +127,44 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
   try {
     const paper = readPaper(reportsDir);
     const existing = await readThings(thingsDir, paper);
+    // the fast first look (triage.mjs, ~4 s) runs before the build call when capture's box says little
+    // (whole frame), else beside it: its answer goes to the viewer early, the build call is skipped or
+    // cancelled when nothing changed, and its box becomes the crop. What to build or remove stays the
+    // build call's decision (a shortcut that removed by paper position once removed the wrong thing).
+    const [W, H] = execFileSync('identify', ['-format', '%w %h', frame], { encoding: 'utf8' }).split(' ').map(Number);
+    let t = null, settled = false;
+    const noteTriage = x => {
+      if (!x || settled) return;
+      t = x; report.triage = x;
+      report.calls.push({ model: TRIAGE_MODEL, seconds: x.seconds, cost: x.cost, triage: x.kind });
+      log(`${name}: triage ${x.kind}${x.box ? ' at ' + x.box.join(',') : ''} (${x.seconds}s)`);
+      onTriage?.(x);
+    };
+    const triageP = useTriage && previous && existsSync(previous) ? triage(previous, frame).catch(e => { report.triageError = e.message; return null; }) : null;
+    const whole = !box || box[2] * box[3] > 0.5 * W * H;
+    if (triageP && whole) { noteTriage(await triageP); if (t?.changed && t.box) box = t.box; }
     const { image, before, area, place, height } = cropOf(frame, box, previous);
     const images = before ? [before, image] : [image];
     const files = new Set(existing.map(t => t.file.replace(/\.js$/, '')));
-    const r = await oneShot({ system: SYSTEM, text: userText({ existing, place, height, takenIds: existing.flatMap(t => t.ids), hasBefore: !!before }), images });
-    report.calls.push({ model: r.model, seconds: +r.seconds.toFixed(1), cost: r.cost });
-    report.reply = r.text.slice(0, 4000);
-    const sections = parseReply(r.text);
-    if (!sections.length) log(`${name}: nothing new (${r.seconds.toFixed(1)}s)`);
+    let sections, r = null;
+    if (t && !t.changed) { sections = []; report.skippedBy = 'triage'; log(`${name}: nothing changed (triage): no build call`); }
+    else {
+      const ac = new AbortController();
+      triageP?.then(x => { noteTriage(x); if (x && !x.changed) ac.abort(); });
+      try {
+        r = await oneShot({ system: SYSTEM, text: userText({ existing, place, height, takenIds: existing.flatMap(t => t.ids), hasBefore: !!before }), images, signal: ac.signal });
+        report.calls.push({ model: r.model, seconds: +r.seconds.toFixed(1), cost: r.cost });
+        report.reply = r.text.slice(0, 4000);
+        sections = parseReply(r.text);
+        if (!sections.length) log(`${name}: nothing new (${r.seconds.toFixed(1)}s)`);
+      } catch (e) {
+        if (e.code !== 'CANCELLED') throw e;
+        sections = [];
+        report.skippedBy = 'triage';
+        log(`${name}: build call cancelled: triage says ${t?.kind}`);
+      }
+    }
+    settled = true;
     const renders = [];
     // many removals at once is a new or moved sheet, not a child erasing: remove nothing and say so
     const removes = sections.filter(s => s.kind === 'REMOVE');
@@ -166,7 +197,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
       if (s.kind === 'UPDATE' && !old) { report.rejected.push({ kind: s.kind, file: s.file, problems: ['no such thing to update'] }); log(`${name}: UPDATE of unknown ${s.file} ignored`); continue; }
       // ids of every other thing, including ones written earlier in this reply
       const takenIds = [...existing.filter(t => t !== old).flatMap(t => t.ids), ...report.written.flatMap(w => w.ids)];
-      const f = await finish({ body: s.body, model: r.model, frame, images, takenIds, keepIds: old?.ids || [], oldName: old?.meta.name || null, calls: report.calls });
+      const f = await finish({ body: s.body, model: r?.model || MODEL, frame, images, takenIds, keepIds: old?.ids || [], oldName: old?.meta.name || null, calls: report.calls });
       const thingName = (f.code || s.body).match(/name:\s*['"]([^'"]+)['"]/)?.[1] || 'Ding';
       if (!f.code) { report.rejected.push({ kind: s.kind, file: s.file, name: thingName, problems: f.problems }); log(`${name}: REJECTED ${s.kind} ${s.file || thingName}: ${f.problems.join('; ')}`); continue; }
       const base = old ? old.file.replace(/\.js$/, '') : freeName(slug(thingName), files);
@@ -249,7 +280,7 @@ function statusFile(file) {
   const write = () => { try { mkdirSync(dirname(file), { recursive: true }); atomicWrite(file, JSON.stringify({ ...st, beat: Date.now() / 1000 })); } catch {} };
   setInterval(write, 2000).unref();
   write();
-  return (state, frame, detail = '') => { st = { state, since: Date.now() / 1000, detail, frame: frame.replace(/\.jpg$/, '') }; write(); };
+  return (state, frame, detail = '', extra = {}) => { st = { state, since: Date.now() / 1000, detail, frame: frame.replace(/\.jpg$/, ''), ...extra }; write(); };
 }
 
 async function watch(dir, opts) {
@@ -284,10 +315,13 @@ async function watch(dir, opts) {
       const box = side.previous && side.previous === lastGenerated ? side.changed_box : null;
       status('building', newest);
       await movePaperAlong(dir, newest, opts);
-      const r = await processFrame(join(dir, newest), { ...opts, box, bigChange: movedSince || side.reason === 'big-change', previous: lastGenerated ? join(dir, lastGenerated) : null });
+      // the triage's first look reaches the viewer while the build call still runs
+      const onTriage = x => status('building', newest, '', { triage: { kind: x.kind, box: x.box, light: x.light, weather: x.weather } });
+      const r = await processFrame(join(dir, newest), { ...opts, box, onTriage, bigChange: movedSince || side.reason === 'big-change', previous: lastGenerated ? join(dir, lastGenerated) : null });
       const names = r.written.map(w => w.name).join(', ');
       if (r.error) status('failed', newest, r.error.slice(0, 80));
       else if (r.written.length) status(r.written.every(w => w.kind === 'UPDATE') ? 'changed' : 'new', newest, names);
+      else if (r.skippedBy === 'triage' && !r.removed.length) status('idle', newest);
       else status(r.removed.length ? 'changed' : 'unclear', newest, r.removed.length ? 'removed' : '');
       if (!r.error) { last = lastGenerated = newest; tries = 0; movedSince = false; continue; }
       // claude missing for a moment: Claude Code updates itself in place (the binary is replaced), so
