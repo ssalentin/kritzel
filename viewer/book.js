@@ -82,6 +82,7 @@ export function buildBook({ THREE, world }) {
   spine.position.set(0, -0.5, 0);
   g.add(spine);
 
+  g.userData.book = true;                // the page turn folds everything else flat, not this
   world.add(g);
   return { group: g, ground: GROUND, update() {} };
 }
