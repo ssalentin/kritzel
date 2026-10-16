@@ -26,6 +26,7 @@ export function createStatus({ THREE, scene, el, world, banner }) {
   let st = null, lastView = '', viewSince = 0, prevCap = null, connectedAt = 0;
   const lights = new Map();          // frame → { g, light, orb, halo, sparks, spot, born, dying, claimed }
   const glow = glowTexture(THREE);
+  let modeNote = '', modeNoteUntil = 0;
   const growing = [];                // things that just arrived, folding up out of the page
   const bursts = [];                 // paper confetti flying out of them
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);   // reused every frame
@@ -80,10 +81,11 @@ export function createStatus({ THREE, scene, el, world, banner }) {
     lights.set(last.frame, { g, light, orb, halo, sparks, spot: { ...spot, r: want.r }, born: performance.now(), dying: 0, claimed: false });
   }
 
-  function retire(frame) {
+  function retire(frame, fast = false) {
     const l = lights.get(frame);
-    if (l && !l.dying) l.dying = performance.now();
+    if (l && !l.dying) { l.dying = performance.now(); l.fadeMs = fast ? 250 : 1000; }
   }
+
 
   function drop(frame) {
     const l = lights.get(frame);
@@ -95,6 +97,7 @@ export function createStatus({ THREE, scene, el, world, banner }) {
   // the pill's text for this moment, from both stages' status files
   function view(now) {
     const c = st?.capture || {}, g = st?.generate || {}, last = c.last;
+    if (performance.now() < modeNoteUntil) return { tone: 'ok', text: modeNote };   // the mode just changed
     const thumb = last?.cutout && now - last.at < 300 ? last.frame : null;
     if (g.alive && g.state === 'building') return { tone: 'busy', text: t('building', Math.max(0, Math.round(now - g.since))), thumb };
     if (g.alive && now - g.since < RESULT_S) {
@@ -131,6 +134,9 @@ export function createStatus({ THREE, scene, el, world, banner }) {
   return {
     // a fresh /api/status answer
     update(next) {
+      if (next.mode && st?.mode && next.mode !== st.mode) {           // shown briefly in the pill (issue #16)
+        modeNote = next.mode === 'switch' ? t('modeNoteSwitch') : t('modeNoteAdd'); modeNoteUntil = performance.now() + 4000;
+      }
       const c = next.capture || {}, g = next.generate || {};
       next.at = performance.now();
       const was = prevCap;
@@ -140,7 +146,10 @@ export function createStatus({ THREE, scene, el, world, banner }) {
       const last = c.last;
       if (Array.isArray(last?.box) && !lights.has(last.frame) && next.now - last.at < 30 && st !== null) addLight(last);
       // its thing has been built (or nothing could be made of it): the light fades
-      if (['new', 'changed', 'unclear', 'failed'].includes(g.state) && g.frame) retire(g.frame);
+      if (['new', 'changed', 'failed'].includes(g.state) && g.frame) retire(g.frame);
+      // nothing new after all (a nudged sheet, a shadow): generate says so (triage 'none' → idle, or
+      // unclear) and the light goes out at once instead of glowing on for a thing that never comes
+      if (g.frame && (g.state === 'idle' || g.state === 'unclear' || g.triage?.kind === 'none')) retire(g.frame, true);
       st = next;
       render();
     },
@@ -187,7 +196,7 @@ export function createStatus({ THREE, scene, el, world, banner }) {
         const pop = Math.min(1, (now - l.born) / 500);
         let k = 1 + Math.sin(pop * Math.PI) * 0.15 * (1 - pop) - (1 - pop) ** 3;
         if (l.dying) {
-          const d = Math.min(1, (now - l.dying) / 1000);
+          const d = Math.min(1, (now - l.dying) / (l.fadeMs || 1000));
           k *= 1 - d;
           if (d >= 1) { drop(frame); continue; }
         }
