@@ -106,6 +106,8 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
     if (!problems.length) {
       const b = await buildCheck(full, { takenIds });
       problems = b.problems;
+      // a module from before the one-figure rule may hold several figures: updating it is not splitting it
+      if (keepIds.length > 1) problems = problems.filter(p => !/actors in one module/.test(p));
       // an updated thing keeps its actor ids (the sim remembers friendships), unless it was renamed into
       // something else that is no longer alive (figures → "Kerzen")
       const renamed = oldName && code.match(/name:\s*['"]([^'"]+)['"]/)?.[1] !== oldName;
