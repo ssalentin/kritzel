@@ -206,6 +206,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         if urllib.parse.urlsplit(self.path).path != "/api/newworld":
             return self.json({"error": "not found"}, 404)
+        # only the viewer itself: a page on another site can send a plain POST without asking first,
+        # but not one with this header (that needs a CORS preflight, which we never grant)
+        if self.headers.get("X-Kritzel") != "1":
+            return self.json({"error": "forbidden"}, 403)
         # a new world: scripts/newworld.sh archives this one to worlds/ (never deletes) and empties things/
         with NEWWORLD_LOCK:
             if time.time() - last_newworld[0] < NEWWORLD_GAP_S:

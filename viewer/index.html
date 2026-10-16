@@ -357,7 +357,7 @@ newBtn.addEventListener('click', async e => {
   e.stopPropagation();
   if (performance.now() >= sureUntil) { sureUntil = performance.now() + 4000; showNew(); setTimeout(showNew, 4100); return; }
   sureUntil = 0; showNew();
-  try { await fetch('/api/newworld', { method: 'POST', body: '{}' }); } catch {}   // the poll sees the page empty and turns it
+  try { await fetch('/api/newworld', { method: 'POST', body: '{}', headers: { 'X-Kritzel': '1' } }); } catch {}   // the poll sees the page empty and turns it
 });
 
 // what capture and generate are doing, and a glowing light where a new drawing will appear
