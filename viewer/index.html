@@ -100,6 +100,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { createMood } from './mood.js';
 import { createStatus } from './status.js';
+import { createStyle } from './style.js';
 import { t, lang, setLang, onLang } from './i18n.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -148,6 +149,10 @@ scene.add(sun);
 const bounce = new THREE.DirectionalLight(0xf2ead8, 0.25);
 bounce.position.set(-3, -10, 5);
 scene.add(bounce);
+// Kritzel's look: ink outlines, pencil hatching and paper grain over the rendered scene
+const style = createStyle({ THREE, renderer, scene, camera });
+window.__style = style;                  // try things out: __style.enabled, __style.uniforms.inkWidth.value …
+
 // drawn suns, moons and lamps set the time of day and light their surroundings
 const lighting = createMood({ THREE, scene, key: sun, hemi, bounce });
 
@@ -171,6 +176,7 @@ function bubble(parent, y, { name = false } = {}) {
   const ctx = cv.getContext('2d');
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ depthTest: false, transparent: true }));
   sprite.renderOrder = 10;
+  sprite.layers.set(1);              // drawn after the paper pass, so no ink crosses a bubble (style.js)
   sprite.visible = false;            // hidden until there is something to say
   sprite.position.y = y;
   sprite.userData = { baseY: y, shift: 0 };
@@ -340,7 +346,7 @@ let current = null;
 window.__paperWorld = () => current;      // debug handles (inspection from devtools / tests)
 window.__lighting = () => lighting;
 window.__status = status;
-window.__render = () => renderer.render(scene, camera);   // one frame on demand (tests that step the world themselves)
+window.__render = () => style.render();   // one frame on demand (tests that step the world themselves)
 
 function clearWorld() {
   world.traverse(o => {
@@ -379,7 +385,7 @@ const stampOf = async f => {
 async function poll() {
   try {
     // the page itself changed (engine or style): reload fully (state is kept via sessionStorage)
-    const ps = (await stampOf(location.pathname)) + (await stampOf('sound.js')) + (await stampOf('camera.js')) + (await stampOf('mood.js')) + (await stampOf('status.js')) + (await stampOf('i18n.js')) + (await stampOf('weather.js'));
+    const ps = (await stampOf(location.pathname)) + (await stampOf('sound.js')) + (await stampOf('camera.js')) + (await stampOf('mood.js')) + (await stampOf('status.js')) + (await stampOf('i18n.js')) + (await stampOf('weather.js')) + (await stampOf('style.js'));
     if (pageStamp === null) pageStamp = ps;
     else if (ps !== pageStamp) { try { sessionStorage.setItem('paperWorldState', JSON.stringify(current?.snapshot?.())); } catch {} location.reload(); return; }
 
@@ -537,7 +543,7 @@ function animate() {
   lighting.update(clock.elapsedTime, dt);
   status.tick(camera);
   controls.update();
-  renderer.render(scene, camera);
+  style.render();                      // the scene, drawn on paper when ?style=paper (style.js)
 }
 animate();
 
@@ -545,6 +551,7 @@ addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  style.setSize();
 });
 </script>
 </body>
