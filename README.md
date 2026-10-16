@@ -244,6 +244,10 @@ A thing a character holds (a flashlight in its hand) returns `heldBy: { actor, a
 the engine hangs it on that actor at `at` (actor space: x right, y up, z forward), so it walks
 and turns along, its light included.
 
+Water comes from a shared kit, `ctx.water`: `pond(x, z, r)`, `waterfall(from, to, width)` and
+`river(points, width)` return objects for the thing's group; the water flows, foams and sprays
+by itself and follows day, night and lamps (`viewer/water.js`).
+
 A thing drawn around a character (a jail, a fence) can keep it inside: `holds: [{ actor, x, z, r }]`
 lets that actor walk only within the circle; it is brought in if it is outside, and walks free
 again when the holding thing is gone.

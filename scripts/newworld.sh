@@ -6,7 +6,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 name=${1:-welt}-$(date +%Y%m%d-%H%M)
 dest="$root/worlds/$name"
 mkdir -p "$dest"
-for f in index.html world.js sim.js sim-extra.js island.js characters.js sound.js; do
+for f in index.html world.js sim.js sim-extra.js island.js characters.js sound.js water.js; do
   [ -f "$root/viewer/$f" ] && cp "$root/viewer/$f" "$dest/"
 done
 cp -r "$root/viewer/things" "$dest/things"
