@@ -50,8 +50,7 @@ export function createStatus({ THREE, scene, el, world, banner }) {
   // and roughly how much room it will need
   function placeOf({ box: [x, y, w, h], width: W, height: H }) {
     let ix = ((x + w / 2) / W - 0.5) * 9, iz = ((y + h / 2) / H - 0.5) * 7;
-    const r = Math.hypot(ix, iz);
-    if (r > 5) { ix *= 5 / r; iz *= 5 / r; }
+    ix = Math.max(-6.3, Math.min(6.3, ix)); iz = Math.max(-4.3, Math.min(4.3, iz));   // on the book's pages
     return { x: ix, z: iz, r: Math.min(1.8, Math.max(0.6, (Math.max(w / W, h / H)) * 4.5 * 0.4)) };
   }
 

@@ -7,8 +7,9 @@ export const caption = '';
 export async function build(api, prevState = null) {
   const { THREE, scene, world, camera, bubble, shadowAll, report } = api;
   const v = '?v=' + Date.now();
-  const [sim, islandMod, charMod, extra, waterMod, moves] = await Promise.all(
-    ['sim', 'island', 'characters', 'sim-extra', 'water', 'moves'].map(f => import(`./${f}.js${v}`)));
+  const [sim, bookMod, charMod, extra, waterMod, moves] = await Promise.all(
+    ['sim', 'book', 'characters', 'sim-extra', 'water', 'moves'].map(f => import(`./${f}.js${v}`)));
+  const { GROUND, FIT_R } = bookMod;
 
   // shared look: soft pastel low-poly materials (flat shaded unless asked otherwise)
   const mat = (color, opts = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.7, flatShading: true, ...opts });
@@ -21,12 +22,14 @@ export async function build(api, prevState = null) {
   };
   const rand = (s => () => (s = (s * 16807) % 2147483647) / 2147483647)(7);
 
-  // ---------- the island: grass top, soil, rock, roots — no water, no sky props ----------
+  // ---------- the ground: an open pop-up book (book.js); island.js only lives on in archived worlds ----------
   const pond = { x: 0, z: 0, r: 0 };
   const trees = [];                       // obstacles; drawn things add theirs
-  const island = islandMod.buildIsland({ THREE, world, mat, rand, pond, camera, waterfall: false, sky: false });
-
-  // (no grass tufts or pebbles: the grass top stays calm, softly painted like the example)
+  const island = bookMod.buildBook({ THREE, world });
+  // how far a shape at (s.x, s.z) reaches past the pages (0 = on them)
+  const offGround = s => s.hx !== undefined
+    ? Math.max(0, Math.abs(s.x) + s.hx - (GROUND.w / 2 - 0.2), Math.abs(s.z) + s.hz - (GROUND.d / 2 - 0.2))
+    : Math.max(0, Math.abs(s.x) + (s.r || 0.4) - (GROUND.w / 2 - 0.2), Math.abs(s.z) + (s.r || 0.4) - (GROUND.d / 2 - 0.2));
 
   // light: the scene's key light is placed by mood.js (from a drawn sun or moon, or the time of day)
   const SUN_POS = new THREE.Vector3(2.5, 6.8, -6.5);
@@ -46,7 +49,7 @@ export async function build(api, prevState = null) {
   const sound = { fx: (name, obj) => api.sound?.fx(name, obj) };
   // water for drawn things: ctx.water.pond(x, z, r), .waterfall(from, to, width), .river(points, width)
   const water = waterMod.makeWater({ THREE, scene });
-  const ctx = { THREE, world, bubble, shadowAll, mat, limb, rand, makePerson, pond, trees, SUN_POS, islandR: 6.9, env, sound,
+  const ctx = { THREE, world, bubble, shadowAll, mat, limb, rand, makePerson, pond, trees, SUN_POS, islandR: FIT_R, ground: GROUND, env, sound,
     water: { pond: water.pond, waterfall: water.waterfall, river: water.river } };
   const loaded = new Map();               // file → { box, actors, obstacles, spots, update }
   let brain = null, clockNow = 0;
@@ -82,7 +85,7 @@ export async function build(api, prevState = null) {
       b.union(m);
     });
     if (b.isEmpty() || b.min.y > 1.5) return null;
-    if ((b.max.x - b.min.x) * (b.max.z - b.min.z) > 0.3 * Math.PI * 6.9 * 6.9) return null;
+    if ((b.max.x - b.min.x) * (b.max.z - b.min.z) > 0.3 * GROUND.w * GROUND.d) return null;
     const hx = Math.max(0.3, (b.max.x - b.min.x) / 2), hz = Math.max(0.3, (b.max.z - b.min.z) / 2);
     return { x: (b.min.x + b.max.x) / 2, z: (b.min.z + b.max.z) / 2, hx, hz, r: Math.max(0.4, Math.hypot(hx, hz)), top: b.max.y };
   }
@@ -104,13 +107,12 @@ export async function build(api, prevState = null) {
     for (const [f, e] of loaded) if (f !== except && !e.heldBy) { if (e.foot) busy.push(e.foot); busy.push(...e.obstacles); }   // held: in a hand
     for (const a of brain?.actors?.() || []) busy.push({ x: a.pos.x, z: a.pos.z, r: 0.45 });
     const at = (cx, cz) => typeof shape === 'number' ? { x: cx, z: cz, r: shape } : { ...shape, x: cx, z: cz };
-    const reach = s => s.hx !== undefined ? Math.hypot(Math.abs(s.x) + s.hx, Math.abs(s.z) + s.hz) : Math.hypot(s.x, s.z) + s.r;
     let best = null, bestCost = Infinity;
     for (let ring = 0; ring <= 30; ring++) {
       const d = ring * 0.35, n = Math.max(1, Math.round(2 * Math.PI * d / 0.35));
       for (let i = 0; i < n; i++) {
         const a = i / n * Math.PI * 2 + ring, s = at(x + Math.cos(a) * d, z + Math.sin(a) * d);
-        const cost = Math.max(0, reach(s) - 6.6) * 4 + busy.reduce((c, o) => c + depth(s, o, 0.15), 0);
+        const cost = offGround(s) * 4 + busy.reduce((c, o) => c + depth(s, o, 0.15), 0);
         if (cost === 0) return { x: s.x, z: s.z };
         if (cost < bestCost - 1e-6) { bestCost = cost; best = { x: s.x, z: s.z }; }
       }
@@ -176,6 +178,18 @@ export async function build(api, prevState = null) {
     const rank = f => recent.has(f) ? 2e6 + [...recent].indexOf(f) : order.includes(f) ? order.indexOf(f) : 1e6;
     const list = [...loaded].filter(([, e]) => e.foot && !e.heldBy).sort((a, b) => rank(a[0]) - rank(b[0]));
     const moved = [];
+    // standing off the pages (a world made for the round island): onto them, if it may move
+    for (const [f, e] of list) {
+      if (pinned(e) || !offGround(e.foot)) continue;
+      const spot = freeSpot(e.foot.x, e.foot.z, e.foot, f);
+      const dx = +(spot.x - e.foot.x).toFixed(2), dz = +(spot.z - e.foot.z).toFixed(2);
+      if (!dx && !dz) continue;
+      shift(e, dx, dz);
+      const d0 = placed[f] || [0, 0];
+      savePlace(f, [+(d0[0] + dx).toFixed(2), +(d0[1] + dz).toFixed(2)], true);
+      moved.push(`${f} onto the pages by (${dx}, ${dz})`);
+      console.info(`placement: moved ${f} onto the pages by (${dx}, ${dz})`);
+    }
     for (let i = 1; i < list.length; i++) {
       for (let j = 0; j < i; j++) {
         const [fa, a] = list[i], [fb, b] = list[j];
@@ -305,7 +319,7 @@ export async function build(api, prevState = null) {
   for (const e of loaded.values()) trees.push(...e.obstacles);
   const spots = [...loaded.values()].flatMap(e => e.spots);
   places();
-  brain = sim.create({ THREE, actors, trees, pond, spots, islandR: 6.9, states: prevState, extra, moves });
+  brain = sim.create({ THREE, actors, trees, pond, spots, islandR: FIT_R, ground: GROUND, states: prevState, extra, moves });
   brain.setHolds([...loaded.values()].flatMap(e => e.holds));
   attachHeld();
   brain.setThings(thingList());

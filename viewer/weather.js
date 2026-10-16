@@ -30,10 +30,9 @@ export function createWeather({ THREE, scene }) {
   const puddles = new THREE.Group();
   const puddleMat = new THREE.MeshStandardMaterial({ color: 0x6f8fb8, roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0, depthWrite: false });
   for (let i = 0; i < 7; i++) {
-    const a = rnd() * Math.PI * 2, r = 1 + rnd() * 4.5;
     const m = new THREE.Mesh(new THREE.CircleGeometry(0.35 + rnd() * 0.45, 20), puddleMat);
     m.rotation.x = -Math.PI / 2; m.scale.set(1, 0.6 + rnd() * 0.4, 1);
-    m.position.set(Math.cos(a) * r, 0.03, Math.sin(a) * r);
+    m.position.set((rnd() - 0.5) * 11, 0.03, (rnd() - 0.5) * 7.5);   // on the book's pages (14 × 10)
     puddles.add(m);
   }
 
