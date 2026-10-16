@@ -174,3 +174,10 @@ test('speech lines: German arrays or { de, en } twins of the same length', async
   assert.deepEqual((await buildCheck(withLines("{ greet: { de: ['Hallo!', 'Hi!'], en: ['Hello!', 'Hi!'] } }"))).problems, []);
   assert.ok((await buildCheck(withLines("{ greet: { de: ['Hallo!', 'Hi!'], en: ['Hello!'] } }"))).problems.some(p => p.includes('twin')));
 });
+
+test('actor move: one of walk, hop, crawl, fly, swim, climb', async () => {
+  const mv = m => thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(0.4, 1, 0.4), ctx.mat(1))); ctx.world.add(g);
+    return { actors: [{ id: 'v1', name: 'Vogel', move: ${m}, rig: { kind: 'person', g, say() {} } }] };`);
+  assert.deepEqual((await buildCheck(mv("'fly'"))).problems, []);
+  assert.ok((await buildCheck(mv("'teleport'"))).problems.some(p => p.includes('move must be')));
+});

@@ -106,6 +106,7 @@ async function buildCheck(file, takenIds) {
       else { let inWorld = false; a.rig.g.traverseAncestors(p => { if (p === ctx.world) inWorld = true; }); if (!inWorld) problems.push(`actor ${a.id}: rig.g is not in ctx.world`); }
       if (typeof a.rig?.say !== 'function') problems.push(`actor ${a.id}: rig.say(text) is missing`);
       if (!a.rig?.kind) problems.push(`actor ${a.id}: rig.kind is missing`);
+      if (a.move != null && !['walk', 'hop', 'crawl', 'fly', 'swim', 'climb'].includes(a.move)) problems.push(`actor ${a.id}: move must be 'walk', 'hop', 'crawl', 'fly', 'swim' or 'climb' (got ${JSON.stringify(a.move)})`);
       if (a.rig?.kind && a.rig.kind !== 'person' && typeof a.rig.animate !== 'function')
         problems.push(`actor ${a.id}: kind "${a.rig.kind}" has no rig.animate, so the sim would animate it as a person with arms and legs it lacks`);
       if (a.start && !(Array.isArray(a.start) && a.start.length === 2 && a.start.every(num))) problems.push(`actor ${a.id}: start must be [x, z]`);
