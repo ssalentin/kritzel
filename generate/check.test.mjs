@@ -135,3 +135,14 @@ test('actors of one thing need their own names', async () => {
   assert.ok((await buildCheck(two('Kerze', 'Kerze'))).problems.some(p => p.includes('share a name')));
   assert.ok(!(await buildCheck(two('Große Kerze', 'Kleine Kerze'))).problems.some(p => p.includes('share a name')));
 });
+
+test('dialogue filter: German "die" is an article, English "die" is not', async () => {
+  const { safeLine, safeDialogue } = await import('../viewer/dialogues.js');
+  assert.ok(safeLine('Schau, die Sonne!', 'de'));
+  assert.ok(safeLine('Wo ist die Kerze?', 'de'));
+  assert.ok(!safeLine('Du bist so dumm!', 'de'));
+  assert.ok(!safeLine('I will die', 'en'));
+  assert.ok(safeLine('Look at the sun!', 'en'));
+  const d = { between: ['A', 'B'], end: null, turns: [{ who: 'A', de: 'Schau, die Sonne!', en: 'Look, the sun!' }, { who: 'B', de: 'Die ist schön.', en: 'It is pretty.' }] };
+  assert.ok(safeDialogue(d));
+});

@@ -95,11 +95,14 @@ export function pickDialogue(c, R) {
 }
 
 // ---------- child-safe filter: generated lines pass it before they are written and again before playback ----------
-const BAD = /\b(tot|töte\w*|sterb\w*|blut\w*|waffe\w*|schieß\w*|hass\w*|dumm\w*|idiot\w*|blöd\w*|scheiße?|kill\w*|dead|die[ds]?|blood\w*|gun\w*|shoot\w*|hate\w*|stupid|idiot\w*|shut up|sex\w*|drug\w*|alkohol\w*|alcohol)\b/i;
-export function safeLine(s) { return typeof s === 'string' && s.length > 0 && s.length <= 90 && !BAD.test(s) && !/[<>{}]|https?:/.test(s); }
+// one denylist per language: the English 'die' is the German article, so they must not share one
+const BAD_DE = /\b(tot\w*|töte\w*|sterb\w*|blut\w*|waffe\w*|schieß\w*|hass\w*|dumm\w*|idiot\w*|blöd\w*|scheiße?|sex\w*|droge\w*|alkohol\w*|bier|wein)\b/i;
+const BAD_EN = /\b(kill\w*|dead|die[ds]?|dying|blood\w*|gun\w*|shoot\w*|weapon\w*|hate\w*|stupid|idiot\w*|shut up|sex\w*|drug\w*|alcohol|beer|wine)\b/i;
+const clean = (s, bad) => typeof s === 'string' && s.length > 0 && s.length <= 90 && !bad.test(s) && !/[<>{}]|https?:/.test(s);
+export function safeLine(s, lang = 'de') { return clean(s, lang === 'en' ? BAD_EN : BAD_DE); }
 export function safeDialogue(d) {
   return d && Array.isArray(d.between) && d.between.length === 2 && Array.isArray(d.turns) && d.turns.length >= 2 && d.turns.length <= 6 &&
-    d.turns.every(t => d.between.includes(t.who) && safeLine(t.de) && safeLine(t.en)) &&
+    d.turns.every(t => d.between.includes(t.who) && safeLine(t.de, 'de') && safeLine(t.en, 'en')) &&
     [null, 'stroll', 'dance', 'tag', 'look'].includes(d.end ?? null);
 }
 

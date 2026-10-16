@@ -259,7 +259,9 @@ together (stroll, dance, tag, go and look). They face each other and take turns;
 them talks over it. Authored templates in German and English are always there; on top,
 `generate/dialogues.mjs` asks a small model (`claude-haiku-5-5`) for ~12 dialogues for the current
 cast after new things arrive and writes them to `viewer/things/dialogues.json`. Every generated
-line passes a child-safe filter before it is written and again before it is played.
+line passes a child-safe filter before it is written and again before it is played. That filter (a
+short German and an English denylist, length and shape) plus the system prompt is the whole
+child-safety layer: enough for a prototype at home, not a moderation system.
 `?log=dialog` in the viewer's URL logs each dialogue to the console.
 
 Water comes from a shared kit, `ctx.water`: `pond(x, z, r)`, `waterfall(from, to, width)` and
