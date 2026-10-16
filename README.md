@@ -7,6 +7,8 @@
 <p align="center"><b>Draw on paper. Watch it come alive.</b><br>
 A camera watches your sheet of paper; every drawing becomes a living thing on a floating 3D island.</p>
 
+<p align="center"><sub><i>Kritzel</i> /ˈkʁɪtsl̩/, say <b>KRIT-sl</b> (rhymes with <i>pretzel</i>): German for <i>a scribble</i>.</sub></p>
+
 <p align="center">
   <img alt="version 0.1.0" src="https://img.shields.io/badge/version-0.1.0-6aa65a">
   <img alt="three.js 0.160" src="https://img.shields.io/badge/three.js-0.160-000000?logo=threedotjs">
