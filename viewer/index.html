@@ -376,7 +376,7 @@ async function load() {
   }
 }
 
-const CORE = ['world.js', 'sim.js', 'sim-extra.js', 'island.js', 'characters.js', 'water.js', 'dialogues.js'];
+const CORE = ['world.js', 'sim.js', 'sim-extra.js', 'island.js', 'characters.js', 'water.js', 'dialogues.js', 'moves.js'];
 let coreStamp = '', thingStamps = null, pageStamp = null;
 const stampOf = async f => {
   const r = await fetch(f, { method: 'HEAD', cache: 'no-store' });

@@ -44,9 +44,11 @@ const LINES_EN = {
   flash: { sqichy: ['Blub!'], person: ['Whoa!', 'Lightning!', 'Eeek!'] },
 };
 
-export function create({ THREE, actors, trees, pond, spots = [], islandR, states = null, seed = Date.now() % 100000, extra = null }) {
+export function create({ THREE, actors, trees, pond, spots = [], islandR, states = null, seed = Date.now() % 100000, extra = null, moves = null }) {
   ROT.RNG.setSeed(seed);
   const R = () => ROT.RNG.getUniform();
+  const MV = moves?.makeMoves({ THREE, R: () => ROT.RNG.getUniform() });
+  let envNow = { perches: [], water: [] };
   const pick = a => ROT.RNG.getItem(a);
   const toWorld = (x, y) => [(x - C) * CELL, (y - C) * CELL];
   const key = (x, y) => x + ',' + y;
@@ -102,6 +104,9 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
     a.energy = 0.7 + R() * 0.3; a.social = 0.6; a.fear = 0;
     a.lastMet = {}; a.sayUntil = 0; a.hunger = R() * 0.5;
     a.getSpeed = () => a.speed;
+    a.move = ['walk', 'hop', 'crawl', 'fly', 'swim', 'climb'].includes(a.move) ? a.move : 'walk';   // how it moves (moves.js)
+    a.alt = 0; a.mv = null;
+    MV?.setup(a);
     if (st) {
       Object.assign(a, { energy: st.energy, social: st.social, fear: st.fear, hunger: st.hunger ?? a.hunger,
         lastMet: {}, calmUntil: 0, face: st.face ?? a.face });   // saved times are from the old clock: forget them
@@ -320,6 +325,7 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
   }
 
   function act(a) {
+    if (MV?.special(a, envNow)) return;        // flies, swims or climbs: moves.js runs it, off the grid
     a.energy = Math.max(0, a.energy - 0.004 * (1 + nightNow));   // night makes everyone tired sooner
     a.hunger = Math.min(1, a.hunger + 0.003);
     a.social = Math.min(1, a.social + 0.007);
@@ -517,7 +523,8 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
       }
     },
     snapshot() { return Object.fromEntries(actors.map(a => [a.id, snapshotOf(a)])); },
-    update(t, dt, { cover = 0, birdsLow = false, night = 0, lamps = [], weather = {} } = {}) {
+    update(t, dt, { cover = 0, birdsLow = false, night = 0, lamps = [], weather = {}, perches = [], water = [] } = {}) {
+      envNow = { perches, water };
       now = t; nightNow = night; lampsNow = lamps;
       // a storm sends everyone in through a door; rain only now and then (they'd rather splash)
       coverNow = Math.max(cover, weather.lightning ? 1 : weather.rain ? 0.4 : 0);
@@ -589,12 +596,20 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
 
       for (const a of actors) {
         if (a.sayUntil && now > a.sayUntil) { a.rig.say(''); a.sayUntil = 0; }
-        const [wx, wz] = toWorld(a.cell.x, a.cell.y);
-        const dx = wx - a.pos.x, dz = wz - a.pos.z, d = Math.hypot(dx, dz);
-        const step = Math.min(d, 1.6 * a.speed * dt * (a.kind === 'squid' ? 1.2 : 1));
-        const moving = d > 0.03;
-        if (moving) { a.pos.x += dx / d * step; a.pos.z += dz / d * step; a.face = Math.atan2(dx, dz); }
-        else if (a.partner) a.face = Math.atan2(a.partner.pos.x - a.pos.x, a.partner.pos.z - a.pos.z);
+        let moving;
+        if (MV?.special(a, envNow)) {             // flying, swimming, climbing (moves.js)
+          moving = MV.update(a, dt, now, envNow);
+          if ((a._cellAt ?? -1) < now - 1) { a._cellAt = now; a.cell = nearestCell(a.pos.x, a.pos.z) || a.cell; }   // so others can find it
+        } else {
+          const [wx, wz] = toWorld(a.cell.x, a.cell.y);
+          const dx = wx - a.pos.x, dz = wz - a.pos.z, d = Math.hypot(dx, dz);
+          const step = Math.min(d, 1.6 * a.speed * (MV ? (moves.SPEED[a.move] ?? 1) : 1) * dt * (a.kind === 'squid' ? 1.2 : 1));
+          moving = d > 0.03;
+          if (moving) { a.pos.x += dx / d * step; a.pos.z += dz / d * step; a.face = Math.atan2(dx, dz); }
+          else if (a.partner) a.face = Math.atan2(a.partner.pos.x - a.pos.x, a.partner.pos.z - a.pos.z);
+          a.alt = a.move === 'hop' && moving ? Math.abs(Math.sin(now * 8 * a.speed)) * 0.3 : 0;   // hoppers bounce along
+        }
+        if (a.lift) a.lift.position.y = a.alt;
         a.rig.g.position.x = a.pos.x;
         a.rig.g.position.z = a.pos.z;
         a.rig.g.rotation.y = lerpAngle(a.rig.g.rotation.y, a.face, Math.min(1, dt * 8));

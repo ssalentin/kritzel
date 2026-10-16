@@ -277,6 +277,13 @@ again when the holding thing is gone.
 at night, `env.lamps` lists where lamps and fires stand). A thing that throws is reported in
 the on-screen error box; the rest of the world keeps running.
 
+**How a creature moves.** An actor may say `move: 'walk' | 'hop' | 'crawl' | 'fly' | 'swim' | 'climb'`
+(default walk; `viewer/moves.js`). Hoppers bounce along, crawlers (snails, worms) are slow; a flyer
+loops in the air and lands on top of things or on the grass for a while; a swimmer stays in the
+drawn water nearest to it (ponds and rivers on the ground; with no water it walks); a climber
+(a spider) wanders, climbs the nearest tall thing, sits on top and climbs down again. Flyers,
+swimmers and climbers move on their own and don't join the others' games.
+
 **Weather.** A thing that brings weather (a rain cloud, snowflakes, a rainbow, a storm cloud)
 returns `weather: { kind: 'rain' | 'snow' | 'rainbow' | 'lightning' }` (or a list). It lasts as long
 as the thing is on the island and eases in and out. Rain greys the sky, falls and leaves puddles

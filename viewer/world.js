@@ -7,8 +7,8 @@ export const caption = '';
 export async function build(api, prevState = null) {
   const { THREE, scene, world, camera, bubble, shadowAll, report } = api;
   const v = '?v=' + Date.now();
-  const [sim, islandMod, charMod, extra, waterMod] = await Promise.all(
-    ['sim', 'island', 'characters', 'sim-extra', 'water'].map(f => import(`./${f}.js${v}`)));
+  const [sim, islandMod, charMod, extra, waterMod, moves] = await Promise.all(
+    ['sim', 'island', 'characters', 'sim-extra', 'water', 'moves'].map(f => import(`./${f}.js${v}`)));
 
   // shared look: soft pastel low-poly materials (flat shaded unless asked otherwise)
   const mat = (color, opts = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.7, flatShading: true, ...opts });
@@ -84,7 +84,7 @@ export async function build(api, prevState = null) {
     if (b.isEmpty() || b.min.y > 1.5) return null;
     if ((b.max.x - b.min.x) * (b.max.z - b.min.z) > 0.3 * Math.PI * 6.9 * 6.9) return null;
     const hx = Math.max(0.3, (b.max.x - b.min.x) / 2), hz = Math.max(0.3, (b.max.z - b.min.z) / 2);
-    return { x: (b.min.x + b.max.x) / 2, z: (b.min.z + b.max.z) / 2, hx, hz, r: Math.max(0.4, Math.hypot(hx, hz)) };
+    return { x: (b.min.x + b.max.x) / 2, z: (b.min.z + b.max.z) / 2, hx, hz, r: Math.max(0.4, Math.hypot(hx, hz)), top: b.max.y };
   }
   // how far two shapes reach into each other (0 = apart, by at least `gap`): a shape is a circle
   // { x, z, r } or a rectangle { x, z, hx, hz }
@@ -254,7 +254,14 @@ export async function build(api, prevState = null) {
     });
     loaded.delete(file);
   }
+  // where animals can go: tops of things to land or climb on, and the drawn water
+  function places() {
+    env.perches = [...loaded.values()].filter(e => e.foot && !e.heldBy && e.foot.top > 0.3)
+      .map(e => ({ x: e.foot.x, z: e.foot.z, top: e.foot.top, r: Math.min(e.foot.hx, e.foot.hz) }));
+    env.water = water.zones();
+  }
   function refreshWorld() {
+    places();
     trees.length = 0;
     const spots = [];
     for (const e of loaded.values()) { trees.push(...e.obstacles); spots.push(...e.spots); }
@@ -295,7 +302,8 @@ export async function build(api, prevState = null) {
   const actors = [...loaded.values()].flatMap(e => e.actors);
   for (const e of loaded.values()) trees.push(...e.obstacles);
   const spots = [...loaded.values()].flatMap(e => e.spots);
-  brain = sim.create({ THREE, actors, trees, pond, spots, islandR: 6.9, states: prevState, extra });
+  places();
+  brain = sim.create({ THREE, actors, trees, pond, spots, islandR: 6.9, states: prevState, extra, moves });
   brain.setHolds([...loaded.values()].flatMap(e => e.holds));
   attachHeld();
   brain.setThings(thingList());
@@ -313,6 +321,7 @@ export async function build(api, prevState = null) {
     },
     snapshot: () => brain.snapshot(),
     freeSpot: (x, z, r) => freeSpot(x, z, r),
+    places: () => ({ perches: env.perches, water: env.water }),   // where animals land, climb and swim (for tests)
     feet: () => [...loaded].map(([f, e]) => ({ file: f, foot: e.foot, obstacles: e.obstacles, pinned: !!pinned(e) })),   // for tests   // for the light that shows where a drawing will appear
     brain: () => brain,                   // for UI in index.html (e.g. click a character); sim exposes its actors
     update(t, dt) {
