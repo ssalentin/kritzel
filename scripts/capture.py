@@ -41,6 +41,7 @@ PIXEL = 20               # brightness step (0-255) that counts as a changed pixe
 NEW_PX = 15              # changed pixels that count: vs the still picture = movement, vs the last sheet = new
 INK_R = 2                # new ink must be this far (thumb px) from ink already there
 SLIDE = 8                # how far (thumb px, ×6 at 1080p) the paper may slide and still be the same sheet
+INK_EDGE, INK_SHARE = 25, 0.25   # local contrast that is ink, not shade; share of a change that must be inky
 EDGE = 10                # thumb px at the frame's edge that never count (the table shows there when the paper slides)
 BIG = 0.04               # share changed that is a big change, not drawing
 STILL_S, BIG_S, FPS = 1.2, 8.0, 8
@@ -148,6 +149,16 @@ def new_marks(thumb, env):
             and sum(j in hit for j in (i - 1, i + 1, i - W, i + W, i - W - 1, i - W + 1, i + W - 1, i + W + 1)) >= 2]
 
 
+def inky(marks, aligned, baseline):
+    """Only changes with ink in them: pixels with a sharp edge nearby, in the new picture (ink
+    drawn) or the old (ink erased). A shadow or light that moved is a soft gradient: if the inky
+    part is only a small share of the change, nothing was drawn."""
+    lo, hi = envelope(aligned, 1)
+    blo, bhi = baseline
+    ink = [i for i in marks if hi[i] - lo[i] >= INK_EDGE or bhi[i] - blo[i] >= INK_EDGE]
+    return ink if len(ink) >= INK_SHARE * len(marks) else []
+
+
 def paper_shift(thumb, base):
     """How far (dx, dy) the sheet slid since `base`: the offset that fits best, up to SLIDE px."""
     pts = [(x, y) for y in range(SLIDE, H - SLIDE, 3) for x in range(SLIDE, W - SLIDE, 3)]
@@ -193,7 +204,8 @@ class Detector:
                 self.shift, self.diff = (0, 0), list(range(W * H))
             else:
                 self.shift = paper_shift(thumb, self.base)
-                self.diff = new_marks(moved(thumb, self.shift), self.baseline)
+                aligned = moved(thumb, self.shift)
+                self.diff = inky(new_marks(aligned, self.baseline), aligned, self.baseline)
         diff = self.diff
         if len(diff) < NEW_PX:
             return None
