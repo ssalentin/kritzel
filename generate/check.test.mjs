@@ -119,3 +119,11 @@ test('sheet moves: paper positions follow capture\'s affine, frame by frame, onc
   const q = JSON.parse(readFileSync(join(reports, 'paper.json'), 'utf8'))['mond.js'];
   assert.equal(q.stale, true);
 });
+
+test('weather: kind is checked', async () => {
+  const w = kinds => thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.SphereGeometry(0.5), ctx.mat(0xffffff))); g.position.y = 3; ctx.world.add(g);
+    return { weather: ${kinds} };`);
+  assert.deepEqual((await buildCheck(w("{ kind: 'rain' }"))).problems, []);
+  assert.deepEqual((await buildCheck(w("[{ kind: 'rainbow' }, { kind: 'lightning' }]"))).problems, []);
+  assert.ok((await buildCheck(w("{ kind: 'hail' }"))).problems.some(p => p.includes("weather.kind")));
+});
