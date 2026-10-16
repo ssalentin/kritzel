@@ -7,6 +7,7 @@ Camera selection (see scripts/camera_server.py for the remote side):
   GET/PUT /api/camera           → the chosen camera, kept in camera.json for the capture stage
   GET /api/status               → what capture and generate are doing (frames/status/*.json), for the status pill
   GET /api/status/cutout.png    → the newest drawing as a paper cut-out (written by capture)
+  PUT /api/placement            → {file, d: [dx, dz] | null}: where the viewer moved a new thing (viewer/things/placement.json)
 
 HOST / PORT env vars change the listen address (default 127.0.0.1:8765).
 """
@@ -18,6 +19,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 import posixpath
 import urllib.error
@@ -40,6 +42,7 @@ def version():
     return {"version": v, "commit": c}
 CAMERA_PORT = 8766
 STATUS = ROOT / "frames" / "status"
+PLACEMENT_LOCK = threading.Lock()
 ALIVE_S = 10          # a stage whose status file is older than this is not running
 
 
@@ -171,6 +174,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().do_HEAD()
 
     def do_PUT(self):
+        if urllib.parse.urlsplit(self.path).path == "/api/placement":
+            return self.placement()
         if urllib.parse.urlsplit(self.path).path != "/api/camera":
             return self.json({"error": "not found"}, 404)
         try:
@@ -181,6 +186,35 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.json({"error": "expected {kind: none} | {kind: local, label} | {kind: remote, ip, id}"}, 400)
         CHOICE.write_text(json.dumps(choice, indent=2) + "\n")
         self.json(choice)
+
+    def placement(self):
+        """The first viewer to place a new thing decides; later ones and reloads read the same spot."""
+        try:
+            n = int(self.headers.get("Content-Length", ""))
+            assert 0 <= n <= 512
+            req = json.loads(self.rfile.read(n))
+            file, d = req["file"], req.get("d")
+            assert re.fullmatch(r"[\w.-]+\.js", file)
+            assert d is None or (isinstance(d, list) and len(d) == 2 and all(isinstance(v, (int, float)) and abs(v) < 20 for v in d))
+        except (ValueError, AssertionError, KeyError, TypeError):
+            return self.json({"error": "expected {file: name.js, d: [dx, dz] | null}"}, 400)
+        things = ROOT / "viewer" / "things"
+        path = things / "placement.json"
+        with PLACEMENT_LOCK:
+            try:
+                placed = json.loads(path.read_text())
+            except (OSError, ValueError):
+                # first placement in this world: everything already standing stays where it is
+                placed = {f.name: [0, 0] for f in things.glob("*.js") if f.name != file}
+            placed = {f: v for f, v in placed.items() if (things / f).exists() or f == file}   # gone things free their name
+            if d is None:
+                placed.pop(file, None)
+            elif file not in placed and len(placed) < 500:
+                placed[file] = d
+            tmp = path.with_name(".placement.json.tmp")
+            tmp.write_text(json.dumps(placed, indent=1))
+            tmp.replace(path)
+        self.json(placed.get(file))
 
     def proxy(self, ip, cam, ext):
         # only cameras on this host or tailnet peers, never an arbitrary address

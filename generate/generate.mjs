@@ -50,8 +50,8 @@ const atomicWrite = (path, data) => { const tmp = join(dirname(path), '.' + base
 function cropOf(frame, box, previous = null) {
   const [W, H] = execFileSync('identify', ['-format', '%w %h', frame], { encoding: 'utf8' }).split(' ').map(Number);
   const [x, y, w, h] = box || [0, 0, W, H];
-  // margin: 15 %, and enough that a small change (a word, a dot) is seen with the drawings around it
-  const m = Math.max(40, 0.15 * Math.max(w, h), (480 - Math.min(w, h)) / 2);
+  // margin: 15 %, and enough that a small change (a word, a dot, an arm) is seen with the drawings around and attached to it
+  const m = Math.max(40, 0.15 * Math.max(w, h), (640 - Math.min(w, h)) / 2);
   const x0 = Math.max(0, Math.round(x - m)), y0 = Math.max(0, Math.round(y - m));
   const x1 = Math.min(W, Math.round(x + w + m)), y1 = Math.min(H, Math.round(y + h + m));
   const crop = f => execFileSync('convert', [f, '-crop', `${x1 - x0}x${y1 - y0}+${x0}+${y0}`, '+repage', '-resize', box ? '768x768>' : '1568x1568>', '-quality', '85', 'jpg:-'], { maxBuffer: 20e6 });
@@ -71,7 +71,10 @@ export function parseReply(text) {
   const t = text.trim();
   if (/^NOTHING\b/.test(t)) return [];
   const parts = t.split(/^###\s*(NEW|UPDATE|REMOVE|UNCLEAR)\b[ \t]*(\S*)[ \t]*$/m);
-  if (parts.length < 4) throw new Error('reply has no ### sections: ' + t.slice(0, 120));
+  if (parts.length < 4) {
+    if (/export\s+const\s+meta\b/.test(t) && /export\s+(async\s+)?function\s+build\b/.test(t)) return [{ kind: 'NEW', file: null, body: stripFences(t) }];   // a module without its header
+    throw new Error('reply has no ### sections: ' + t.slice(0, 120));
+  }
   const out = [];
   for (let i = 1; i < parts.length; i += 3) out.push({ kind: parts[i], file: parts[i + 1] || null, body: stripFences(parts[i + 2]) });
   return out;
