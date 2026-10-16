@@ -40,7 +40,9 @@ W, H = 320, 180          # compare at this size: averages away sensor noise, kee
 PIXEL = 20               # brightness step (0-255) that counts as a changed pixel
 NEW_PX = 15              # changed pixels that count: vs the still picture = movement, vs the last sheet = new
 INK_R = 2                # new ink must be this far (thumb px) from ink already there
-SLIDE = 5                # how far (thumb px, ×6 at 1080p) the paper may slide and still be the same sheet
+SLIDE = 8                # how far (thumb px, ×6 at 1080p) the paper may slide and still be the same sheet
+INK_EDGE, INK_SHARE = 25, 0.25   # local contrast that is ink, not shade; share of a change that must be inky
+EDGE = 10                # thumb px at the frame's edge that never count (the table shows there when the paper slides)
 BIG = 0.04               # share changed that is a big change, not drawing
 STILL_S, BIG_S, FPS = 1.2, 8.0, 8
 SHRINK = f"format=gray,scale=960:540:flags=area,erosion,erosion,scale={W}:{H}:flags=area"   # keeps thin lines
@@ -142,9 +144,19 @@ def new_marks(thumb, env):
     """Pixels that changed, without lone specks and without the frame's outer edge (where the
     table shows when the paper slides)."""
     hit = {i for i, (x, lo, hi) in enumerate(zip(thumb, *env)) if x < lo - PIXEL or x > hi + PIXEL}
-    m = 2 * SLIDE
+    m = EDGE
     return [i for i in sorted(hit) if m <= i % W < W - m and m <= i // W < H - m
             and sum(j in hit for j in (i - 1, i + 1, i - W, i + W, i - W - 1, i - W + 1, i + W - 1, i + W + 1)) >= 2]
+
+
+def inky(marks, aligned, baseline):
+    """Only changes with ink in them: pixels with a sharp edge nearby, in the new picture (ink
+    drawn) or the old (ink erased). A shadow or light that moved is a soft gradient: if the inky
+    part is only a small share of the change, nothing was drawn."""
+    lo, hi = envelope(aligned, 1)
+    blo, bhi = baseline
+    ink = [i for i in marks if hi[i] - lo[i] >= INK_EDGE or bhi[i] - blo[i] >= INK_EDGE]
+    return ink if len(ink) >= INK_SHARE * len(marks) else []
 
 
 def paper_shift(thumb, base):
@@ -177,7 +189,7 @@ class Detector:
     def __init__(self, baseline=None):
         self.base = baseline
         self.baseline = baseline and envelope(baseline)
-        self.anchor = self.still_since = self.shift = self.moved_at = self.diff = None
+        self.anchor = self.still_since = self.shift = self.moved_at = self.diff = self.measured = None
 
     def feed(self, thumb, t):
         if self.anchor is None or len(new_marks(thumb, self.anchor)) >= NEW_PX:
@@ -192,14 +204,20 @@ class Detector:
                 self.shift, self.diff = (0, 0), list(range(W * H))
             else:
                 self.shift = paper_shift(thumb, self.base)
-                self.diff = new_marks(moved(thumb, self.shift), self.baseline)
+                aligned = moved(thumb, self.shift)
+                self.diff = inky(new_marks(aligned, self.baseline), aligned, self.baseline)
         diff = self.diff
         if len(diff) < NEW_PX:
             return None
-        big = len(diff) > BIG * W * H
+        # a large change, or a sheet that slid further than we can line up: a big change
+        big = len(diff) > BIG * W * H or (self.baseline is not None and max(map(abs, self.shift)) >= SLIDE)
         if t - self.still_since < (BIG_S if big else STILL_S):
             return None
         dx, dy = self.shift                  # report where the change is in the new picture
+        # how the sheet moved since the last one handed on (thumb px), if that could be measured:
+        # not for the first sheet, not for a new sheet, not when the best fit sits at the search's edge
+        self.measured = None if (self.baseline is None or max(abs(dx), abs(dy)) >= SLIDE
+                                 or len(diff) > 0.5 * W * H) else (dx, dy)
         self.prev = (self.base, self.baseline)
         self.base, self.baseline, self.still_since, self.shift, self.diff = thumb, envelope(thumb), t, (0, 0), []
         diff = [min(max(i // W + dy, 0), H - 1) * W + min(max(i % W + dx, 0), W - 1) for i in diff]
@@ -253,12 +271,15 @@ def camera():
             {"host": str(c.get("host", ""))[:100], "id": cam, "name": str(c.get("name", ""))[:200]})
 
 
-def hand_on(data, size, reason, diff, info, previous):
+def hand_on(data, size, reason, diff, info, previous, moved_by=None):
     now = datetime.datetime.now()
     stem = now.strftime("%Y%m%d-%H%M%S")
     meta = {"captured_at": now.astimezone().isoformat(timespec="seconds"), "camera": info,
             "previous": previous, "reason": reason, "changed": round(len(diff) / (W * H), 4),
-            "changed_box": box(diff, size), "width": size[0], "height": size[1]}
+            "changed_box": box(diff, size), "width": size[0], "height": size[1],
+            # previous frame's px → this frame's px (x' = a*x + b*y + c, y' = d*x + e*y + f); only a
+            # translation is measured (up to SLIDE thumb px); null when it could not be measured
+            "affine": moved_by and [1, 0, round(moved_by[0] * size[0] / W, 1), 0, 1, round(moved_by[1] * size[1] / H, 1)]}
     for name, body in ((f"{stem}.json", json.dumps(meta, indent=2).encode() + b"\n"), (f"{stem}.jpg", data)):
         tmp = OUT / (name + ".tmp")
         tmp.write_bytes(body)
@@ -406,7 +427,7 @@ def main():
             print("snapshot differs from the settled picture; waiting again", file=sys.stderr, flush=True)
             det.undo(t)
             continue
-        previous = hand_on(data, size, *got, cam[1], previous)
+        previous = hand_on(data, size, *got, cam[1], previous, det.measured if previous else None)
         meta = json.loads((OUT / previous.replace(".jpg", ".json")).read_text())
         try:
             cut = cutout(data, meta["changed_box"], size, STATUS / "cutout.png", got[1])

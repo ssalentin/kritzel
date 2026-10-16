@@ -172,7 +172,9 @@ still for 1.2 s (8 s for a big change such as a new sheet or a hand resting on t
 writes `frames/settled/<YYYYmmdd-HHMMSS>.json` and then the camera's frame as
 `<same>.jpg`. The JSON gives `previous` (the last frame handed on), `reason` (`drawn`, or
 `big-change` for a new or moved sheet), and `changed_box` (where the change is, in
-pixels). Nothing is written while a hand moves over the paper or when nothing changed. Watch for the
+pixels), and `affine` (how the sheet slid since the previous frame, previous-frame pixels →
+this frame's, `[1, 0, dx, 0, 1, dy]`; `null` when it couldn't be measured).
+Nothing is written while a hand moves over the paper or when nothing changed. Watch for the
 `.jpg`: it is renamed in last, so its `.json` is always there already.
 
 Keep the paper inside the camera's view: capture ignores the outer edge of the frame
