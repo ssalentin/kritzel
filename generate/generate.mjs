@@ -215,7 +215,8 @@ function statusFile(file) {
 async function watch(dir, opts) {
   const status = statusFile(join(ROOT, 'frames', 'status', 'generate.json'));
   const list = () => existsSync(dir) ? readdirSync(dir).filter(f => /^\d{8}-\d{6}\.jpg$/.test(f)).sort() : [];
-  const done = f => { try { return !JSON.parse(readFileSync(join(opts.reportsDir, f.replace('.jpg', '.json')), 'utf8')).error; } catch { return false; } };
+  const report = f => { try { return JSON.parse(readFileSync(join(opts.reportsDir, f.replace('.jpg', '.json')), 'utf8')); } catch { return null; } };
+  const done = f => { const r = report(f); return !!r && !r.error && !r.skipped; };   // generated from, not just skipped
   const frames = list();
   let last = frames.findLast(done) || null;
   if (!last && !readdirSync(opts.reportsDir).some(f => f.endsWith('.json'))) last = frames.at(-1) || null;
@@ -223,7 +224,8 @@ async function watch(dir, opts) {
   const sleep = ms => new Promise(ok => setTimeout(ok, ms));
   let tries = 0, triesFor = null;           // failed attempts, and for which frame
   let lastGenerated = last;                 // the last frame processFrame really ran on (skipped frames don't count)
-  let movedSince = false;                   // a big change was skipped since lastGenerated: no REMOVEs until a frame is generated
+  // a big change was skipped since lastGenerated: no REMOVEs until a frame is generated (also across a restart)
+  let movedSince = frames.some(f => (!lastGenerated || f > lastGenerated) && report(f)?.skipped === 'big-change');
   for (;;) {
     const newest = list().at(-1);
     if (newest && newest !== last) {
