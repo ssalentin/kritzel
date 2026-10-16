@@ -114,7 +114,7 @@ EOF
 
 camera() {
   has_camera || echo "No camera on this machine (/dev/video*): plug it in, or run this on the machine it is plugged into."
-  echo "Sharing this machine's cameras on port 8766 (Ctrl-C stops)."
+  echo "Sharing this machine's cameras on port ${CAMERA_PORT:-8766} (Ctrl-C stops)."
   echo "On another machine, this needs only Python 3 and ffmpeg:"
   echo "  git clone $(git remote get-url origin 2>/dev/null || echo '<this repository>') kritzel && cd kritzel && ./kritzel camera"
   exec python3 scripts/camera_server.py
