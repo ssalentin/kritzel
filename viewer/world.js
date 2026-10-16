@@ -9,7 +9,7 @@ export async function build(api, prevState = null) {
   const v = '?v=' + Date.now();
   const [sim, bookMod, charMod, extra, waterMod, moves] = await Promise.all(
     ['sim', 'book', 'characters', 'sim-extra', 'water', 'moves'].map(f => import(`./${f}.js${v}`)));
-  const { GROUND, FIT_R } = bookMod;
+  const { GROUND, FIT_R, groundY } = bookMod;
 
   // shared look: soft pastel low-poly materials (flat shaded unless asked otherwise)
   const mat = (color, opts = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.7, flatShading: true, ...opts });
@@ -121,9 +121,8 @@ export async function build(api, prevState = null) {
   }
   // meta.paper { x, y } (0-1 of the frame) → island, the way generate places things
   const fromPaper = p => {
-    let x = (p.x - 0.5) * 9, z = (p.y - 0.5) * 7;
-    const r = Math.hypot(x, z);
-    return r > 5 ? { x: x * 5 / r, z: z * 5 / r } : { x, z };
+    // the whole frame onto the whole pages (with a margin): a fresh page fills where things were drawn
+    return { x: Math.max(-8.3, Math.min(8.3, (p.x - 0.5) * 16.6)), z: Math.max(-6, Math.min(6, (p.y - 0.5) * 12)) };
   };
   function shift(entry, dx, dz) {
     entry.box.position.x += dx; entry.box.position.z += dz;
@@ -132,7 +131,7 @@ export async function build(api, prevState = null) {
       a.start = [(a.start?.[0] ?? 0) + dx, (a.start?.[1] ?? 0) + dz];
       if (a.pos && brain) { a.pos.x += dx; a.pos.z += dz; }        // already walking: move along
     }
-    if (entry.foot) { entry.foot.x += dx; entry.foot.z += dz; }
+    if (entry.foot) { entry.foot.x += dx; entry.foot.z += dz; entry.box.position.y = groundY(entry.foot.x); }   // on the page's curve
   }
   function prepare(entry) {
     // characters are placed by the sim in world coordinates: they leave the box, only their start moves
@@ -165,6 +164,7 @@ export async function build(api, prevState = null) {
       savePlace(file, d);
     }
     if (d) shift(entry, d[0], d[1]);
+    else if (entry.foot) entry.box.position.y = groundY(entry.foot.x);
   }
 
   // things that pin their place: a jail holding someone, a thing in someone's hand, characters
@@ -319,7 +319,7 @@ export async function build(api, prevState = null) {
   for (const e of loaded.values()) trees.push(...e.obstacles);
   const spots = [...loaded.values()].flatMap(e => e.spots);
   places();
-  brain = sim.create({ THREE, actors, trees, pond, spots, islandR: FIT_R, ground: GROUND, states: prevState, extra, moves });
+  brain = sim.create({ THREE, actors, trees, pond, spots, islandR: FIT_R, ground: GROUND, groundY, states: prevState, extra, moves });
   brain.setHolds([...loaded.values()].flatMap(e => e.holds));
   attachHeld();
   brain.setThings(thingList());
