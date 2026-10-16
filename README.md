@@ -106,6 +106,9 @@ git clone https://github.com/ssalentin/kritzel.git && cd kritzel && ./kritzel ca
 
 ## Credits
 
+Inspired by [this post on X](https://x.com/noahlt/status/2108675665373589841) about a
+document scanner setup with an LLM.
+
 Kritzel is a prototype, made with [three.js](https://threejs.org/), [rot.js](https://ondras.github.io/rot.js/)
 and [Claude](https://claude.com), by a small team of AI agents with one person deciding what's
 worth building.
