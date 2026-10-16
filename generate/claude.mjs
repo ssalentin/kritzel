@@ -13,7 +13,19 @@ const EFFORT = EFFORTS.includes(process.env.KRITZEL_EFFORT) ? process.env.KRITZE
 export const FALLBACK_MODEL = process.env.KRITZEL_FALLBACK_MODEL || 'claude-opus-5-5';
 
 // images: JPEG Buffers, in order. Returns { text, cost, seconds, model }.
-export function oneShot({ system, text, images, model = MODEL, effort = EFFORT, timeoutMs = 3 * 60_000 }) {
+// Claude Code updates itself in place: for a few seconds the claude binary is missing (spawn ENOENT).
+// Wait and try again, so a self-update never costs a drawing.
+export async function oneShot(opts, tries = 3) {
+  for (let i = 1; ; i++) {
+    try { return await callOnce(opts); }
+    catch (e) {
+      if (e.code !== 'ENOENT' || i >= tries) throw e;
+      await new Promise(ok => setTimeout(ok, 5000));
+    }
+  }
+}
+
+function callOnce({ system, text, images, model = MODEL, effort = EFFORT, timeoutMs = 3 * 60_000 }) {
   const msg = { type: 'user', message: { role: 'user', content: [
     ...images.map(i => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: i.toString('base64') } })),
     { type: 'text', text },
