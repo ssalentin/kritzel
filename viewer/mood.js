@@ -98,7 +98,9 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
     return dropped;
   }
 
+  let lastT = 0;
   function update(t, dt) {
+    lastT = t;
     const all = [...sources.values()].flat();
     const sun = all.find(s => s.kind === 'sun'), moon = all.find(s => s.kind === 'moon');
     name = sun ? 'day' : moon ? 'night' : 'dusk';
@@ -134,7 +136,7 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
       const flick = s.flicker ? 1 + 0.08 * Math.sin(t * 13 + s.pl.id) + 0.06 * Math.sin(t * 23.7) : 1;
       const goalI = LAMP * s.intensity * cur.lamp;
       s.base = (s.base ?? 0) + (goalI - (s.base ?? 0)) * k;    // new lamps fade in
-      s.pl.intensity = s.base * flick;
+      s.pl.intensity = s.base * flick * (t < (s.blinkUntil ?? 0) && Math.sin(t * 28) < 0 ? 0.05 : 1);   // tapped: blinks
     }
 
     cur.sky.forEach((c, i) => shown[i].copy(c).lerp(GREY[i], w.grey * 0.8).lerp(WHITE, w.flash * 0.7));
@@ -154,6 +156,7 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
 
   return {
     set,
+    blink(id) { const until = (lastT ?? 0) + 0.8; for (const s of sources.get(id) || []) if (s.pl) s.blinkUntil = until; },
     reset() { for (const id of [...sources.keys()]) forget(id); for (const id of [...weatherIds]) weather.set(id, []); weatherIds.clear(); },
     // the weather one drawn thing declares ({ kind } or a list; [] removes it)
     setWeather(id, list) { weather.set(id, list); if ([].concat(list || []).length) weatherIds.add(id); else weatherIds.delete(id); },

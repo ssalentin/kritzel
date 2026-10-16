@@ -26,7 +26,7 @@ export const pickLines = v => Array.isArray(v) ? v : (v && (v[cur] || v.de)) || 
 
 const S = {
   de: {
-    hint: 'Tippe eine Figur an, um ihr mit der Kamera zu folgen · Esc beendet',
+    hint: 'Tippe Figuren und Dinge an · lange drücken: mit der Kamera folgen · Esc beendet',
     veil: 'Neue Welt wird gemalt',
     soundOn: '🔇 Ton an', soundOff: '🔊 Ton aus',
     cameraBtn: '📷 Kamera', cameraSelect: 'Kamera', cameraRefresh: 'Neu suchen', cameraImage: 'Kamerabild',
@@ -45,7 +45,7 @@ const S = {
     watching: '👀 beobachtet das Papier', generatorOff: '⚠ Generator aus',
   },
   en: {
-    hint: 'Tap a figure to follow it with the camera · Esc stops',
+    hint: 'Tap figures and things · press and hold: follow with the camera · Esc stops',
     veil: 'A new world is being drawn',
     soundOn: '🔇 Sound on', soundOff: '🔊 Sound off',
     cameraBtn: '📷 Camera', cameraSelect: 'Camera', cameraRefresh: 'Search again', cameraImage: 'Camera picture',

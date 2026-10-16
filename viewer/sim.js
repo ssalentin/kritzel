@@ -22,6 +22,7 @@ const LINES = {
   night: { sqichy: ['Blubb… Nacht!'], person: ['Gute Nacht!', 'Es wird dunkel…', 'Schau, der Mond!'] },
   day: { sqichy: ['Blubb, Morgen!'], person: ['Guten Morgen!', 'Die Sonne ist da!'] },
   warm: { person: ['Schön warm hier.', 'Ahh, Licht!', 'Kommt alle ans Feuer!'] },
+  tapped: { sqichy: ['Blubb! Hihi!', 'Hallo, du da!'], person: ['Hihi!', 'Hallo du!', 'Das kitzelt!', 'Huch, hallo!'] },
   rain: { sqichy: ['Regen! Blubb, herrlich!'], person: ['Es regnet!', 'Schnell, ins Trockene!', 'Pitsch, patsch!'] },
   snow: { sqichy: ['Blubb, kalt!'], person: ['Schnee!', 'Es schneit!', 'Brrr, Schneeflocken!'] },
   rainbow: { sqichy: ['Ein Regenbogen! Blubb!'], person: ['Ein Regenbogen!', 'Wie schön!', 'Juhu, Regenbogen!'] },
@@ -38,6 +39,7 @@ const LINES_EN = {
   night: { sqichy: ['Blub… night!'], person: ['Good night!', 'It\'s getting dark…', 'Look, the moon!'] },
   day: { sqichy: ['Blub, morning!'], person: ['Good morning!', 'The sun is here!'] },
   warm: { person: ['Nice and warm here.', 'Ahh, light!', 'Everyone to the fire!'] },
+  tapped: { sqichy: ['Blub! Hehe!', 'Hello, you!'], person: ['Hehe!', 'Hello, you!', 'That tickles!', 'Oh, hello!'] },
   rain: { sqichy: ['Rain! Blub, lovely!'], person: ['It\'s raining!', 'Quick, somewhere dry!', 'Pitter patter!'] },
   snow: { sqichy: ['Blub, cold!'], person: ['Snow!', 'It\'s snowing!', 'Brrr, snowflakes!'] },
   rainbow: { sqichy: ['A rainbow! Blub!'], person: ['A rainbow!', 'How pretty!', 'Yay, a rainbow!'] },
@@ -508,6 +510,14 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
     // walks inside its circle and is brought in if it is outside. Actors no longer held walk free again.
     // something new appeared at (x, z): curious characters nearby go and look
     inspect(x, z) { X.inspect?.(x, z, null, api); },
+    // someone tapped this character: a little jump, a giggle and hello
+    tap(a) {
+      if (!a || a.hidden) return;
+      a.jumpAt = now; a.fear = Math.max(0, a.fear - 0.2);
+      a.anim = 'wave'; a.animStart = now; a.animUntil = a.busyUntil = now + 1.2;
+      pending.splice(0, pending.length, ...pending.filter(p => p.a !== a));
+      say(a, line(a, 'tapped'), 1.8);
+    },
     setThings(list) { thingsNow = list; },
     setHolds(list) {
       for (const a of actors) {
@@ -609,7 +619,8 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
           else if (a.partner) a.face = Math.atan2(a.partner.pos.x - a.pos.x, a.partner.pos.z - a.pos.z);
           a.alt = a.move === 'hop' && moving ? Math.abs(Math.sin(now * 8 * a.speed)) * 0.3 : 0;   // hoppers bounce along
         }
-        if (a.lift) a.lift.position.y = a.alt;
+        const j = now - (a.jumpAt ?? -9);       // tapped: one hop on the lift, under whatever animate() does
+        if (a.lift) a.lift.position.y = a.alt + (j < 0.6 ? Math.sin(j / 0.6 * Math.PI) * 0.6 : 0);
         a.rig.g.position.x = a.pos.x;
         a.rig.g.position.z = a.pos.z;
         a.rig.g.rotation.y = lerpAngle(a.rig.g.rotation.y, a.face, Math.min(1, dt * 8));
