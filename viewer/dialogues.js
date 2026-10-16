@@ -96,8 +96,15 @@ export function pickDialogue(c, R) {
 
 // ---------- child-safe filter: generated lines pass it before they are written and again before playback ----------
 // one denylist per language: the English 'die' is the German article, so they must not share one
-const BAD_DE = /\b(tot(e[nrs]?)?|totenkopf\w*|töte\w*|sterb\w*|blut\w*|waffe\w*|schieß\w*|hass\w*|dumm\w*|idiot\w*|blöd\w*|scheiße?|sex\w*|droge\w*|alkohol\w*|bier|wein)\b/i;
-const BAD_EN = /\b(kill\w*|dead|die[ds]?|dying|blood\w*|gun\w*|shoot\w*|weapon\w*|hate\w*|stupid|idiot\w*|shut up|sex\w*|drug\w*|alcohol|beer|wine)\b/i;
+// whole words only (with their usual forms), never word beginnings: 'Waffel', 'Drogerie', 'Blutorange',
+// 'shooting star' and 'drugstore' are fine. \p{L} boundaries, because \b knows no umlauts or ß.
+const words = (list, extra = '') => new RegExp(`(?<!\\p{L})(?:${list.join('|')}${extra})(?!\\p{L})`, 'iu');
+const BAD_DE = words(['tot', 'tote[nrs]?', 'totenkopf', 'töte[nt]?', 'getötet', 'sterben', 'stirbt', 'starb', 'gestorben', 'blut', 'blutig\\p{L}*', 'blutet',
+  'waffen?', 'schießen', 'schießt', 'erschießen', 'erschossen', 'hass', 'hasse[nt]?', 'hasst', 'dumm', 'dumme[nrs]?', 'dummkopf', 'idiot(?:en)?',
+  'blöd', 'blöde[nrs]?', 'blödmann', 'scheiße', 'scheiß', 'sex', 'drogen?', 'alkohol', 'bier', 'wein']);
+const BAD_EN = words(['kill', 'kills', 'killed', 'killing', 'killer', 'dead', 'die', 'dies', 'died', 'dying', 'blood', 'bloody', 'guns?',
+  'shoot', 'shoots', 'weapons?', 'hate', 'hates', 'hated', 'stupid', 'idiots?', 'shut up', 'sex', 'drugs?', 'alcohol', 'beer', 'wine'],
+  '|shooting(?! stars?(?!\\p{L}))');
 const clean = (s, bad) => typeof s === 'string' && s.length > 0 && s.length <= 90 && !bad.test(s) && !/[<>{}]|https?:/.test(s);
 export function safeLine(s, lang = 'de') { return clean(s, lang === 'en' ? BAD_EN : BAD_DE); }
 export function safeDialogue(d) {
