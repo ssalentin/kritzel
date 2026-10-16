@@ -6,6 +6,8 @@
 const KINDS = ['rain', 'snow', 'rainbow', 'lightning'];
 const EASE_S = 1.5;
 
+import { groundY } from './book.js';
+
 export function createWeather({ THREE, scene }) {
   const wanted = new Map();                    // thing id → Set of kinds
   const level = { rain: 0, snow: 0, rainbow: 0, lightning: 0 };
@@ -32,7 +34,8 @@ export function createWeather({ THREE, scene }) {
   for (let i = 0; i < 7; i++) {
     const m = new THREE.Mesh(new THREE.CircleGeometry(0.35 + rnd() * 0.45, 20), puddleMat);
     m.rotation.x = -Math.PI / 2; m.scale.set(1, 0.6 + rnd() * 0.4, 1);
-    m.position.set((rnd() - 0.5) * 15, 0.03, (rnd() - 0.5) * 10);    // on the book's pages (18 × 13)
+    const px = (rnd() - 0.5) * 15;
+    m.position.set(px, groundY(px) + 0.03, (rnd() - 0.5) * 10);       // on the book's pages (18 × 13), on their curve
     puddles.add(m);
   }
 

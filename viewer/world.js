@@ -124,6 +124,17 @@ export async function build(api, prevState = null) {
     // the whole frame onto the whole pages (with a margin): a fresh page fills where things were drawn
     return { x: Math.max(-8.3, Math.min(8.3, (p.x - 0.5) * 16.6)), z: Math.max(-6, Math.min(6, (p.y - 0.5) * 12)) };
   };
+  // stand a thing on the page's curve: at the highest the page gets under all of it (flat ponds and
+  // rivers included), so no part sinks under the paper. Sky things (above 1.5) and held things stay.
+  function onPage(entry) {
+    if (entry.heldBy) return;
+    entry.box.position.y = 0;
+    const b = new THREE.Box3().setFromObject(entry.box, true);
+    if (b.isEmpty() || b.min.y > 1.5) return;
+    let top = -Infinity;
+    for (let i = 0; i <= 12; i++) top = Math.max(top, groundY(b.min.x + (b.max.x - b.min.x) * i / 12));
+    entry.box.position.y = top;
+  }
   function shift(entry, dx, dz) {
     entry.box.position.x += dx; entry.box.position.z += dz;
     for (const o of [...entry.obstacles, ...entry.spots, ...entry.holds]) { o.x += dx; o.z += dz; }
@@ -131,7 +142,8 @@ export async function build(api, prevState = null) {
       a.start = [(a.start?.[0] ?? 0) + dx, (a.start?.[1] ?? 0) + dz];
       if (a.pos && brain) { a.pos.x += dx; a.pos.z += dz; }        // already walking: move along
     }
-    if (entry.foot) { entry.foot.x += dx; entry.foot.z += dz; entry.box.position.y = groundY(entry.foot.x); }   // on the page's curve
+    if (entry.foot) { entry.foot.x += dx; entry.foot.z += dz; }
+    onPage(entry);
   }
   function prepare(entry) {
     // characters are placed by the sim in world coordinates: they leave the box, only their start moves
@@ -164,7 +176,7 @@ export async function build(api, prevState = null) {
       savePlace(file, d);
     }
     if (d) shift(entry, d[0], d[1]);
-    else if (entry.foot) entry.box.position.y = groundY(entry.foot.x);
+    else onPage(entry);
   }
 
   // things that pin their place: a jail holding someone, a thing in someone's hand, characters
