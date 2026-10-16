@@ -70,9 +70,19 @@ export async function build(api, prevState = null) {
   };
   // ground footprint of a thing (actors aside): the rectangle it covers (centre x, z and half
   // sizes hx, hz; r for things that need a circle); null if it floats in the sky
+  // Flat pieces on the ground (water, paths, puddles: under 0.15 tall) don't count, and a thing that
+  // still covers more than 30% of the island is ground itself: it neither moves nor blocks.
   function footprint(box) {
-    const b = new THREE.Box3().setFromObject(box, true);      // everything the thing added, vertex-exact
+    const b = new THREE.Box3(), m = new THREE.Box3();
+    box.updateMatrixWorld(true);
+    box.traverse(o => {
+      if (!o.isMesh || !o.geometry) return;
+      m.setFromObject(o, true);                              // vertex-exact
+      if (m.max.y - m.min.y < 0.15 && m.max.y < 0.35) return;
+      b.union(m);
+    });
     if (b.isEmpty() || b.min.y > 1.5) return null;
+    if ((b.max.x - b.min.x) * (b.max.z - b.min.z) > 0.3 * Math.PI * 6.9 * 6.9) return null;
     const hx = Math.max(0.3, (b.max.x - b.min.x) / 2), hz = Math.max(0.3, (b.max.z - b.min.z) / 2);
     return { x: (b.min.x + b.max.x) / 2, z: (b.min.z + b.max.z) / 2, hx, hz, r: Math.max(0.4, Math.hypot(hx, hz)) };
   }
