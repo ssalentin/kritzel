@@ -63,7 +63,8 @@ start() {
   [ -d generate/node_modules/three ] || { echo "Run ./kritzel setup first."; return 1; }
   echo "Starting Kritzel:"
   if ! running viewer "viewer/serve.py" && curl -s -o /dev/null "$url"; then
-    echo "  viewer: something already answers on port $port (not started by ./kritzel); using it"
+    echo "  viewer: something already answers on port $port (not started by ./kritzel), commit $(curl -s "http://127.0.0.1:$port/api/version" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("commit", "?"))' 2>/dev/null || echo '?'); using it"
+    echo "    make sure it serves this folder ($root), or stop it / set KRITZEL_PORT: otherwise drawings land here but the page shows another world"
   else launch viewer "viewer/serve.py" env PORT="$port" python3 viewer/serve.py; fi
   for _ in $(seq 40); do curl -s -o /dev/null "$url" && break; sleep 0.25; done
   has_camera && launch camera "scripts/camera_server.py" python3 scripts/camera_server.py
