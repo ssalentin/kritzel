@@ -189,3 +189,21 @@ test('a thing\'s own lines pass the child-safe filter too', async () => {
   assert.ok((await buildCheck(withLines("{ chat: { de: ['Du bist dumm!'], en: ['You are nice!'] } }"))).problems.some(p => p.includes('not right for children')));
   assert.ok((await buildCheck(withLines("{ chat: ['Hallo!', 'Ich hasse dich.'] }"))).problems.some(p => p.includes('not right for children')));
 });
+
+test('one living figure per module', async () => {
+  const two = thing(`const mk = () => { const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(0.4, 1, 0.4), ctx.mat(1))); ctx.world.add(g); return g; };
+    const rig = g => ({ kind: 'person', g, say() {} });
+    return { actors: [{ id: 'a1', name: 'Kuh', rig: rig(mk()) }, { id: 'a2', name: 'Pferd', rig: rig(mk()) }] };`);
+  assert.ok((await buildCheck(two)).problems.some(p => p.includes('make each living figure its own NEW thing')));
+});
+
+test('a branch or pole in a rig is flagged, a long body is not', async () => {
+  const rig = mesh => thing(`const g = new ctx.THREE.Group(); ${mesh}
+    g.add(new ctx.THREE.Mesh(new ctx.THREE.SphereGeometry(0.4), ctx.mat(1))); ctx.world.add(g);
+    return { actors: [{ id: 'a1', name: 'Tier', move: 'climb', rig: { kind: 'tier', g, say() {}, animate() {} } }] };`);
+  const bar = `const p = new ctx.THREE.Mesh(new ctx.THREE.CylinderGeometry(0.05, 0.05, 1.8), ctx.mat(2)); p.rotation.z = Math.PI / 2; p.position.y = 1.5; g.add(p);`;
+  const post = `const p = new ctx.THREE.Mesh(new ctx.THREE.CylinderGeometry(0.05, 0.05, 1.6), ctx.mat(2)); p.position.set(1, 0.8, 0); g.add(p);`;
+  const pencil = `const p = new ctx.THREE.Mesh(new ctx.THREE.CylinderGeometry(0.11, 0.11, 1.8), ctx.mat(2)); p.position.y = 0.9; g.add(p);`;
+  for (const m of [bar, post]) assert.ok((await buildCheck(rig(m))).problems.some(p => p.includes('pole or branch')), m);
+  assert.ok(!(await buildCheck(rig(pencil))).problems.some(p => p.includes('pole or branch')));
+});
