@@ -381,26 +381,44 @@ async function load() {
 }
 
 const CORE = ['world.js', 'sim.js', 'sim-extra.js', 'island.js', 'characters.js', 'water.js', 'dialogues.js', 'moves.js'];
-let coreStamp = '', thingStamps = null, pageStamp = null;
+const PAGE = ['index.html', 'sound.js', 'camera.js', 'mood.js', 'status.js', 'i18n.js', 'weather.js', 'style.js'];
+let coreStamp = '', thingStamps = null, pageStamp = null, oneCall = location.pathname.startsWith('/viewer/');
 const stampOf = async f => {
   const r = await fetch(f, { method: 'HEAD', cache: 'no-store' });
   return r.ok ? (r.headers.get('last-modified') || '') + r.headers.get('content-length') : null;
 };
+// what changed since the last look: the page's own modules, the engine (CORE) and every thing.
+// The live viewer asks serve.py once (GET /api/stamps); an archived world asks file by file.
+async function readStamps() {
+  if (oneCall) {
+    try {
+      const r = await fetch('/api/stamps', { cache: 'no-store' });
+      if (r.ok) {
+        const s = await r.json();
+        return { page: PAGE.map(f => s.engine[f]).join(';'), core: CORE.map(f => s.engine[f]).join(';'),
+          things: new Map(Object.entries(s.things)) };
+      }
+    } catch {}
+    oneCall = false;                    // an older server: ask file by file from now on
+  }
+  const page = (await stampOf(location.pathname)) + (await stampOf('sound.js')) + (await stampOf('camera.js')) + (await stampOf('mood.js')) + (await stampOf('status.js')) + (await stampOf('i18n.js')) + (await stampOf('weather.js')) + (await stampOf('style.js'));
+  const listing = await (await fetch('things/', { cache: 'no-store' })).text();
+  const things = new Map();
+  for (const [, f] of listing.matchAll(/href="([\w.-]+\.js)"/g)) things.set(f, await stampOf('things/' + f));
+  let core = '';
+  for (const f of CORE) core += (await stampOf(f)) + ';';
+  return { page, core, things };
+}
 async function poll() {
   try {
     // the page itself changed (engine or style): reload fully (state is kept via sessionStorage)
-    const ps = (await stampOf(location.pathname)) + (await stampOf('sound.js')) + (await stampOf('camera.js')) + (await stampOf('mood.js')) + (await stampOf('status.js')) + (await stampOf('i18n.js')) + (await stampOf('weather.js')) + (await stampOf('style.js'));
+    const now = await readStamps(), ps = now.page;
     if (pageStamp === null) pageStamp = ps;
     else if (ps !== pageStamp) { try { sessionStorage.setItem('paperWorldState', JSON.stringify(current?.snapshot?.())); } catch {} location.reload(); return; }
 
     try { status.update(await (await fetch('/api/status', { cache: 'no-store' })).json()); } catch {}
 
-    const listing = await (await fetch('things/', { cache: 'no-store' })).text();
-    const files = [...listing.matchAll(/href="([\w.-]+\.js)"/g)].map(m => m[1]);
-    const stamps = new Map();
-    for (const f of files) stamps.set(f, await stampOf('things/' + f));
-    let core = '';
-    for (const f of CORE) core += (await stampOf(f)) + ';';
+    const stamps = now.things, files = [...stamps.keys()], core = now.core;
 
     if (core !== coreStamp || !current) {
       // engine pieces changed: rebuild everything, but carry the characters' state over
