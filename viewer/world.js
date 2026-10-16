@@ -245,7 +245,10 @@ export async function build(api, prevState = null) {
     } catch (e) { report(`things/${file}: placing: ${e.message}`); }
     if (STYLE === 'origami') { origami(THREE, entry.box); if (entry.free) origami(THREE, entry.free); }
     else if (STYLE === 'cutout') { cutout(THREE, entry.box); if (entry.free) cutout(THREE, entry.free); }
-    else if (STYLE === 'crayon') { crayon(THREE, entry.box); if (entry.free) crayon(THREE, entry.free); }
+    else if (STYLE === 'crayon') {
+      crayon(THREE, entry.box); if (entry.free) crayon(THREE, entry.free);
+      cropOf(THREE, file.replace(/\.js$/, '')).then(c => { if (c && loaded.get(file) === entry) cropOn(THREE, entry.box, c, entry.box.position, fromPaper); }).catch(() => {});
+    }
     else { bakeAO(THREE, entry.box); if (entry.free) bakeAO(THREE, entry.free); }
     entry.base = entry.box.children.map(c => [c, c.scale.clone()]);   // true scales, before any grow-in
     entry.bornAt = clockNow;
@@ -280,7 +283,7 @@ export async function build(api, prevState = null) {
     if (entry.free) { world.remove(entry.free); entry.free.traverse(o => { o.geometry?.dispose(); [].concat(o.material || []).forEach(m => m.dispose()); }); }
     entry.box.traverse(o => {
       o.geometry?.dispose();
-      if (o.material) [].concat(o.material).forEach(m => { if (!m.map?.userData?.shared) m.map?.dispose(); m.dispose(); });
+      if (o.material) [].concat(o.material).forEach(m => { if (!m.map?.userData?.shared) { m.map?.dispose(); crops.delete(m.map?.userData.base); } m.dispose(); });
     });
     loaded.delete(file);
   }
@@ -538,6 +541,51 @@ function crayonStrokes(THREE) {
   crayonTex.colorSpace = THREE.SRGBColorSpace; crayonTex.anisotropy = 8;
   crayonTex.userData.shared = true;               // used by every thing: never disposed with one of them
   return crayonTex;
+}
+// the child's real strokes: things/<base>.crop.jpg (the frame's region) + .crop.json {area:[x0,y0,x1,y1], paper?:{x,y}} in paper fractions.
+// No files, or any failure = no crop = the generated strokes stay. One texture per thing, cached, disposed with it.
+const crops = new Map();
+function cropOf(THREE, base) {
+  if (!crops.has(base)) crops.set(base, (async () => {
+    const r = await fetch('things/' + base + '.crop.json', { cache: 'no-store' });
+    if (!r.ok) return null;
+    const j = await r.json(), a = j.area;
+    if (!Array.isArray(a) || a.length !== 4 || !a.every(Number.isFinite) || a[2] <= a[0] || a[3] <= a[1]) return null;
+    const b = await fetch('things/' + base + '.crop.jpg', { cache: 'no-store' });
+    if (!b.ok) return null;
+    const im = await createImageBitmap(await b.blob());
+    const cv = document.createElement('canvas'); cv.width = im.width; cv.height = im.height;
+    const g = cv.getContext('2d'); g.drawImage(im, 0, 0); im.close?.();
+    const p = j.paper;
+    if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) {    // neighbours share the area: only a soft oval round the thing's own centre shows, paper elsewhere
+      const cx = (p.x - a[0]) / (a[2] - a[0]) * cv.width, cy = (p.y - a[1]) / (a[3] - a[1]) * cv.height, rad = 0.45 * Math.min(cv.width, cv.height);
+      const f = g.createRadialGradient(cx, cy, rad * 0.6, cx, cy, rad);
+      f.addColorStop(0, 'rgba(240,236,226,0)'); f.addColorStop(1, 'rgba(240,236,226,1)');
+      g.fillStyle = f; g.fillRect(0, 0, cv.width, cv.height);
+    }
+    const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+    t.userData.base = base;               // outside the crop the border pixel stretches
+    return { tex: t, area: a };
+  })().catch(() => null));
+  return crops.get(base);
+}
+// top-down planar projection (along y): a drawing is a picture of the paper seen from above, so the crop lands on the thing
+// the way the camera saw it; side faces streak. UVs are per mesh (a cloned geometry; the outline shell keeps the original).
+// `off` is the placement shift: the crop rectangle is where the thing was drawn.
+function cropOn(THREE, root, c, off, fromPaper) {
+  const [x0, y0, x1, y1] = c.area, A = fromPaper({ x: x0, y: y0 }), B = fromPaper({ x: x1, y: y1 }), v = new THREE.Vector3();
+  for (const o of styleable(root)) {
+    const pos = o.geometry.attributes.position, uv = new Float32Array(pos.count * 2);
+    o.updateWorldMatrix(true, false);
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+      uv[2 * i] = Math.max(0, Math.min(1, (v.x - off.x - A.x) / (B.x - A.x)));
+      uv[2 * i + 1] = 1 - Math.max(0, Math.min(1, (v.z - off.z - A.z) / (B.z - A.z)));
+    }
+    const geo = o.geometry.clone(); geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    o.geometry = geo;
+    for (const m of [].concat(o.material)) { m.map = c.tex; m.color.set(0xffffff); m.needsUpdate = true; }
+  }
 }
 function crayon(THREE, root) {
   for (const o of styleable(root)) {
