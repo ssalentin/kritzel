@@ -6,8 +6,17 @@
 export function createStyle({ THREE, renderer, scene, camera }) {
   const size = new THREE.Vector2();
   renderer.getDrawingBufferSize(size);
-  const target = new THREE.WebGLRenderTarget(size.x, size.y, { samples: 4, type: THREE.HalfFloatType });
-  target.depthTexture = new THREE.DepthTexture(size.x, size.y);
+  // the MSAA target and its depth texture (60-70 MB at 1080p) exist only once the paper look is on
+  let target = null;
+  function ensureTarget() {
+    if (target) return;
+    renderer.getDrawingBufferSize(size);
+    target = new THREE.WebGLRenderTarget(size.x, size.y, { samples: 4, type: THREE.HalfFloatType });
+    target.depthTexture = new THREE.DepthTexture(size.x, size.y);
+    material.uniforms.tColor.value = target.texture;
+    material.uniforms.tDepth.value = target.depthTexture;
+    material.uniforms.res.value.copy(size);
+  }
 
   // paper fibres: a small tiling noise texture, drawn once
   const cv = document.createElement('canvas');
@@ -24,7 +33,7 @@ export function createStyle({ THREE, renderer, scene, camera }) {
 
   const material = new THREE.ShaderMaterial({
     uniforms: {
-      tColor: { value: target.texture }, tDepth: { value: target.depthTexture }, tPaper: { value: paper },
+      tColor: { value: null }, tDepth: { value: null }, tPaper: { value: paper },
       res: { value: size.clone() }, near: { value: camera.near }, far: { value: camera.far },
       inkColor: { value: new THREE.Color(0x2b2622) }, inkWidth: { value: 1.6 * Math.min(2, renderer.getPixelRatio()) },
       hatch: { value: 1 }, grain: { value: 1 },
@@ -74,6 +83,7 @@ export function createStyle({ THREE, renderer, scene, camera }) {
     enabled: !plain,
     render() {
       if (!api.enabled) return renderer.render(scene, camera);
+      ensureTarget();
       camera.layers.disable(1);
       renderer.setRenderTarget(target);
       renderer.clear();
@@ -90,7 +100,7 @@ export function createStyle({ THREE, renderer, scene, camera }) {
     },
     setSize() {
       renderer.getDrawingBufferSize(size);
-      target.setSize(size.x, size.y);
+      target?.setSize(size.x, size.y);
       material.uniforms.res.value.copy(size);
     },
     uniforms: material.uniforms,     // for trying things out: inkWidth, hatch, grain, inkColor
