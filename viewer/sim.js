@@ -46,7 +46,7 @@ const LINES_EN = {
   flash: { sqichy: ['Blub!'], person: ['Whoa!', 'Lightning!', 'Eeek!'] },
 };
 
-export function create({ THREE, actors, trees, pond, spots = [], islandR, ground = null, groundY = () => 0, states = null, seed = Date.now() % 100000, extra = null, moves = null }) {
+export function create({ THREE, actors, trees, pond, spots = [], feet = [], islandR, ground = null, groundY = () => 0, states = null, seed = Date.now() % 100000, extra = null, moves = null }) {
   ROT.RNG.setSeed(seed);
   const R = () => ROT.RNG.getUniform();
   const MV = moves?.makeMoves({ THREE, ground, R: () => ROT.RNG.getUniform() });
@@ -68,6 +68,7 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, ground
       // on the pages (book.js), a little in from the edge so nobody walks off; or the old round island
       if (ground ? Math.abs(wx) > ground.w / 2 - 0.35 || Math.abs(wz) > ground.d / 2 - 0.35 : Math.hypot(wx, wz) > islandR) continue;
       if (trees.some(t => Math.hypot(wx - t.x, wz - t.z) < t.r)) continue;
+      if (feet.some(f => Math.abs(wx - f.x) < f.hx + 0.05 && Math.abs(wz - f.z) < f.hz + 0.05)) continue;   // never inside a thing
       terrain.set(key(x, y), Math.hypot(wx - pond.x, wz - pond.z) < pond.r - 0.2 ? 'water' : 'ground');
     }
     const cellsOf = kind => [...terrain].filter(([, v]) => v === kind).map(([k]) => k.split(',').map(Number));
@@ -88,6 +89,19 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, ground
   };
 
   // ---------- actors ----------
+  // a body's footprint radius and height, measured from its rig's meshes (things it will hold are
+  // attached after this, so they don't count): 0.85 of the larger half-extent, so arms and tails may
+  // touch but bodies don't overlap
+  function bodyOf(a) {
+    const g = a.rig?.g;
+    if (!g) return null;
+    const rot = g.rotation.y, b = new THREE.Box3(), m = new THREE.Box3();
+    g.rotation.y = 0; g.updateMatrixWorld(true);
+    g.traverse(o => { if (o.isMesh && o.geometry) { o.geometry.computeBoundingBox(); b.union(m.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld)); } });
+    g.rotation.y = rot; g.updateMatrixWorld(true);
+    if (b.isEmpty()) return null;
+    return { r: Math.min(1.2, Math.max(0.12, 0.85 * Math.max(b.max.x - b.min.x, b.max.z - b.min.z) / 2)), h: b.max.y - b.min.y };
+  }
   const byId = {};
   // st: optional saved state of this actor (kept across live reloads, so nobody resets)
   function initActor(a, st) {
@@ -96,7 +110,9 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, ground
     a.speed ??= 1;
     a.traits = { curiosity: 0.6, sociable: 0.6, bravery: 0.5, loyalty: 0, ...a.traits };
     a.start ??= [0, 0];
-    a.radius ??= a.kind === 'squid' ? 0.85 : 0.08 + 0.32 * (a.rig.g.scale.x || 1);
+    const body = bodyOf(a);              // its real size, from the rig as built (issue #19)
+    a.radius ??= body?.r ?? (a.kind === 'squid' ? 0.85 : 0.08 + 0.32 * (a.rig.g.scale.x || 1));
+    a.height = body?.h ?? 1.5;
     a.cell = nearestCell(...a.start, a);
     const [wx, wz] = toWorld(a.cell.x, a.cell.y);
     a.pos = new THREE.Vector3(wx, 0, wz);
@@ -147,6 +163,37 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, ground
 
   const scheduler = new ROT.Scheduler.Speed();
   for (const a of actors) scheduler.add(a, true);
+
+  // ---------- bodies don't overlap (issue #19) ----------
+  // every frame, two bodies closer than their radii push apart smoothly. Who gives way: whoever is
+  // walking somewhere (the smaller one more); held characters and those busy with someone else stay
+  // put; partners nudge each other to a polite distance. One far above the other doesn't count.
+  function give(a, other) {
+    if (a.hold) return 0;
+    if (now < (a.partnerUntil ?? 0)) return a.partner === other ? 1 : 0;
+    if (now < a.busyUntil) return 0;
+    return (a.goal ? 1 : 0.6) / Math.max(0.2, a.radius);
+  }
+  function separate(dt) {
+    const k = Math.min(1, dt * 8);
+    for (let i = 0; i < actors.length; i++) {
+      const a = actors[i];
+      if (a.hidden) continue;
+      for (let j = i + 1; j < actors.length; j++) {
+        const c = actors[j];
+        if (c.hidden || Math.abs((a.alt || 0) - (c.alt || 0)) > 0.8 * Math.max(a.height || 1, c.height || 1)) continue;
+        let dx = c.pos.x - a.pos.x, dz = c.pos.z - a.pos.z;
+        const d = Math.hypot(dx, dz), min = a.radius + c.radius;
+        if (d >= min) continue;
+        if (d < 1e-4) { dx = Math.cos(i + j); dz = Math.sin(i + j); } else { dx /= d; dz /= d; }
+        const wa = give(a, c), wc = give(c, a);
+        if (!wa && !wc) continue;
+        const push = (min - d) * k, sa = wa / (wa + wc), sc = wc / (wa + wc);
+        a.pos.x -= dx * push * sa; a.pos.z -= dz * push * sa;
+        c.pos.x += dx * push * sc; c.pos.z += dz * push * sc;
+      }
+    }
+  }
 
   // ---------- live changes from drawn things ----------
   function addActor(a, st) {
@@ -499,7 +546,8 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, ground
     addActor, removeActor,
     actors: () => actors, byId: () => byId, spots: () => spots,   // read-only views for the UI and tests
     // obstacles/spots changed (a drawn thing was added, changed or removed)
-    setWorld({ trees: tr, spots: sp }) {
+    setWorld({ trees: tr, spots: sp, feet: ft = feet }) {
+      feet = ft;
       const had = new Set([...trees, ...spots].map(o => o.x + ',' + o.z));
       const fresh = [...tr, ...sp].filter(o => !had.has(o.x + ',' + o.z));
       trees = tr; spots = sp;
@@ -608,6 +656,7 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, ground
         p.a.rig.say(p.text); p.a.sayUntil = now + p.dur;
       }
 
+      separate(dt);
       for (const a of actors) {
         if (a.sayUntil && now > a.sayUntil) { a.rig.say(''); a.sayUntil = 0; }
         let moving;
@@ -624,7 +673,23 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, ground
           const dx = wx - a.pos.x, dz = wz - a.pos.z, d = Math.hypot(dx, dz);
           const step = Math.min(d, 1.6 * a.speed * (MV ? (moves.SPEED[a.move] ?? 1) : 1) * dt * (a.kind === 'squid' ? 1.2 : 1));
           moving = d > 0.03;
-          if (moving) { a.pos.x += dx / d * step; a.pos.z += dz / d * step; a.face = Math.atan2(dx, dz); }
+          if (moving) {
+            // steer around anyone in the way instead of walking through them
+            const fx = dx / d, fz = dz / d, px = -fz, pz = fx;     // forward, and its left
+            let ux = fx, uz = fz;
+            for (const o of actors) {
+              if (o === a || o.hidden || Math.abs((o.alt || 0) - (a.alt || 0)) > 1) continue;
+              const rx = o.pos.x - a.pos.x, rz = o.pos.z - a.pos.z, along = rx * fx + rz * fz, side = rx * px + rz * pz;
+              const room = a.radius + o.radius + 0.1, ahead = room + 0.8;
+              if (along > 0 && along < ahead && Math.abs(side) < room) {
+                const k = (1 - along / ahead) * (1 - Math.abs(side) / room) * 1.5;
+                const away = side > 0 ? -1 : 1;                     // it's on our left: go right, and back
+                ux += px * away * k; uz += pz * away * k;
+              }
+            }
+            const n = Math.hypot(ux, uz) || 1; ux /= n; uz /= n;
+            a.pos.x += ux * step; a.pos.z += uz * step; a.face = Math.atan2(ux, uz);
+          }
           else if (a.partner) a.face = Math.atan2(a.partner.pos.x - a.pos.x, a.partner.pos.z - a.pos.z);
           a.alt = a.move === 'hop' && moving ? Math.abs(Math.sin(now * 8 * a.speed)) * 0.3 : 0;   // hoppers bounce along
         }

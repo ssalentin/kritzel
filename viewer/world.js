@@ -288,12 +288,14 @@ export async function build(api, prevState = null) {
       .map(e => ({ x: e.foot.x, z: e.foot.z, top: e.foot.top, r: Math.min(e.foot.hx, e.foot.hz) }));
     env.water = water.zones();
   }
+  // footprints characters must not stand in (a jail holds its prisoner inside, so it isn't one)
+  const blockingFeet = () => [...loaded.values()].filter(e => e.foot && !e.heldBy && !e.holds.length).map(e => e.foot);
   function refreshWorld() {
     places();
     trees.length = 0;
     const spots = [];
     for (const e of loaded.values()) { trees.push(...e.obstacles); spots.push(...e.spots); }
-    brain.setWorld({ trees, spots });
+    brain.setWorld({ trees, spots, feet: blockingFeet() });
     brain.setHolds([...loaded.values()].flatMap(e => e.holds));
     attachHeld();
     brain.setThings(thingList());
@@ -331,7 +333,7 @@ export async function build(api, prevState = null) {
   for (const e of loaded.values()) trees.push(...e.obstacles);
   const spots = [...loaded.values()].flatMap(e => e.spots);
   places();
-  brain = sim.create({ THREE, actors, trees, pond, spots, islandR: FIT_R, ground: GROUND, groundY, states: prevState, extra, moves });
+  brain = sim.create({ THREE, actors, trees, pond, spots, feet: blockingFeet(), islandR: FIT_R, ground: GROUND, groundY, states: prevState, extra, moves });
   brain.setHolds([...loaded.values()].flatMap(e => e.holds));
   attachHeld();
   brain.setThings(thingList());
