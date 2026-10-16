@@ -25,7 +25,7 @@ export async function oneShot(opts, tries = 3) {
   }
 }
 
-function callOnce({ system, text, images, model = MODEL, effort = EFFORT, timeoutMs = 3 * 60_000 }) {
+function callOnce({ system, text, images, model = MODEL, effort = EFFORT, timeoutMs = 3 * 60_000, signal = null }) {
   const msg = { type: 'user', message: { role: 'user', content: [
     ...images.map(i => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: i.toString('base64') } })),
     { type: 'text', text },
@@ -41,6 +41,11 @@ function callOnce({ system, text, images, model = MODEL, effort = EFFORT, timeou
     p.stderr.on('data', d => { err += d; });
     const timer = setTimeout(() => { p.kill('SIGTERM'); reject(new Error(`claude -p (${model}) timed out after ${timeoutMs / 1000}s`)); }, timeoutMs);
     p.on('error', e => { clearTimeout(timer); reject(e); });
+    // cancelled (e.g. the triage already knows nothing changed): stop the call at once
+    if (signal) {
+      const stop = () => { clearTimeout(timer); p.kill('SIGKILL'); const e = new Error('cancelled'); e.code = 'CANCELLED'; reject(e); };
+      if (signal.aborted) stop(); else signal.addEventListener('abort', stop, { once: true });
+    }
     p.on('close', code => {
       clearTimeout(timer);
       const res = out.split('\n').filter(l => l.startsWith('{')).map(l => { try { return JSON.parse(l); } catch { return null; } }).find(o => o?.type === 'result');
