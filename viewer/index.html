@@ -399,6 +399,7 @@ async function readStamps() {
       }
     } catch {}
     oneCall = false;                    // an older server: ask file by file from now on
+    pageStamp = null;                   // HEAD stamps look different: don't take the switch for a change (no reload)
   }
   const page = (await stampOf(location.pathname)) + (await stampOf('sound.js')) + (await stampOf('camera.js')) + (await stampOf('mood.js')) + (await stampOf('status.js')) + (await stampOf('i18n.js')) + (await stampOf('weather.js')) + (await stampOf('style.js'));
   const listing = await (await fetch('things/', { cache: 'no-store' })).text();
