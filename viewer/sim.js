@@ -22,6 +22,10 @@ const LINES = {
   night: { sqichy: ['Blubb… Nacht!'], person: ['Gute Nacht!', 'Es wird dunkel…', 'Schau, der Mond!'] },
   day: { sqichy: ['Blubb, Morgen!'], person: ['Guten Morgen!', 'Die Sonne ist da!'] },
   warm: { person: ['Schön warm hier.', 'Ahh, Licht!', 'Kommt alle ans Feuer!'] },
+  rain: { sqichy: ['Regen! Blubb, herrlich!'], person: ['Es regnet!', 'Schnell, ins Trockene!', 'Pitsch, patsch!'] },
+  snow: { sqichy: ['Blubb, kalt!'], person: ['Schnee!', 'Es schneit!', 'Brrr, Schneeflocken!'] },
+  rainbow: { sqichy: ['Ein Regenbogen! Blubb!'], person: ['Ein Regenbogen!', 'Wie schön!', 'Juhu, Regenbogen!'] },
+  flash: { sqichy: ['Blubb!'], person: ['Huch!', 'Ein Blitz!', 'Iiieh!'] },
 };
 // the same in English (i18n.js decides which one is spoken)
 const LINES_EN = {
@@ -34,6 +38,10 @@ const LINES_EN = {
   night: { sqichy: ['Blub… night!'], person: ['Good night!', 'It\'s getting dark…', 'Look, the moon!'] },
   day: { sqichy: ['Blub, morning!'], person: ['Good morning!', 'The sun is here!'] },
   warm: { person: ['Nice and warm here.', 'Ahh, light!', 'Everyone to the fire!'] },
+  rain: { sqichy: ['Rain! Blub, lovely!'], person: ['It\'s raining!', 'Quick, somewhere dry!', 'Pitter patter!'] },
+  snow: { sqichy: ['Blub, cold!'], person: ['Snow!', 'It\'s snowing!', 'Brrr, snowflakes!'] },
+  rainbow: { sqichy: ['A rainbow! Blub!'], person: ['A rainbow!', 'How pretty!', 'Yay, a rainbow!'] },
+  flash: { sqichy: ['Blub!'], person: ['Whoa!', 'Lightning!', 'Eeek!'] },
 };
 
 export function create({ THREE, actors, trees, pond, spots = [], islandR, states = null, seed = Date.now() % 100000, extra = null }) {
@@ -161,7 +169,7 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
   }
 
   let now = 0, acc = 0, prevCover = 0, prevBirds = false, nextTick = 0, coverNow = 0;
-  let nightNow = 0, prevNight = null, lampsNow = [];     // 0 day … 1 night; drawn lamps and fires { x, z }
+  let nightNow = 0, prevNight = null, lampsNow = [], prevWeather = {};     // 0 day … 1 night; drawn lamps and fires { x, z }
   const pending = [];
 
   const say = (a, text, dur = 2.4, delay = 0) => pending.push({ a, text, at: now + delay, dur });
@@ -500,8 +508,9 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
       }
     },
     snapshot() { return Object.fromEntries(actors.map(a => [a.id, snapshotOf(a)])); },
-    update(t, dt, { cover = 0, birdsLow = false, night = 0, lamps = [] } = {}) {
-      now = t; coverNow = cover; nightNow = night; lampsNow = lamps;
+    update(t, dt, { cover = 0, birdsLow = false, night = 0, lamps = [], weather = {} } = {}) {
+      now = t; nightNow = night; lampsNow = lamps;
+      coverNow = Math.max(cover, weather.rain || weather.lightning ? 1 : 0);   // rain and storms: in through a door
       acc += dt;
       while (acc >= TICK) { acc -= TICK; const a = scheduler.next(); if (a) act(a); }   // empty world: nobody to act
       if (X.tick && now >= (nextTick ?? 0)) { nextTick = now + 4; X.tick(actors, api, coverNow); }
@@ -525,6 +534,22 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
         }
       }
       prevBirds = birdsLow;
+
+      // drawn weather: everyone notices it starting; a rainbow is cheered; lightning scares them
+      for (const kind of ['rain', 'snow', 'rainbow']) {
+        if (weather[kind] && !prevWeather[kind]) for (const a of actors) {
+          if (now < a.busyUntil) continue;
+          a.anim = kind === 'rainbow' ? 'wave' : 'lookup'; a.animStart = now; a.animUntil = a.busyUntil = now + 2.2;
+          if (kind === 'rainbow' || R() < 0.6) say(a, line(a, kind), 2.2, R() * 1.2);
+        }
+      }
+      if (weather.flash > 0.9 && (prevWeather.flash || 0) <= 0.9) for (const a of actors) {
+        a.fear = Math.min(1, a.fear + 0.35);
+        if (now < a.busyUntil) continue;
+        a.anim = 'lookup'; a.animStart = now; a.animUntil = a.busyUntil = now + 1.2;
+        if (R() < 0.5) say(a, line(a, 'flash'), 1.6, R() * 0.4);
+      }
+      prevWeather = { ...weather };
 
       // night falls or the sun comes up: whoever is free looks up and says so
       const phase = night > 0.6 ? 'night' : night < 0.1 ? 'day' : prevNight;
