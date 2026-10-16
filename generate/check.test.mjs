@@ -166,3 +166,11 @@ test('the world is an open book: things must stand on its pages (x -9..9, z -6.5
   assert.ok((await buildCheck(at(0, 6.7))).problems.some(p => p.includes('off the pages')));
   assert.ok((await buildCheck(at(-9.2, 0))).problems.some(p => p.includes('off the pages')));
 });
+
+test('speech lines: German arrays or { de, en } twins of the same length', async () => {
+  const withLines = lines => thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(0.4, 1, 0.4), ctx.mat(1))); ctx.world.add(g);
+    return { actors: [{ id: 'x1', name: 'X', rig: { kind: 'person', g, say() {} }, lines: ${lines} }] };`);
+  assert.deepEqual((await buildCheck(withLines("{ greet: ['Hallo!'] }"))).problems, []);
+  assert.deepEqual((await buildCheck(withLines("{ greet: { de: ['Hallo!', 'Hi!'], en: ['Hello!', 'Hi!'] } }"))).problems, []);
+  assert.ok((await buildCheck(withLines("{ greet: { de: ['Hallo!', 'Hi!'], en: ['Hello!'] } }"))).problems.some(p => p.includes('twin')));
+});
