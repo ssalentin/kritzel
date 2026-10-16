@@ -1,7 +1,7 @@
 // What the pipeline is doing, for the person at the paper: a small pill in the corner (from
 // GET /api/status, written by capture and generate) and, the moment a new drawing is seen, a
 // warm glowing light on the free spot of the island where its 3D thing will grow out of it.
-import { t } from './i18n.js';
+import { t, lang } from './i18n.js';
 
 const RESULT_S = 10;       // how long "✓ neu: …" / "✗ nicht erkannt" stays up
 const SEEN_S = 6;          // how long "✏️ neue Zeichnung erkannt" stays up (if generate is slower to start)
@@ -22,11 +22,11 @@ function glowTexture(THREE) {
 }
 
 export function createStatus({ THREE, scene, el, world, banner }) {
-  const dot = el.querySelector('.dot'), text = el.querySelector('.text'), img = el.querySelector('img'), gen = el.querySelector('.gen');
+  const dot = el.querySelector('.dot'), text = el.querySelector('.text'), gen = el.querySelector('.gen');
   let st = null, lastView = '', viewSince = 0, prevCap = null, connectedAt = 0;
   const lights = new Map();          // frame → { g, light, orb, halo, sparks, spot, born, dying, claimed }
   const glow = glowTexture(THREE);
-  let modeNote = '', modeNoteUntil = 0;
+  let modeNote = '', modeNoteUntil = 0, seenFor = null, seenAt = 0;   // when the names for this frame first came
   const growing = [];                // things that just arrived, folding up out of the page
   const bursts = [];                 // paper confetti flying out of them
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);   // reused every frame
@@ -95,17 +95,31 @@ export function createStatus({ THREE, scene, el, world, banner }) {
   }
 
   // the pill's text for this moment, from both stages' status files
+  // a name from generate: { de, en } or a plain (German) string
+  const say = x => typeof x === 'string' ? x : x?.[lang()] || x?.de || '';
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+  // the pill narrates in a kids' voice (issue #18): what Kritzel notices, sees, builds and greets
   function view(now) {
     const c = st?.capture || {}, g = st?.generate || {}, last = c.last;
     if (performance.now() < modeNoteUntil) return { tone: 'ok', text: modeNote };   // the mode just changed
-    const thumb = last?.cutout && now - last.at < 300 ? last.frame : null;
-    if (g.alive && g.state === 'building') return { tone: 'busy', text: t('building', Math.max(0, Math.round(now - g.since))), thumb };
-    if (g.alive && now - g.since < RESULT_S) {
-      if (g.state === 'new') return { tone: 'ok', text: t('made', g.detail), thumb };
-      if (g.state === 'changed') return { tone: 'ok', text: t('changed', g.detail === 'removed' ? t('removed') : g.detail), thumb };
-      if (g.state === 'unclear' || g.state === 'failed') return { tone: 'warn', text: t('unclear'), thumb };
+    if (g.alive && g.state === 'building') {
+      if (g.now) return { tone: 'busy', text: t('buildingNow', say(g.now)) };
+      const seen = (g.seen || []).map(say).filter(Boolean);
+      if (seen.length && now - seenAt < 4) return { tone: 'busy', text: t('seenList', cap(seen.slice(0, 4).join(', '))) };
+      if (seen.length) return { tone: 'busy', text: t('coming', seen[0]) };
+      return { tone: 'busy', text: t('thinking', Math.max(0, Math.round(now - g.since))) };
     }
-    if (last && now - last.at < SEEN_S) return { tone: 'busy', text: t('seen'), thumb };
+    if (g.alive && now - g.since < RESULT_S) {
+      if (g.state === 'new' || g.state === 'changed') {
+        if (g.detail === 'removed') return { tone: 'ok', text: t('changed', t('removed')) };
+        const names = (g.made?.length ? g.made.map(say) : (g.detail || '').split(', ')).filter(Boolean);
+        return { tone: 'ok', text: '✓ ' + (names.length ? names.slice(0, 3).map(n => t('hello', n)).join(' ') : t('made', '')) };
+      }
+      if (g.state === 'unclear') return { tone: 'warn', text: g.why ? '🤷 ' + say(g.why) : t('notKnown') };
+      if (g.state === 'failed') return { tone: 'warn', text: t('failedSoft') };
+      if (g.state === 'idle' && last && g.frame === last.frame) return { tone: 'ok', text: t('nothingNew') };
+    }
+    if (last && now - last.at < SEEN_S) return { tone: 'busy', text: t('noticed') };
     if (!c.alive) return { tone: 'bad', text: t('captureOff') };
     if (c.state === 'camera-off') return { tone: 'bad', text: t('cameraOff') };
     if (c.state === 'no-camera') return { tone: 'bad', text: t('noCamera') };
@@ -123,9 +137,6 @@ export function createStatus({ THREE, scene, el, world, banner }) {
     el.dataset.tone = v.tone;
     el.classList.toggle('calm', !!v.calm && performance.now() - viewSince > IDLE_S * 1000);
     if (text.textContent !== v.text) text.textContent = v.text;
-    const src = v.thumb ? `/api/status/cutout.png?v=${encodeURIComponent(v.thumb)}` : '';
-    if (img.getAttribute('src') !== src) { if (src) img.src = src; else img.removeAttribute('src'); }
-    img.hidden = !src;
     gen.hidden = !!st.generate?.alive;
     if (gen.textContent !== t('generatorOff')) gen.textContent = t('generatorOff');
     dot.title = v.text;
@@ -134,6 +145,8 @@ export function createStatus({ THREE, scene, el, world, banner }) {
   return {
     // a fresh /api/status answer
     update(next) {
+      const ng = next.generate || {};
+      if (ng.seen?.length && seenFor !== ng.frame) { seenFor = ng.frame; seenAt = next.now; }
       if (next.mode && st?.mode && next.mode !== st.mode) {           // shown briefly in the pill (issue #16)
         modeNote = next.mode === 'switch' ? t('modeNoteSwitch') : t('modeNoteAdd'); modeNoteUntil = performance.now() + 4000;
       }
