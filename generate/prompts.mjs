@@ -46,10 +46,14 @@ ${example}`;
 const MAX_CODE = 9000;
 
 // place: the changed area's centre on the island and on the paper; height: its drawn height in island units
-export function userText({ existing, place, height, takenIds, hasBefore = false }) {
+export function userText({ existing, place, height, takenIds, hasBefore = false, newSheet = false }) {
   const where = t => t.meta.paper && !t.meta.paper.stale ? `, at paper ${JSON.stringify(t.meta.paper)} = island [${islandOf(t.meta.paper.x, t.meta.paper.y)}]` : '';
   const things = existing.map(t => `--- ${t.file}: ${t.meta.name} (${t.meta.drawing})${where(t)}${t.ids.length ? `, actors: ${t.ids.join(', ')}` : ''}\n` +
     (t.code.length <= MAX_CODE ? t.code : '(code too long to show; an UPDATE must be a complete new module)')).join('\n');
+  if (newSheet) return (newSheet === 'switch'
+    ? 'This is a new sheet of paper: a new world, empty so far.'
+    : `This is a new sheet of paper. The things already on the island stay as they are (${existing.map(t => t.meta.name).join(', ') || 'none'}); do not UPDATE or REMOVE them.`) + ` Build every drawing (or printed picture) on this sheet, each as its own ### NEW section; leave out only noise.
+Place each one where it sits on the sheet: paper (x, y) → island x = (x - 0.5) * 9, z = (y - 0.5) * 7, within 5 of the centre; meta.paper is its (x, y). A person is 2.2 tall.`;
   return (hasBefore
     ? 'The first image is this part of the paper before, the second is the same part now. Compare them: what was added, changed or erased?'
     : 'This image is the part of the paper that just changed. (No before picture: do not REMOVE anything.)') + `
