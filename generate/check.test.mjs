@@ -141,6 +141,8 @@ test('dialogue filter: German "die" is an article, English "die" is not', async 
   assert.ok(safeLine('Schau, die Sonne!', 'de'));
   assert.ok(safeLine('Wo ist die Kerze?', 'de'));
   assert.ok(!safeLine('Du bist so dumm!', 'de'));
+  assert.ok(safeLine('Das ist total lustig!', 'de'));
+  assert.ok(!safeLine('Der Vogel ist tot.', 'de'));
   assert.ok(!safeLine('I will die', 'en'));
   assert.ok(safeLine('Look at the sun!', 'en'));
   const d = { between: ['A', 'B'], end: null, turns: [{ who: 'A', de: 'Schau, die Sonne!', en: 'Look, the sun!' }, { who: 'B', de: 'Die ist schön.', en: 'It is pretty.' }] };
