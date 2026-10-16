@@ -94,6 +94,8 @@ async function buildCheck(file, takenIds) {
     for (const [name, arr] of [['actors', actors], ['obstacles', obstacles], ['spots', spots]])
       if (!Array.isArray(arr)) problems.push(`${name} must be an array`);
     info.actors = actors.map(a => a?.id);
+    // every living figure is its own thing, so each can arrive, move and be erased on its own
+    if (actors.length > 1) problems.push(`${actors.length} actors in one module: make each living figure its own NEW thing (one actor each), and the scenery a separate thing`);
     // two characters of one thing need their own names: they talk to and about each other
     const names = actors.map(a => a?.name).filter(Boolean);
     if (new Set(names).size < names.length) problems.push(`two actors share a name (${names.join(', ')}): give each its own (e.g. "Große Kerze", "Kleine Kerze")`);
