@@ -52,6 +52,59 @@ export const LINES = {
   newest: { person: ['Oooh, was ist das Neue?', 'Schau mal da!'], sqichy: ['Blubb, neu!'] },
   count: { person: ['1, 2, 3 … ich komme!', 'Eins, zwei, drei… ich komme!'], sqichy: ['Blubb… eins, zwei, drei!'] },
   curious: { sqichy: ['Oh, was ist das?', 'Blubb? Neu hier!'], person: ['Oh, was ist das?', 'Schau mal, etwas Neues!', 'Hallo, du Neuer!'] },
+  outside: { person: ['Hallo du da draußen!'], sqichy: ['Hallo du da draußen! Blubb!'] },
+};
+
+// the same in English (i18n.js decides which one is spoken)
+export const LINES_EN = {
+  greet: {
+    sqichy: ['HELLO!', 'Hello hello!', 'Welcome to my pond!', 'Blub! Hello!'],
+    person: ['Hello!', 'Hi!', 'Hey, Sqichy!', 'Nice hat!', 'Hiya!'],
+  },
+  chat: {
+    sqichy: ['Do you want to see my sword?', 'The pond is warm today.', 'I\'m a knight, you know.', 'Blub blub.', 'My hat has feathers!'],
+    person: ['What a lovely day!', 'Look, flowers!', 'Where are we going?', 'I\'m hungry.', 'Did you see the cloud?', 'The island is tiny!'],
+  },
+  reply: {
+    sqichy: ['Exactly! Blub.', 'Haha! Hello!', 'Very true.', '*wiggles happily*'],
+    person: ['Yes!', 'Haha, right!', 'Totally.', 'Really?', 'Cool!'],
+  },
+  spar: { sqichy: ['En garde!', 'Practice fight!', 'Hyaaa!'], person: ['Whoa!', 'Eeek!', 'Not the hat!', 'Slow down!'] },
+  dance: { sqichy: ['Blub blub blub!', 'Dance with me!'], person: ['Yay!', 'Woohoo!', 'Party!'] },
+  highfive: { sqichy: ['Tentacle five!'], person: ['High five!', 'Yesss!'] },
+  tagStart: { person: ['Tag! You\'re it!', 'Catch me if you can!'] },
+  comfort: { sqichy: ['Don\'t be scared, I\'m here!', 'Blub, it\'s all right!'], person: ['Don\'t be scared, I\'m here!', 'Hey, it\'s okay, come here.'] },
+  thanks: { person: ['Thanks…', 'Phew, okay.', 'Thank you, you\'re sweet.'] },
+  spook: { person: ['Boo!', 'Don\'t be scared!', 'I won\'t hurt you!'] },
+  gossipGood: { person: ['Psst… that one is really nice, you know.', 'I really like that one!'] },
+  gossipBad: { person: ['Psst… I don\'t trust that one.', 'Hm, better watch out for that one.'] },
+  sorry: { sqichy: ['Sorry, just kidding!', 'Don\'t be cross, okay?'] },
+  forgive: { person: ['It\'s fine!', 'All good, Sqichy.', 'No big deal!'] },
+  group: { person: ['We\'re dancing in a circle!', 'One, two, three!', 'La la la!'] },
+  share: { person: ['Here, have a bite!', 'I saved something for you!'] },
+  thanksFood: { person: ['Yum, thank you!', 'Delicious!', 'You\'re the best!'] },
+  recall_spook: { person: ['Remember when you scared me?', 'Hehe, that boo back then!'] },
+  recall_comfort: { person: ['Remember when you comforted me?', 'Thanks again for back then!'] },
+  enter: { person: ['I\'m going inside!', 'Just popping in for a rest!'], sqichy: ['I\'m going inside!'] },
+  back: { person: ['I\'m back!', 'Phew, fresh air!'], sqichy: ['I\'m back!'] },
+  knock: { person: ['Knock knock!', 'Hello, are you in there?'], sqichy: ['Knock knock!'] },
+  clear: { person: ['The sun is back!', 'Bright again at last!'], sqichy: ['The sun! Blub!'] },
+  showEgg: { person: ['Look, my egg!', 'See, an egg!'], sqichy: ['Look, my egg!'] },
+  found: { person: ['Oh, a key!', 'Hehe, a key!'] },
+  open: { person: ['I\'m unlocking the chest!'] },
+  treasure: { person: ['A treasure!', 'Yay, a treasure!'], sqichy: ['Blub, a treasure!'] },
+  startled: { person: ['Whoa! Who was that?', 'Eeee!'], sqichy: ['Blub!'] },
+  paidBack: { person: ['Don\'t be scared, I\'m here, just like you were for me!', 'Now I\'ll help you!'] },
+  makeup: { person: ['Let\'s forget it, we\'re friends again!', 'Come on, let\'s dance together!'] },
+  brave: { person: ['I\'m not scared of you any more!', 'Now I\'m brave!'], sqichy: ['Not scared any more! Blub!'] },
+  look: { person: ['Look at that!', 'Oh, what\'s that?'], sqichy: ['Blub, what\'s that?'] },
+  think: { person: ['Hmm…', 'What shall I do today?', 'Let\'s see…'], sqichy: ['Blub… hmm.'] },
+  stroll: { person: ['Come on, let\'s go for a walk!'], sqichy: ['Blub, a walk!'] },
+  strollYes: { person: ['Sure!', 'Ooh yes, let\'s go!'], sqichy: ['Sure, blub!'] },
+  newest: { person: ['Ooooh, what\'s the new thing?', 'Look over there!'], sqichy: ['Blub, something new!'] },
+  count: { person: ['1, 2, 3 … ready or not!', 'One, two, three… here I come!'], sqichy: ['Blub… one, two, three!'] },
+  curious: { sqichy: ['Oh, what\'s that?', 'Blub? New here!'], person: ['Oh, what\'s that?', 'Look, something new!', 'Hello, newcomer!'] },
+  outside: { person: ['Hello, you out there!'], sqichy: ['Hello, you out there! Blub!'] },
 };
 
 // a few remembered moments per character; chats between the same two sometimes bring them up
@@ -298,7 +351,7 @@ export function tick(actors, { now, R, pick, line, say, rel, spots, nearest }, c
   }
   for (const a of actors) {
     // a followed character (the camera is on it) waves at the viewer now and then
-    if (a.followed && R() < 0.1) { a.anim = 'wave'; a.animStart = now(); a.animUntil = now() + 1.8; say(a, 'Hallo du da draußen!', 1.8); }
+    if (a.followed && R() < 0.1) { a.anim = 'wave'; a.animStart = now(); a.animUntil = now() + 1.8; say(a, line(a, 'outside'), 1.8); }
     if (a.goal?.type !== 'idle' || !calm(a) || R() > 0.25) continue;
     // alone and idle: a little thought
     if (!actors.some(b => b !== a && dist(a, b) <= 6)) say(a, '💭' + line(a, 'think'), 1.8);

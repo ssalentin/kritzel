@@ -17,7 +17,7 @@
   #err { color: #b3261e; white-space: pre-wrap; }
   /* pipeline status pill (status.js): folds to a dot when nothing is happening */
   #status { position: fixed; left: 16px; top: 12px; display: flex; align-items: center; gap: 6px; box-sizing: border-box;
-    max-width: calc(100vw - 260px); background: var(--panel); border-radius: 999px; padding: 4px 10px 4px 8px;
+    max-width: calc(100vw - 310px); background: var(--panel); border-radius: 999px; padding: 4px 10px 4px 8px;
     font-size: 13px; line-height: 1.3; pointer-events: none; transition: padding .4s; }
   #status .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: #3a9d5d; }
   #status[data-tone=busy] .dot { background: #e0a020; animation: pulse .8s ease-in-out infinite alternate; }
@@ -36,6 +36,8 @@
   #card b { display: block; font-size: 15px; }
   #card .rel { margin-top: 4px; font-size: 13px; }
   #snd { position: fixed; right: 16px; top: 12px; font: 13px system-ui, sans-serif; color: var(--fg); background: var(--panel);
+    border: 0; border-radius: 10px; padding: 6px 10px; cursor: pointer; opacity: .8; }
+  #langBtn { position: fixed; right: 232px; top: 12px; font: 600 13px system-ui, sans-serif; color: var(--fg); background: var(--panel);
     border: 0; border-radius: 10px; padding: 6px 10px; cursor: pointer; opacity: .8; }
   #camBtn { position: fixed; right: 124px; top: 12px; font: 13px system-ui, sans-serif; color: var(--fg); background: var(--panel);
     border: 0; border-radius: 10px; padding: 6px 10px; cursor: pointer; opacity: .8; }
@@ -72,6 +74,7 @@
 <div id="card"></div>
 <button id="snd" type="button" aria-pressed="false">🔇 Ton an</button>
 <button id="camBtn" type="button">📷 Kamera</button>
+<button id="langBtn" type="button"></button>
 <div id="cam" hidden>
   <div class="row"><select aria-label="Kamera"></select><button class="refresh" type="button" title="Neu suchen">↻</button></div>
   <video autoplay muted playsinline hidden></video>
@@ -87,6 +90,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { createMood } from './mood.js';
 import { createStatus } from './status.js';
+import { t, lang, setLang, onLang } from './i18n.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(devicePixelRatio);
@@ -298,6 +302,21 @@ function shadowAll(obj) {
 }
 
 const errEl = document.getElementById('err');
+// German / English (i18n.js): the page's own texts follow the choice; speech lines switch with the next line spoken
+const langBtn = document.getElementById('langBtn');
+onLang(() => {
+  const hint = document.getElementById('hint'), pen = document.querySelector('#veil .pen');
+  hint.firstChild.nodeValue = t('hint') + ' ';
+  pen.nextSibling.nodeValue = ' ' + t('veil');
+  document.getElementById('camBtn').textContent = t('cameraBtn');
+  document.querySelector('#cam select').setAttribute('aria-label', t('cameraSelect'));
+  document.querySelector('#cam .refresh').title = t('cameraRefresh');
+  document.querySelector('#cam img').alt = t('cameraImage');
+  langBtn.textContent = t('langBtn');
+  langBtn.title = t('langTitle');
+});
+langBtn.addEventListener('click', e => { e.stopPropagation(); setLang(lang() === 'de' ? 'en' : 'de'); });
+
 // what capture and generate are doing, and a glowing light where a new drawing will appear
 const status = createStatus({ THREE, scene, el: document.getElementById('status'), world: () => current });
 
@@ -348,7 +367,7 @@ const stampOf = async f => {
 async function poll() {
   try {
     // the page itself changed (engine or style): reload fully (state is kept via sessionStorage)
-    const ps = (await stampOf(location.pathname)) + (await stampOf('sound.js')) + (await stampOf('camera.js')) + (await stampOf('mood.js')) + (await stampOf('status.js'));
+    const ps = (await stampOf(location.pathname)) + (await stampOf('sound.js')) + (await stampOf('camera.js')) + (await stampOf('mood.js')) + (await stampOf('status.js')) + (await stampOf('i18n.js'));
     if (pageStamp === null) pageStamp = ps;
     else if (ps !== pageStamp) { try { sessionStorage.setItem('paperWorldState', JSON.stringify(current?.snapshot?.())); } catch {} location.reload(); return; }
 
@@ -392,7 +411,8 @@ import('./sound.js?v=' + Date.now()).then(m => {
   api.sound = sound;
   const btn = document.getElementById('snd');
   // the label says what a click will do
-  const show = () => { btn.textContent = sound.enabled ? '🔊 Ton aus' : '🔇 Ton an'; btn.setAttribute('aria-pressed', String(sound.enabled)); };
+  const show = () => { btn.textContent = sound.enabled ? t('soundOff') : t('soundOn'); btn.setAttribute('aria-pressed', String(sound.enabled)); };
+  onLang(show);
   btn.addEventListener('click', async e => {
     e.stopPropagation();
     await sound.setEnabled(!sound.enabled);
@@ -434,21 +454,20 @@ canvas.addEventListener('pointerup', e => {
 });
 addEventListener('keydown', e => { if (e.key === 'Escape') { focus = null; card.style.display = 'none'; } });
 
-const ACTIVITY = { wander: 'läuft herum', swim: 'schwimmt', rest: 'ruht sich aus', idle: 'schaut sich um', eat: 'isst',
-  follow: 'folgt jemandem', flee: 'rennt weg', approach: 'geht auf jemanden zu', chase: 'jagt jemanden' };
 function mood(a) {
-  if (a.fear > 0.4) return 'ängstlich';
-  if (a.energy < 0.3) return 'müde';
-  if (a.hunger > 0.6) return 'hungrig';
-  return 'fröhlich';
+  const m = t('mood');
+  if (a.fear > 0.4) return m.scared;
+  if (a.energy < 0.3) return m.tired;
+  if (a.hunger > 0.6) return m.hungry;
+  return m.happy;
 }
-// who this character likes or avoids, by name (♥ friends, Angst vor ...)
+// who this character likes or avoids, by name (♥ friends, afraid of …)
 function relations(a, byId) {
   const nameOf = id => byId[id]?.name ?? id;
   const list = Object.entries(a.rel || {}).filter(([id]) => byId[id]).sort((p, q) => q[1] - p[1]);
   const out = [];
-  for (const [id, v] of list.slice(0, 2)) if (v > 0.3) out.push(`♥ ${nameOf(id)}`);
-  for (const [id, v] of list.slice(-2).reverse()) if (v < -0.2) out.push(a.fears?.includes(id) ? `Angst vor ${nameOf(id)}` : `mag ${nameOf(id)} nicht`);
+  for (const [id, v] of list.slice(0, 2)) if (v > 0.3) out.push(t('likes', nameOf(id)));
+  for (const [id, v] of list.slice(-2).reverse()) if (v < -0.2) out.push(a.fears?.includes(id) ? t('afraid', nameOf(id)) : t('dislikes', nameOf(id)));
   return out;
 }
 function refreshCard() {
@@ -456,7 +475,7 @@ function refreshCard() {
   if (focus && !alive) focus = null;
   if (!focus) { card.style.display = 'none'; return; }
   const a = focus, byId = current.brain().byId();
-  const lines = [`${mood(a)}, ${ACTIVITY[a.goal?.type] || 'steht da'}`, ...relations(a, byId)];
+  const lines = [`${mood(a)}, ${t('activity')[a.goal?.type] || t('standing')}`, ...relations(a, byId)];
   card.replaceChildren(...lines.map((t, i) => { const el = document.createElement(i ? 'div' : 'b'); if (i) el.className = 'rel'; el.textContent = i ? t : (a.name ?? a.id) + ': ' + t; return el; }));
   card.style.display = 'block';
 }
