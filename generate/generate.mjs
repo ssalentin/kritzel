@@ -294,7 +294,10 @@ async function watch(dir, opts) {
       try { side = JSON.parse(readFileSync(join(dir, newest.replace('.jpg', '.json')), 'utf8')); } catch {}
       // switch mode (things/mode.json, written by the viewer's switch): a new sheet is a new world. Archive
       // the old one (the newworld.sh next to these things) and build everything on the new sheet at once.
-      if (side.reason === 'big-change' && modeOf(opts.thingsDir) === 'switch') {
+      // a new sheet (or one moved too far to follow): capture's own signal, a big change it could not measure as a slide.
+      // A big drawing or a slid sheet has a measured affine and is a normal frame.
+      const newSheet = side.reason === 'big-change' && side.affine == null;
+      if (newSheet && modeOf(opts.thingsDir) === 'switch') {
         log(`${newest}: new sheet in switch mode: archiving the world, building the whole sheet`);
         status('building', newest, 'neue Welt');
         const root = resolve(opts.thingsDir, '..', '..');
@@ -308,7 +311,7 @@ async function watch(dir, opts) {
         continue;
       }
       // a new sheet in add mode: build what's on it as new things; the world stays, nothing is removed or rewritten
-      if (side.reason === 'big-change' && (side.changed ?? 1) > 0.5) {
+      if (newSheet) {
         log(`${newest}: new sheet (add mode): building what's on it, the world stays`);
         status('building', newest);
         await movePaperAlong(dir, newest, opts);

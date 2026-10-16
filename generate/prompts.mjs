@@ -52,7 +52,7 @@ export function userText({ existing, place, height, takenIds, hasBefore = false,
     (t.code.length <= MAX_CODE ? t.code : '(code too long to show; an UPDATE must be a complete new module)')).join('\n');
   if (newSheet) return (newSheet === 'switch'
     ? 'This is a new sheet of paper: a new world, empty so far.'
-    : `This is a new sheet of paper. The things already in the book stay as they are (${existing.map(t => t.meta.name).join(', ') || 'none'}); do not UPDATE or REMOVE them.`) + ` Build every drawing (or printed picture) on this sheet, each as its own ### NEW section; leave out only noise.
+    : `This is a new sheet of paper. The things already in the book stay as they are (${existing.map(t => t.meta.name).join(', ') || 'none'}); do not UPDATE or REMOVE them. If the sheet only moved and its drawings are those already in the book, there is NOTHING new; build only drawings that are not in the book yet.`) + ` Build every new drawing (or printed picture) on this sheet, each as its own ### NEW section; leave out only noise.
 Place each one where it sits on the sheet: paper (x, y) → book x = (x - 0.5) * 12.6, z = (y - 0.5) * 9 (the sheet fills both pages); meta.paper is its (x, y). A person is 2.2 tall.`;
   return (hasBefore
     ? 'The first image is this part of the paper before, the second is the same part now. Compare them: what was added, changed or erased?'
