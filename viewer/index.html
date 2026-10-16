@@ -50,7 +50,12 @@
     border: 0; border-radius: 10px; padding: 6px 10px; cursor: pointer; opacity: .8; }
   #camBtn { position: fixed; right: 124px; top: 12px; font: 13px system-ui, sans-serif; color: var(--fg); background: var(--panel);
     border: 0; border-radius: 10px; padding: 6px 10px; cursor: pointer; opacity: .8; }
-  #cam { position: fixed; right: 16px; top: 48px; width: min(300px, calc(100vw - 32px)); box-sizing: border-box;
+  /* world mode and 'new world' (issue #16): a second row under the buttons */
+  #worldBar { position: fixed; right: 16px; top: 48px; display: flex; gap: 6px; }
+  #worldBar button { font: 13px system-ui, sans-serif; color: var(--fg); background: var(--panel); border: 0;
+    border-radius: 10px; padding: 6px 10px; cursor: pointer; opacity: .8; }
+  #worldBar button.sure { background: #f6d3c8; opacity: 1; font-weight: 600; }
+  #cam { position: fixed; right: 16px; top: 84px; width: min(300px, calc(100vw - 32px)); box-sizing: border-box;
     background: var(--panel); border-radius: 10px; padding: 8px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
   #cam[hidden] { display: none; }
   #cam .row { display: flex; gap: 6px; }
@@ -85,6 +90,7 @@
 <button id="snd" type="button" aria-pressed="false">🔇 Ton an</button>
 <button id="camBtn" type="button">📷 Kamera</button>
 <button id="langBtn" type="button"></button>
+<div id="worldBar"><button id="modeBtn" type="button"></button><button id="newBtn" type="button"></button></div>
 <div id="cam" hidden>
   <div class="row"><select aria-label="Kamera"></select><button class="refresh" type="button" title="Neu suchen">↻</button></div>
   <video autoplay muted playsinline hidden></video>
@@ -335,6 +341,25 @@ onLang(() => {
   langBtn.title = t('langTitle');
 });
 langBtn.addEventListener('click', e => { e.stopPropagation(); setLang(lang() === 'de' ? 'en' : 'de'); });
+
+// world mode (kept on the server, read by the generate watcher) and 'new world' with an inline second tap
+const modeBtn = document.getElementById('modeBtn'), newBtn = document.getElementById('newBtn');
+let worldMode = 'add', sureUntil = 0;
+const showMode = () => { modeBtn.textContent = worldMode === 'switch' ? t('modeSwitch') : t('modeAdd'); modeBtn.title = t('modeTitle'); };
+const showNew = () => { const sure = performance.now() < sureUntil; newBtn.textContent = sure ? t('sure') : t('newWorld'); newBtn.classList.toggle('sure', sure); };
+onLang(() => { showMode(); showNew(); });
+fetch('/api/mode', { cache: 'no-store' }).then(r => r.json()).then(m => { worldMode = m.mode || 'add'; showMode(); }).catch(() => {});
+modeBtn.addEventListener('click', async e => {
+  e.stopPropagation();
+  const next = worldMode === 'switch' ? 'add' : 'switch';
+  try { const r = await fetch('/api/mode', { method: 'PUT', body: JSON.stringify({ mode: next }) }); if (r.ok) { worldMode = next; showMode(); } } catch {}
+});
+newBtn.addEventListener('click', async e => {
+  e.stopPropagation();
+  if (performance.now() >= sureUntil) { sureUntil = performance.now() + 4000; showNew(); setTimeout(showNew, 4100); return; }
+  sureUntil = 0; showNew();
+  try { await fetch('/api/newworld', { method: 'POST', body: '{}', headers: { 'X-Kritzel': '1' } }); } catch {}   // the poll sees the page empty and turns it
+});
 
 // what capture and generate are doing, and a glowing light where a new drawing will appear
 const status = createStatus({ THREE, scene, el: document.getElementById('status'), world: () => current,
