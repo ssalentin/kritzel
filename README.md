@@ -48,7 +48,11 @@ kept.
   <img src="docs/book-close.jpg" alt="Close-up of the book: a bear, an egg-shaped creature with a waving arm, a creature with stalk eyes and a striped tower, all coloured in with visible pencil strokes and dark outlines; one of them says 'Eins, zwei, drei!'" width="100%">
 </p>
 
-### Fast enough for children
+### From paper to book in seconds
+
+<p align="center">
+  <img src="docs/how-it-works.svg" alt="How a drawing comes alive: 1, draw on paper or lay down a sticker; 2, the camera above watches and waits until your hand is gone; 3, Kritzel notices the new drawing and a warm light shows where it will stand, after about 1.5 seconds; 4, Claude reads the drawing and writes a small, safety-checked 3D program; 5, about 15 seconds after the pen lifts, the creature pops up out of the book and starts walking and talking." width="100%">
+</p>
 
 About **1.5 seconds** after the pen lifts, a warm light appears where the new thing will
 stand, and the status pill says what Kritzel is looking at: *„Was haben wir denn da? Ein Affe,
