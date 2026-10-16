@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="Kritzel logo: a drawn banana character on a floating island at night, with a pencil" width="160">
+  <img src="docs/logo.svg" alt="Kritzel logo: an open pop-up book at dusk with Bana, a banana-shaped character coloured in with pencil, popping up from the pages, a smiling moon and a pencil" width="168">
 </p>
 
 <h1 align="center">Kritzel</h1>
 
-<p align="center"><b>Draw on paper. Watch it come alive.</b><br>
-A camera watches your sheet of paper; every drawing becomes a living thing on a floating 3D island.</p>
+<p align="center"><b>Draw on paper. Watch it come alive in a pop-up book.</b><br>
+A camera watches your sheet of paper. Every drawing, sticker or cut-out picture becomes a living thing on the pages of a 3D pop-up book.</p>
 
 <p align="center"><sub><i>Kritzel</i> /ˈkʁɪtsl̩/, say <b>KRIT-sl</b> (rhymes with <i>pretzel</i>): German for <i>a scribble</i>.</sub></p>
 
@@ -13,57 +13,83 @@ A camera watches your sheet of paper; every drawing becomes a living thing on a 
   <img alt="version 0.1.0" src="https://img.shields.io/badge/version-0.1.0-6aa65a">
   <img alt="three.js 0.160" src="https://img.shields.io/badge/three.js-0.160-000000?logo=threedotjs">
   <img alt="rot.js 2.2" src="https://img.shields.io/badge/rot.js-2.2-8a5a3c">
-  <img alt="Claude Sonnet 5.5" src="https://img.shields.io/badge/drawings%20read%20by-Claude%20Sonnet%205.5-d97757?logo=anthropic">
+  <img alt="Claude Sonnet 5.5 and Haiku 5.5" src="https://img.shields.io/badge/drawings%20read%20by-Claude-d97757?logo=anthropic">
+  <img alt="German and English" src="https://img.shields.io/badge/languages-DE%20%7C%20EN-9fb4f2">
   <img alt="Python 3" src="https://img.shields.io/badge/python-3-3776ab?logo=python&logoColor=white">
   <img alt="Node 24" src="https://img.shields.io/badge/node-24-5fa04e?logo=nodedotjs&logoColor=white">
   <img alt="status: prototype" src="https://img.shields.io/badge/status-prototype-f2b38a">
 </p>
 
 <p align="center">
-  <img src="docs/paper-to-world.png" alt="Left: a photo of a sheet of paper with a banana character, a moon, a cloud, a rock with a waterfall, birds with eyes and a spider in a jail. Right: the same drawings as a 3D diorama at night." width="100%">
+  <img src="docs/book-world.jpg" alt="The whole pop-up book at dusk: two cream pages with a red-brown cover; in the middle, creatures coloured in with pencil stand around a pond and a lighthouse, and Kastanientier and Giraffe talk in speech bubbles." width="100%">
 </p>
 
-Every figure, house or tree drawn on the sheet becomes a small low-poly thing on a
-floating island in the browser, and the characters start living there. They walk around,
-meet each other, make friends or run away, and talk in speech bubbles (or think in thought
-clouds) while babbling softly. Draw a moon and night falls; draw a lamp or a campfire and
-everyone gathers in its warm light. Label a drawing ("Vogel", "Fels") and it is read as
-that. Erase a drawing and its thing goes away. Start a new sheet and the old island
-shrinks away while a new one grows in.
+## What it does
 
-From finished drawing to living thing takes about 20 seconds: a non-LLM change detector
-waits until the hand has left the paper, then Claude reads the new drawing and writes a
-small three.js module for it, which runs sandboxed and is checked before it reaches the
-world.
+Draw something on a sheet of paper under the camera, take your hand away, and a moment later
+it stands up out of the pages of a pop-up book on screen, coloured in with pencil like your
+drawing. A person walks off and says hello, a bird flies loops and lands, a fish swims in the
+pond you drew, a spider sits in the jail you drew around it. The characters have moods and
+friendships, talk to each other in short little dialogues, play tag and dance, and come over to
+look whenever something new arrives.
+
+- **Draw a moon** and night falls, with stars. **Draw a sun** and it's day. **Draw a lamp, a
+  candle or a campfire** and everyone gathers in its warm light.
+- **Draw weather:** a rain cloud brings rain and puddles (they hop in them), snowflakes bring
+  snow, a rainbow makes everyone cheer, lightning sends them running for cover.
+- **Label a drawing** ("Vogel", "Fels", "Haus!" with an arrow) and it is read as that.
+  **Cross something out** or scribble over it and it goes away; colouring in never does.
+- **Stickers, cut-outs and brochure pictures** come alive too: a LEGO snake from a booklet
+  becomes a brick snake on the page.
+- **Tap a character** and it hops and says hello; tap a thing and it wiggles; a long press
+  follows a character with the camera.
+
+The world can grow sheet by sheet (**Hinzufügen**), or always show exactly what is on the
+paper right now (**Wechseln**). **Neue Welt** turns the page to an empty one; old worlds are
+kept.
 
 <p align="center">
-  <img src="docs/world-night.png" alt="The island at night: stars, a smiling moon behind a cloud, a grey rock with a waterfall, a spider in a cage, a banana character with a belt and two little birds saying 'Piep! Spielst du mit?'" width="80%">
+  <img src="docs/book-close.jpg" alt="Close-up of the book: a bear, an egg-shaped creature with a waving arm, a creature with stalk eyes and a striped tower, all coloured in with visible pencil strokes and dark outlines; one of them says 'Eins, zwei, drei!'" width="100%">
 </p>
 
-> **Status:** prototype, version 0.1.0 (see `VERSION`; the viewer shows it with the
-> commit in its bottom line). The whole loop runs: camera → capture → generation →
-> viewer. It is built and run by a small team of agents; see [Generation](#generation)
-> for how drawings become code.
+### Fast enough for children
+
+About **1.5 seconds** after the pen lifts, a warm light appears where the new thing will
+stand, and the status pill says what Kritzel is looking at: *„Was haben wir denn da? Ein Affe,
+ein Baum …"*. About **15 seconds** later the thing pops up out of the page with confetti and
+its name, and the others walk over to look. (Measured on 2026-10-16 with a real drawing; a whole
+new sheet takes about 24 seconds.)
 
 ## Features
 
-- **Paper to world, live:** capture notices a finished drawing (not a hand moving over
-  the paper, not a slid sheet), generation turns it into a thing, the open page hot-reloads.
-- **A living island:** characters have needs, moods, friendships and fears, find their
-  way around obstacles ([rot.js](https://ondras.github.io/rot.js/)), talk, dance, play tag,
-  and react to what's newly drawn.
-- **Light and time of day:** dusk by default; a drawn sun or moon turns day or night,
-  lamps and fires pool warm light and cast long shadows; characters get sleepy at night.
-- **Speech and thought bubbles** in a colour per speaker, laid out so they don't cover
-  each other.
-- **A camera anywhere on your network:** share a camera with `scripts/camera_server.py`
-  (e.g. a document camera on another machine via Tailscale) and pick it in the viewer.
-  The picker also shows this computer's own cameras as a preview; capture uses network
-  cameras for now.
-- **Safe by design:** model-written code runs in a sandboxed child process (no network,
-  no file writes, time limit), the page sends a strict Content-Security-Policy, and the
-  server only serves the viewer.
+- **Paper to book, live:** a non-LLM change detector watches the camera stream 8 times a
+  second and hands on a finished drawing (not a hand over the paper, not a slid sheet, not a
+  shadow); Claude reads it and writes a small three.js module per living figure; the open page
+  hot-reloads.
+- **A living pop-up book:** characters have needs, moods, friendships and fears, find their way
+  around things ([rot.js](https://ondras.github.io/rot.js/)), keep out of each other's way,
+  and move like what they are (walk, hop, crawl, fly, swim, climb).
+- **A look that matches:** every thing is coloured in with pencil strokes and outlined, so
+  hand-drawn and generated things belong together. Other looks for comparison:
+  `?look=plain|cutout|origami`, and ink outlines with hatching on top: `?style=paper`.
+- **Light, weather and time of day,** all from what you draw.
+- **Speech and thought bubbles** with a colour and name tag per speaker, kept apart on screen;
+  short dialogues where every line answers the one before.
+- **German and English** (DE | EN, top right), for the interface and what the characters say.
+- **Free-spot placement:** a new thing appears near where it was drawn, never on top of
+  another; things drawn around or holding something (a jail, a flashlight) keep that relation.
+- **A camera anywhere on your network:** share a camera with `./kritzel camera` (for example
+  a document camera on another machine via Tailscale) and pick it in the viewer.
+- **Safe for children:** what characters say passes a child-safe filter; pictures not right
+  for small children or photos of real people are not built; model-written code runs in a
+  sandbox (no network, no file writes, time limit); the page sends a strict
+  Content-Security-Policy.
 - **Procedural sound:** Animal-Crossing-style babble and little effects, no sound files.
+
+> **Status:** prototype, version 0.1.0 (see `VERSION`; the viewer shows it with the commit in
+> its bottom line). The whole loop runs: camera → capture → generation → viewer. It is built
+> and run by a small team of AI agents with one person deciding what's worth building; see
+> [Generation](#generation) for how drawings become code.
 
 ## What you need
 
@@ -108,7 +134,7 @@ camera ──► frame ──► generation (generate/) ────────
   (`viewer/island.js`, the old floating island, only lives on in archived worlds.)
 - **`viewer/characters.js`** — character models and rigs (`makePerson`) that drawn
   figures can reuse.
-- **`viewer/sim.js`** — autonomous life on the island, driven by
+- **`viewer/sim.js`** — autonomous life in the book, driven by
   [rot.js](https://ondras.github.io/rot.js/): a grid with obstacles, speed-based
   scheduling, field of view (trees block sight), A* paths, needs, fear, traits and
   relationships; goals are picked by utility.
@@ -149,7 +175,7 @@ git clone https://github.com/ssalentin/kritzel.git && cd kritzel && ./kritzel ca
 `./kritzel status` shows what runs, the chosen camera and the last drawing; `./kritzel stop`
 stops everything. Logs are in `.kritzel/`. `KRITZEL_PORT` changes the viewer's port.
 
-Without a camera, `python3 viewer/serve.py` shows the island alone: drop a `*.js` file into
+Without a camera, `python3 viewer/serve.py` shows the empty book: drop a `*.js` file into
 `viewer/things/` and it appears within half a second. `?cam=x,y,z,tx,ty,tz` in the URL pins
 the view (handy for screenshots).
 
@@ -199,7 +225,7 @@ The viewer shows this as a pill in the top-left corner (at the bottom on a phone
 off or connected, watching the paper, movement, a new drawing (with its cut-out), building
 (with a seconds counter), the result, and a warning when a stage isn't running. When nothing
 happens it folds to a dot. The moment a drawing is seen, a warm glowing light with rising
-sparks appears on the free spot of the island where its thing will stand; the thing grows
+sparks appears on the free spot of the page where its thing will stand; the thing grows
 out of it (with a "plopp") and the light fades.
 
 ### World modes and a new world
@@ -268,7 +294,7 @@ the engine hangs it on that actor at `at` (actor space: x right, y up, z forward
 and turns along, its light included.
 
 When two characters meet they often have a short dialogue (`viewer/dialogues.js`): 3-5 turns that
-answer each other, about what is on the island right now (the newest drawing, the jail, something
+answer each other, about what is in the book right now (the newest drawing, the jail, something
 someone holds, night, a lamp, a cloud) and how the two get along, ending in something they do
 together (stroll, dance, tag, go and look). They face each other and take turns; nobody next to
 them talks over it. Authored templates in German and English are always there; on top,
@@ -308,8 +334,8 @@ camera; Esc stops.
 
 **Weather.** A thing that brings weather (a rain cloud, snowflakes, a rainbow, a storm cloud)
 returns `weather: { kind: 'rain' | 'snow' | 'rainbow' | 'lightning' }` (or a list). It lasts as long
-as the thing is on the island and eases in and out. Rain greys the sky, falls and leaves puddles
-on the grass; snow drifts down; a rainbow arcs behind the island and everyone cheers; lightning
+as the thing is in the book and eases in and out. Rain greys the sky, falls and leaves puddles
+on the pages; snow drifts down; a rainbow arcs behind the book and everyone cheers; lightning
 flashes every few seconds and scares the characters. In rain and storms they go in through
 house doors.
 
@@ -319,7 +345,7 @@ speaks the current language and falls back to German.
 
 **Where a new thing stands.** The engine, not the model, has the last word: a thing that
 appears while the page is open is moved to the free spot nearest to `meta.paper` (where it
-sits on the paper, 0–1 of the frame) — on the island, off other things, their obstacles and
+sits on the paper, 0–1 of the frame) — on the pages, off other things, their obstacles and
 the characters. Its obstacles, spots, holds and characters' start move with it; things
 floating high up (sun, moon, clouds) stay where they are. The spot is kept in
 `viewer/things/placement.json` (via `PUT /api/placement`), so a reload or a second viewer
@@ -359,7 +385,7 @@ For each frame:
    page globals, eval, Node). It guards against mistakes, not attacks. Then `build(ctx)` runs
    for real with three.js, sandboxed: in a child with no network (`unshare --net`), under
    `node --permission` (no file writes, no child processes), killed after 10 s. The result
-   must be visible, on the island, with valid actors (unique id; non-person rigs bring their
+   must be visible, on the pages, with valid actors (unique id; non-person rigs bring their
    own `animate`), obstacles, spots, and an `update` that survives 30 simulated seconds. A
    module that fails gets one fix attempt on the same model and one on `claude-opus-5-5`.
 3. **Write.** Each passing module is written atomically to `things/`. `--render` then
@@ -383,7 +409,7 @@ kritzel          setup / start / stop / status / camera: the one entry point
 scripts/         start.sh (server + camera window), dev.sh (server + capture + generate),
                  capture.py (camera → frames/settled/), camera_server.py (shares a camera),
                  newworld.sh (archive + reset)
-docs/            logo and screenshots for this README
+docs/            logo and screenshots for this README (rendered from the live book)
 VERSION          the version the viewer shows (with the commit)
 BACKLOG.md       ideas and requests that are not scheduled work yet
 ```
