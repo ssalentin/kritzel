@@ -118,7 +118,12 @@ async function buildCheck(file, takenIds) {
       }
     }
     // speech: each lines group is a German array (old shape) or { de: [...], en: [...] } of the same length
+    // everything a character can say passes the same child-safe filter as the dialogues (viewer/dialogues.js)
+    const { safeLine } = await import(pathToFileURL(join(VIEWER, 'dialogues.js')).href);
+    const unsafe = (list, lang) => list.filter(x => typeof x === 'string' && !safeLine(x, lang));
     const linesOk = (g, where) => {
+      const bad = Array.isArray(g) ? unsafe(g, 'de') : g && typeof g === 'object' ? [...unsafe(g.de || [], 'de'), ...unsafe(g.en || [], 'en')] : [];
+      if (bad.length) problems.push(`${where}: not right for children: ${bad.map(x => JSON.stringify(x)).join(', ')}`);
       if (Array.isArray(g)) return g.every(x => typeof x === 'string') || problems.push(`${where}: lines must be strings`);
       if (!g || typeof g !== 'object' || !Array.isArray(g.de) || !Array.isArray(g.en)) return problems.push(`${where}: lines need { de: [...], en: [...] }`);
       if (g.de.length !== g.en.length) problems.push(`${where}: ${g.de.length} German but ${g.en.length} English lines; give each line its twin`);

@@ -181,3 +181,11 @@ test('actor move: one of walk, hop, crawl, fly, swim, climb', async () => {
   assert.deepEqual((await buildCheck(mv("'fly'"))).problems, []);
   assert.ok((await buildCheck(mv("'teleport'"))).problems.some(p => p.includes('move must be')));
 });
+
+test('a thing\'s own lines pass the child-safe filter too', async () => {
+  const withLines = lines => thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(0.4, 1, 0.4), ctx.mat(1))); ctx.world.add(g);
+    return { actors: [{ id: 'x1', name: 'X', rig: { kind: 'person', g, say() {} }, lines: ${lines} }] };`);
+  assert.deepEqual((await buildCheck(withLines("{ greet: { de: ['Ich mag Waffeln!'], en: ['I like waffles!'] } }"))).problems, []);
+  assert.ok((await buildCheck(withLines("{ chat: { de: ['Du bist dumm!'], en: ['You are nice!'] } }"))).problems.some(p => p.includes('not right for children')));
+  assert.ok((await buildCheck(withLines("{ chat: ['Hallo!', 'Ich hasse dich.'] }"))).problems.some(p => p.includes('not right for children')));
+});
