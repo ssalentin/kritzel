@@ -46,10 +46,10 @@ const LINES_EN = {
   flash: { sqichy: ['Blub!'], person: ['Whoa!', 'Lightning!', 'Eeek!'] },
 };
 
-export function create({ THREE, actors, trees, pond, spots = [], islandR, states = null, seed = Date.now() % 100000, extra = null, moves = null }) {
+export function create({ THREE, actors, trees, pond, spots = [], islandR, ground = null, states = null, seed = Date.now() % 100000, extra = null, moves = null }) {
   ROT.RNG.setSeed(seed);
   const R = () => ROT.RNG.getUniform();
-  const MV = moves?.makeMoves({ THREE, R: () => ROT.RNG.getUniform() });
+  const MV = moves?.makeMoves({ THREE, ground, R: () => ROT.RNG.getUniform() });
   let envNow = { perches: [], water: [] };
   const pick = a => ROT.RNG.getItem(a);
   const toWorld = (x, y) => [(x - C) * CELL, (y - C) * CELL];
@@ -65,7 +65,8 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
     terrain.clear();
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const [wx, wz] = toWorld(x, y);
-      if (Math.hypot(wx, wz) > islandR) continue;
+      // on the pages (book.js), a little in from the edge so nobody walks off; or the old round island
+      if (ground ? Math.abs(wx) > ground.w / 2 - 0.35 || Math.abs(wz) > ground.d / 2 - 0.35 : Math.hypot(wx, wz) > islandR) continue;
       if (trees.some(t => Math.hypot(wx - t.x, wz - t.z) < t.r)) continue;
       terrain.set(key(x, y), Math.hypot(wx - pond.x, wz - pond.z) < pond.r - 0.2 ? 'water' : 'ground');
     }

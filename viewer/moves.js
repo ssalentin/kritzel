@@ -9,9 +9,18 @@
 
 export const SPEED = { walk: 1, hop: 1.1, crawl: 0.4 };
 
-export function makeMoves({ THREE, R }) {
-  const islandR = 6.3;
-  const inIsland = p => { const d = Math.hypot(p.x, p.z); if (d > islandR) { p.x *= islandR / d; p.z *= islandR / d; } return p; };
+export function makeMoves({ THREE, R, ground = null }) {
+  // keep to the ground: the book's pages (a rectangle), or the old round island
+  const inIsland = p => {
+    if (ground) {
+      p.x = Math.max(-ground.w / 2 + 0.5, Math.min(ground.w / 2 - 0.5, p.x));
+      p.z = Math.max(-ground.d / 2 + 0.5, Math.min(ground.d / 2 - 0.5, p.z));
+      return p;
+    }
+    const d = Math.hypot(p.x, p.z);
+    if (d > 6.3) { p.x *= 6.3 / d; p.z *= 6.3 / d; }
+    return p;
+  };
   const pick = list => list[Math.floor(R() * list.length)];
 
   // the body of water nearest to (x, z): a fish keeps to one, it doesn't cross land

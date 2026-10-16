@@ -88,7 +88,7 @@ camera ──► frame ──► generation (generate/) ────────
                                                                   │
                                          browser polls every 0.5s │ hot reload
                                                                   ▼
-                                     viewer/index.html  (three.js scene, island, sim)
+                                     viewer/index.html  (three.js scene, book, sim)
 ```
 
 - **`viewer/index.html`** — the engine: renderer, lights, orbit camera, speech-bubble
@@ -99,11 +99,13 @@ camera ──► frame ──► generation (generate/) ────────
   sits in a soft dusk. Backdrop, light colours and lamps ease over a few seconds.
 - **`viewer/weather.js`** — weather you can draw: rain (with puddles), snow, a rainbow,
   lightning; `mood.js` greys and dims the sky for it and the characters react.
-- **`viewer/world.js`** — builds one world: the island plus every file in `things/`.
+- **`viewer/world.js`** — builds one world: the open book plus every file in `things/`.
   Things can be added, changed or removed live; every character's position, mood and
   friendships survive reloads (even a full page reload, via `sessionStorage`).
-- **`viewer/island.js`** — the floating island: grass top, layered soil, rocky
-  underside, roots, optional waterfall and sky.
+- **`viewer/book.js`** — the ground: an open pop-up book, two paper pages curving into the
+  spine on page stacks and a cloth cover. Its page rectangle (`GROUND`, 14 × 10) is the one
+  ground every part uses: where characters walk, where things are placed, water and weather.
+  (`viewer/island.js`, the old floating island, only lives on in archived worlds.)
 - **`viewer/characters.js`** — character models and rigs (`makePerson`) that drawn
   figures can reuse.
 - **`viewer/sim.js`** — autonomous life on the island, driven by
@@ -274,8 +276,10 @@ A thing drawn around a character (a jail, a fence) can keep it inside: `holds: [
 lets that actor walk only within the circle; it is brought in if it is outside, and walks free
 again when the holding thing is gone.
 
-`ctx` also carries `rand` (seeded), `limb`, `pond`, `trees`, `SUN_POS`, `islandR`
-(6.9) and `env` (`env.actors` lists who is around, `env.night` goes from 0 by day to 1
+`ctx` also carries `rand` (seeded), `limb`, `pond`, `trees`, `SUN_POS`, `ground` (the book's
+pages: `{ shape: 'rect', w: 14, d: 10 }`, x −7…7 with the spine at x = 0, z −5…5, standing at
+y = 0), `islandR` (5: the circle that fits on the pages, for things written for the old island)
+and `env` (`env.actors` lists who is around, `env.night` goes from 0 by day to 1
 at night, `env.lamps` lists where lamps and fires stand). A thing that throws is reported in
 the on-screen error box; the rest of the world keeps running.
 
