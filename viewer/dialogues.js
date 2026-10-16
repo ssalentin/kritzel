@@ -101,7 +101,7 @@ export function pickDialogue(c, R) {
 const words = (list, extra = '') => new RegExp(`(?<!\\p{L})(?:${list.join('|')}${extra})(?!\\p{L})`, 'iu');
 const BAD_DE = words(['tot', 'tote[nrs]?', 'totenkopf', 'töte[nt]?', 'getötet', 'sterben', 'stirbt', 'starb', 'gestorben', 'blut', 'blutig\\p{L}*', 'blutet',
   'waffen?', 'schießen', 'schießt', 'erschießen', 'erschossen', 'hass', 'hasse[nt]?', 'hasst', 'dumm', 'dumme[nrs]?', 'dummkopf', 'idiot(?:en)?',
-  'blöd', 'blöde[nrs]?', 'blödmann', 'scheiße', 'scheiß', 'sex', 'drogen?', 'alkohol', 'bier', 'wein']);
+  'blöd', 'blöde[nrs]?', 'blödmann', 'scheiß\\p{L}*', 'sex', 'drogen?', 'alkohol', 'bier', 'wein']);
 const BAD_EN = words(['kill', 'kills', 'killed', 'killing', 'killer', 'dead', 'die', 'dies', 'died', 'dying', 'blood', 'bloody', 'guns?',
   'shoot', 'shoots', 'weapons?', 'hate', 'hates', 'hated', 'stupid', 'idiots?', 'shut up', 'sex', 'drugs?', 'alcohol', 'beer', 'wine'],
   '|shooting(?! stars?(?!\\p{L}))');
