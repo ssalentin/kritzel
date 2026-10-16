@@ -58,37 +58,54 @@ export async function build(api, prevState = null) {
   let placed = {}, tracking = false;
   try { const r = await fetch('things/placement.json', { cache: 'no-store' }); if (r.ok) { placed = await r.json() || {}; tracking = true; } } catch {}
   // the first viewer to save a spot wins: if another one was quicker, take its spot
-  const savePlace = async (file, d) => {
+  const savePlace = async (file, d, force = false) => {
     if (d) placed[file] = d; else delete placed[file];
     try {
-      const win = await (await fetch('/api/placement', { method: 'PUT', body: JSON.stringify({ file, d }) })).json();
+      const win = await (await fetch('/api/placement', { method: 'PUT', body: JSON.stringify({ file, d, force }) })).json();
       if (d && Array.isArray(win) && (win[0] !== d[0] || win[1] !== d[1]) && loaded.get(file)) {
         shift(loaded.get(file), win[0] - d[0], win[1] - d[1]);
         placed[file] = win;
       }
     } catch {}
   };
-  // ground footprint of a thing (actors aside): centre and radius; null if it floats in the sky
+  // ground footprint of a thing (actors aside): the rectangle it covers (centre x, z and half
+  // sizes hx, hz; r for things that need a circle); null if it floats in the sky
   function footprint(box) {
-    const b = new THREE.Box3().setFromObject(box);
+    const b = new THREE.Box3().setFromObject(box, true);      // everything the thing added, vertex-exact
     if (b.isEmpty() || b.min.y > 1.5) return null;
-    return { x: (b.min.x + b.max.x) / 2, z: (b.min.z + b.max.z) / 2, r: Math.max(0.4, Math.hypot(b.max.x - b.min.x, b.max.z - b.min.z) / 2) };
+    const hx = Math.max(0.3, (b.max.x - b.min.x) / 2), hz = Math.max(0.3, (b.max.z - b.min.z) / 2);
+    return { x: (b.min.x + b.max.x) / 2, z: (b.min.z + b.max.z) / 2, hx, hz, r: Math.max(0.4, Math.hypot(hx, hz)) };
   }
-  // the free spot nearest to (x, z) for something of radius r: on the island, off other things,
-  // their obstacles, the characters and spots promised to drawings still being built
-  function freeSpot(x, z, r, except = null) {
+  // how far two shapes reach into each other (0 = apart, by at least `gap`): a shape is a circle
+  // { x, z, r } or a rectangle { x, z, hx, hz }
+  function depth(p, q, gap = 0) {
+    const rect = s => s.hx !== undefined;
+    if (rect(p) && rect(q)) return Math.max(0, Math.min(p.hx + q.hx + gap - Math.abs(p.x - q.x), p.hz + q.hz + gap - Math.abs(p.z - q.z)));
+    if (rect(q)) [p, q] = [q, p];
+    const r = (q.r || 0.4) + gap;
+    if (rect(p)) return Math.max(0, r - Math.hypot(Math.max(0, Math.abs(q.x - p.x) - p.hx), Math.max(0, Math.abs(q.z - p.z) - p.hz)));
+    return Math.max(0, (p.r || 0.4) + r - Math.hypot(p.x - q.x, p.z - q.z));
+  }
+  // the free spot nearest to (x, z) for `shape` (a radius, or a footprint to move): on the island,
+  // off other things, their obstacles, the characters and spots promised to drawings still being
+  // built. If nothing is entirely free, the spot where it overlaps least.
+  function freeSpot(x, z, shape, except = null) {
     const busy = [...(api.reserved?.() || [])];
-    for (const [f, e] of loaded) if (f !== except) { if (e.foot) busy.push(e.foot); busy.push(...e.obstacles); }
+    for (const [f, e] of loaded) if (f !== except && !e.heldBy) { if (e.foot) busy.push(e.foot); busy.push(...e.obstacles); }   // held: in a hand
     for (const a of brain?.actors?.() || []) busy.push({ x: a.pos.x, z: a.pos.z, r: 0.45 });
-    const ok = (cx, cz) => Math.hypot(cx, cz) + r <= 6.6 && busy.every(o => Math.hypot(cx - o.x, cz - o.z) >= r + (o.r || 0.4) + 0.15);
+    const at = (cx, cz) => typeof shape === 'number' ? { x: cx, z: cz, r: shape } : { ...shape, x: cx, z: cz };
+    const reach = s => s.hx !== undefined ? Math.hypot(Math.abs(s.x) + s.hx, Math.abs(s.z) + s.hz) : Math.hypot(s.x, s.z) + s.r;
+    let best = null, bestCost = Infinity;
     for (let ring = 0; ring <= 30; ring++) {
       const d = ring * 0.35, n = Math.max(1, Math.round(2 * Math.PI * d / 0.35));
       for (let i = 0; i < n; i++) {
-        const a = i / n * Math.PI * 2 + ring;
-        if (ok(x + Math.cos(a) * d, z + Math.sin(a) * d)) return { x: x + Math.cos(a) * d, z: z + Math.sin(a) * d };
+        const a = i / n * Math.PI * 2 + ring, s = at(x + Math.cos(a) * d, z + Math.sin(a) * d);
+        const cost = Math.max(0, reach(s) - 6.6) * 4 + busy.reduce((c, o) => c + depth(s, o, 0.15), 0);
+        if (cost === 0) return { x: s.x, z: s.z };
+        if (cost < bestCost - 1e-6) { bestCost = cost; best = { x: s.x, z: s.z }; }
       }
     }
-    return { x, z };
+    return best || { x, z };
   }
   // meta.paper { x, y } (0-1 of the frame) → island, the way generate places things
   const fromPaper = p => {
@@ -105,13 +122,16 @@ export async function build(api, prevState = null) {
     }
     if (entry.foot) { entry.foot.x += dx; entry.foot.z += dz; }
   }
-  function place(file, entry, meta, live) {
+  function prepare(entry) {
     // characters are placed by the sim in world coordinates: they leave the box, only their start moves
     entry.free = new THREE.Group();
     for (const a of entry.actors) if (a.rig?.g) entry.free.add(a.rig.g);
     world.add(entry.free);
     const foot = footprint(entry.box);
     if (foot) entry.foot = { ...foot };
+  }
+  function place(file, entry, meta, live) {
+    const foot = entry.foot && { ...entry.foot };
     // held by a character (it hangs on the actor's rig): never placed. Holding characters (a jail
     // drawn around someone): stays where it was drawn, or the relation would be lost
     if (entry.heldBy) return;
@@ -122,7 +142,7 @@ export async function build(api, prevState = null) {
     if (!d && isNew && foot) {
       const p = meta?.paper;
       const wish = p && Number.isFinite(p.x) && Number.isFinite(p.y) ? fromPaper(p) : foot;
-      const spot = (live && api.claimSpot?.()) || freeSpot(wish.x, wish.z, foot.r, file);
+      const spot = (live && api.claimSpot?.()) || freeSpot(wish.x, wish.z, foot, file);
       d = [+(spot.x - foot.x).toFixed(2), +(spot.z - foot.z).toFixed(2)];
       savePlace(file, d);
     } else if (!d && isNew && entry.actors.length) {     // a creature on its own: start it at a free spot
@@ -135,7 +155,37 @@ export async function build(api, prevState = null) {
     if (d) shift(entry, d[0], d[1]);
   }
 
-  async function loadThing(file, states, live = false) {
+  // things that pin their place: a jail holding someone, a thing in someone's hand, characters
+  const pinned = e => e.holds.length || e.heldBy || e.actors.length;
+  const shapes = e => [e.foot, ...e.obstacles].filter(Boolean);
+  const overlap = (a, b) => shapes(a).some(p => shapes(b).some(q => depth(p, q, -0.05) > 0));
+  // after every load: two things standing in each other → the one that came later (and is not
+  // pinned) moves to the nearest free spot. 'recent' (just written or rewritten) counts as latest.
+  function untangle(recent = new Set()) {
+    const order = Object.keys(placed);
+    const rank = f => recent.has(f) ? 2e6 + [...recent].indexOf(f) : order.includes(f) ? order.indexOf(f) : 1e6;
+    const list = [...loaded].filter(([, e]) => e.foot && !e.heldBy).sort((a, b) => rank(a[0]) - rank(b[0]));
+    const moved = [];
+    for (let i = 1; i < list.length; i++) {
+      for (let j = 0; j < i; j++) {
+        const [fa, a] = list[i], [fb, b] = list[j];
+        if (!overlap(a, b)) continue;
+        const [fm, mover, other] = !pinned(a) ? [fa, a, fb] : !pinned(b) ? [fb, b, fa] : [];
+        if (!mover) continue;                       // both pinned: leave them, nothing sensible to do
+        const spot = freeSpot(mover.foot.x, mover.foot.z, mover.foot, fm);
+        const dx = +(spot.x - mover.foot.x).toFixed(2), dz = +(spot.z - mover.foot.z).toFixed(2);
+        if (!dx && !dz) continue;
+        shift(mover, dx, dz);
+        const d0 = placed[fm] || [0, 0];
+        savePlace(fm, [+(d0[0] + dx).toFixed(2), +(d0[1] + dz).toFixed(2)], true);
+        moved.push(`${fm} out of ${other}'s way by (${dx}, ${dz})`);
+        console.info(`placement: moved ${fm} out of ${other}'s way by (${dx}, ${dz})`);
+      }
+    }
+    return moved;
+  }
+
+  async function loadThing(file, states, live = false, later = null) {
     const before = new Set(world.children);
     const entry = { box: new THREE.Group(), actors: [], obstacles: [], spots: [], holds: [], heldBy: null, update: null, light: [] };
     let m = null;
@@ -150,7 +200,12 @@ export async function build(api, prevState = null) {
     // everything this thing put into the world goes into its own box, so it can be removed later
     for (const o of [...world.children]) if (!before.has(o)) entry.box.add(o);
     world.add(entry.box);
-    try { place(file, entry, m?.meta, live); } catch (e) { report(`things/${file}: placing: ${e.message}`); }
+    try {
+      try { entry.update?.(0, 0, env); } catch {}           // a thing that sets its place in update (a cloud) is measured there
+      prepare(entry);
+      if (later) later.push([file, entry, m?.meta]);           // at page load: placed once everything is there
+      else place(file, entry, m?.meta, live);
+    } catch (e) { report(`things/${file}: placing: ${e.message}`); }
     bakeAO(THREE, entry.box);
     if (entry.free) bakeAO(THREE, entry.free);
     if (live) {                           // a drawing comes alive: the engine celebrates, the others come to look
@@ -208,7 +263,11 @@ export async function build(api, prevState = null) {
   }
 
   const listing = await (await fetch('things/', { cache: 'no-store' })).text();
-  for (const [, file] of listing.matchAll(/href="([\w.-]+\.js)"/g)) await loadThing(file);
+  const later = [];
+  for (const [, file] of listing.matchAll(/href="([\w.-]+\.js)"/g)) await loadThing(file, undefined, false, later);
+  // everything is there now: place the new ones against all of it, then pull apart what overlaps
+  for (const [file, entry, meta] of later) try { place(file, entry, meta, false); } catch (e) { report(`things/${file}: placing: ${e.message}`); }
+  untangle();
   const actors = [...loaded.values()].flatMap(e => e.actors);
   for (const e of loaded.values()) trees.push(...e.obstacles);
   const spots = [...loaded.values()].flatMap(e => e.spots);
@@ -224,10 +283,12 @@ export async function build(api, prevState = null) {
       for (const f of [...changed, ...removed]) unloadThing(f);
       for (const f of removed) if (placed[f]) savePlace(f, null);
       for (const f of changed) await loadThing(f, states, fresh.has(f));
+      untangle(new Set(changed));          // a new or rewritten thing that ended up in another's way moves
       refreshWorld();
     },
     snapshot: () => brain.snapshot(),
-    freeSpot: (x, z, r) => freeSpot(x, z, r),   // for the light that shows where a drawing will appear
+    freeSpot: (x, z, r) => freeSpot(x, z, r),
+    feet: () => [...loaded].map(([f, e]) => ({ file: f, foot: e.foot, obstacles: e.obstacles, pinned: !!pinned(e) })),   // for tests   // for the light that shows where a drawing will appear
     brain: () => brain,                   // for UI in index.html (e.g. click a character); sim exposes its actors
     update(t, dt) {
       island.update(t);

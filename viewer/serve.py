@@ -193,7 +193,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             n = int(self.headers.get("Content-Length", ""))
             assert 0 <= n <= 512
             req = json.loads(self.rfile.read(n))
-            file, d = req["file"], req.get("d")
+            file, d, force = req["file"], req.get("d"), req.get("force") is True
             assert re.fullmatch(r"[\w.-]+\.js", file)
             assert d is None or (isinstance(d, list) and len(d) == 2 and all(isinstance(v, (int, float)) and abs(v) < 20 for v in d))
         except (ValueError, AssertionError, KeyError, TypeError):
@@ -209,7 +209,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             placed = {f: v for f, v in placed.items() if (things / f).exists() or f == file}   # gone things free their name
             if d is None:
                 placed.pop(file, None)
-            elif file not in placed and len(placed) < 500:
+            elif (force or file not in placed) and len(placed) < 500:   # force: the engine pulled two things apart
                 placed[file] = d
             tmp = path.with_name(".placement.json.tmp")
             tmp.write_text(json.dumps(placed, indent=1))
