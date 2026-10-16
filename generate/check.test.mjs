@@ -159,10 +159,10 @@ test('dialogue filter: whole words only, per language (issue #12)', async () => 
     assert.ok(!safeLine(t, l), 'must be blocked: ' + t);
 });
 
-test('the world is an open book: things must stand on its pages (x -7..7, z -5..5)', async () => {
+test('the world is an open book: things must stand on its pages (x -9..9, z -6.5..6.5)', async () => {
   const at = (x, z) => thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(1, 1, 1), ctx.mat(1))); g.position.set(${x}, 0.5, ${z}); ctx.world.add(g);
     return {};`);
-  assert.deepEqual((await buildCheck(at(6, 4))).problems, []);
-  assert.ok((await buildCheck(at(0, 5.2))).problems.some(p => p.includes('off the pages')));
-  assert.ok((await buildCheck(at(-7.2, 0))).problems.some(p => p.includes('off the pages')));
+  assert.deepEqual((await buildCheck(at(8, 5.5))).problems, []);
+  assert.ok((await buildCheck(at(0, 6.7))).problems.some(p => p.includes('off the pages')));
+  assert.ok((await buildCheck(at(-9.2, 0))).problems.some(p => p.includes('off the pages')));
 });

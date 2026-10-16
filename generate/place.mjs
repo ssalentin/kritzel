@@ -1,7 +1,10 @@
-// paper position (0..1, top-left origin) → the open book's pages (x, z), the same mapping the viewer uses:
-// the sheet fills both pages; the paper's top is the far edge (-z), the spine runs down the middle (x = 0)
+// The world is an open pop-up book (viewer/book.js): two pages x -BOOK.x..BOOK.x (spine at x = 0),
+// z -BOOK.z..BOOK.z, ground y = 0. The paper frame fills both pages, mapped the same way the viewer does.
+// (check-run.mjs runs sandboxed and keeps its own copy of BOOK.x / BOOK.z.)
+export const BOOK = { x: 9, z: 6.5, kx: 16.6, kz: 12, cx: 8.3, cz: 6 };
+// paper position (0..1, top-left origin) → the book's pages (x, z); the paper's top is the far edge (-z)
 export function islandOf(px, py) {
-  const x = Math.min(6.3, Math.max(-6.3, (px - 0.5) * 12.6)), z = Math.min(4.5, Math.max(-4.5, (py - 0.5) * 9));
+  const x = Math.min(BOOK.cx, Math.max(-BOOK.cx, (px - 0.5) * BOOK.kx)), z = Math.min(BOOK.cz, Math.max(-BOOK.cz, (py - 0.5) * BOOK.kz));
   return [+x.toFixed(2), +z.toFixed(2)];
 }
 
