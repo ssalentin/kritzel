@@ -171,6 +171,8 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
   let now = 0, acc = 0, prevCover = 0, prevBirds = false, nextTick = 0, coverNow = 0;
   let nightNow = 0, prevNight = null, lampsNow = [], prevWeather = {};     // 0 day … 1 night; drawn lamps and fires { x, z }
   const pending = [];
+  let stage = null;                      // two characters in a dialogue { a, b, until }: others nearby keep quiet
+  let thingsNow = [];                    // the drawn things (world.js): { name, file, x, z, at, actors, holds, heldBy }
 
   const say = (a, text, dur = 2.4, delay = 0) => pending.push({ a, text, at: now + delay, dur });
   const line = (a, group) => {
@@ -306,7 +308,9 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
   Object.assign(LINES, X.LINES);
   Object.assign(LINES_EN, X.LINES_EN);
   // what extra interactions get: the sim's helpers, so they stay generic
-  const api = { busy, say, line, bond, now: () => now, R, pick, rel, actors: () => actors, nearest: nearestCell, step: stepToward, pass: passable, spots: () => spots, spotCell, cover: () => coverNow, seen: (x, y) => { const c = new Set(); fov.compute(x, y, 12, (cx, cy) => c.add(cx + ',' + cy)); return c; } };
+  const stageFor = (a, b, until) => { stage = { a, b, until }; };
+  const talking = () => (stage && now < stage.until ? stage : null);
+  const api = { stage: stageFor, talking, things: () => thingsNow, night: () => nightNow, lamps: () => lampsNow, byId: () => byId, busy, say, line, bond, now: () => now, R, pick, rel, actors: () => actors, nearest: nearestCell, step: stepToward, pass: passable, spots: () => spots, spotCell, cover: () => coverNow, seen: (x, y) => { const c = new Set(); fov.compute(x, y, 12, (cx, cy) => c.add(cx + ',' + cy)); return c; } };
   const INT = Object.fromEntries(Object.entries(X.INTERACTIONS || {}).map(([k, f]) => [k, (a, b) => f(a, b, api)]));
 
   function interact(a, b) {
@@ -498,6 +502,7 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
     // walks inside its circle and is brought in if it is outside. Actors no longer held walk free again.
     // something new appeared at (x, z): curious characters nearby go and look
     inspect(x, z) { X.inspect?.(x, z, null, api); },
+    setThings(list) { thingsNow = list; },
     setHolds(list) {
       for (const a of actors) {
         const h = list.find(x => x.actor === a.id) || null;
@@ -574,7 +579,12 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
 
       for (let i = pending.length - 1; i >= 0; i--) {
         const p = pending[i];
-        if (now >= p.at) { p.a.rig.say(p.text); p.a.sayUntil = now + p.dur; pending.splice(i, 1); }
+        if (now < p.at) continue;
+        pending.splice(i, 1);
+        // a dialogue is on: nobody next to the two talks over them
+        if (stage && now < stage.until && p.a !== stage.a && p.a !== stage.b &&
+          Math.hypot(p.a.pos.x - (stage.a.pos.x + stage.b.pos.x) / 2, p.a.pos.z - (stage.a.pos.z + stage.b.pos.z) / 2) < 3.5) continue;
+        p.a.rig.say(p.text); p.a.sayUntil = now + p.dur;
       }
 
       for (const a of actors) {

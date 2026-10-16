@@ -235,6 +235,18 @@ export async function movePaperAlong(dir, upTo, { thingsDir, reportsDir }) {
   writePaper(reportsDir, paper);
 }
 
+// the cast changed: refresh the pool of generated dialogues in the background (never waited on);
+// if it changes again meanwhile, one more round follows
+let poolBusy = false, poolAgain = false;
+function refreshDialogues(opts) {
+  if (poolBusy) { poolAgain = true; return; }
+  poolBusy = true;
+  import('./dialogues.mjs').then(m => m.makePool({ thingsDir: opts.thingsDir }))
+    .then(x => log(`dialogues: ${x.written} for the new cast${x.seconds ? ` (${x.seconds.toFixed(0)}s, ${x.model})` : ''}`))
+    .catch(e => log(`dialogues: ${e.message}`))
+    .finally(() => { poolBusy = false; if (poolAgain) { poolAgain = false; refreshDialogues(opts); } });
+}
+
 // ---------- watch frames/settled ----------
 // Resumes after the newest frame with a finished report in reportsDir, so frames capture wrote
 // while generate was down still get made. On a first run ever, the frames already there count as
@@ -289,6 +301,7 @@ async function watch(dir, opts) {
       if (r.error) status('failed', newest, r.error.slice(0, 80));
       else if (r.written.length) status(r.written.every(w => w.kind === 'UPDATE') ? 'changed' : 'new', newest, names);
       else status(r.removed.length ? 'changed' : 'unclear', newest, r.removed.length ? 'removed' : '');
+      if (!r.error && (r.written.length || r.removed.length)) refreshDialogues(opts);
       if (!r.error) { last = lastGenerated = newest; tries = 0; movedSince = false; continue; }
       // claude missing for a moment: Claude Code updates itself in place (the binary is replaced), so
       // pinning its path at startup would not help; wait and try the same frame again, not counted

@@ -252,6 +252,16 @@ A thing a character holds (a flashlight in its hand) returns `heldBy: { actor, a
 the engine hangs it on that actor at `at` (actor space: x right, y up, z forward), so it walks
 and turns along, its light included.
 
+When two characters meet they often have a short dialogue (`viewer/dialogues.js`): 3-5 turns that
+answer each other, about what is on the island right now (the newest drawing, the jail, something
+someone holds, night, a lamp, a cloud) and how the two get along, ending in something they do
+together (stroll, dance, tag, go and look). They face each other and take turns; nobody next to
+them talks over it. Authored templates in German and English are always there; on top,
+`generate/dialogues.mjs` asks a small model (`claude-haiku-5-5`) for ~12 dialogues for the current
+cast after new things arrive and writes them to `viewer/things/dialogues.json`. Every generated
+line passes a child-safe filter before it is written and again before it is played.
+`?log=dialog` in the viewer's URL logs each dialogue to the console.
+
 Water comes from a shared kit, `ctx.water`: `pond(x, z, r)`, `waterfall(from, to, width)` and
 `river(points, width)` return objects for the thing's group; the water flows, foams and sprays
 by itself and follows day, night and lamps (`viewer/water.js`).

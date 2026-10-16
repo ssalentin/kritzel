@@ -3,6 +3,8 @@
 // choose(a, b, r, api) picks the interaction for a pair that just met (r = their lower relationship).
 
 import { sound } from './sound.js';
+import { pickDialogue, fromPool } from './dialogues.js';
+import { lang } from './i18n.js';
 
 export const LINES = {
   greet: {
@@ -228,7 +230,41 @@ export function inspect(wx, wz, who, { nearest, actors, now, R, say, line }) {
   }
 }
 
+// what two characters who meet could talk about (dialogues.js): the newest drawing, the jail, something
+// held, night, a lamp, a cloud, how they get along, the last thing they went through together
+function context(a, b, api) {
+  const things = api.things(), byId = api.byId(), mine = t => t.actors.includes(a.id) || t.actors.includes(b.id);
+  const fresh = things.filter(t => t.at && Date.now() - t.at < 5 * 60_000 && !mine(t)).sort((p, q) => q.at - p.at);
+  const jail = things.find(t => t.holds.length && byId[t.holds[0]]);
+  const held = things.find(t => t.heldBy && byId[t.heldBy]);
+  const named = x => x.name || x.id;
+  return {
+    a, b, r: Math.min(api.rel(a, b), api.rel(b, a)),
+    night: api.night() > 0.5, cloudy: api.cover() > 0.5, lamp: api.lamps().length > 0,
+    newest: fresh[0] || null,
+    jail: jail ? { prisoner: named(byId[jail.holds[0]]), x: jail.x, z: jail.z } : null,
+    held: held ? { holder: named(byId[held.heldBy]), item: held.name } : null,
+    memo: (a.memo || []).filter(m => m.who === b.id).pop()?.kind || null,
+  };
+}
+
 export const INTERACTIONS = {
+  // a short dialogue (3-5 turns that answer each other), staged: the two face each other and take turns,
+  // nobody next to them talks over it; afterwards they do what it ended with (see endDialogue in tick)
+  talk(a, b, api) {
+    const { busy, say, bond, now, R, talking } = api;
+    if (talking()) return INTERACTIONS.greet(a, b, api);       // one dialogue at a time
+    const c = context(a, b, api), d = fromPool(c) || pickDialogue(c, R), en = lang() === 'en';
+    const STEP = 2.6, total = d.turns.length * STEP + 0.4;
+    busy(a, b, 'talk', total); busy(b, a, 'talk', total);
+    api.stage(a, b, now() + total);
+    d.turns.forEach((t, i) => say(t.speaker, en ? t.en : t.de, 2.4, i * STEP));
+    a.after = { at: now() + total, end: d.end, with: b, place: d.end === 'look' ? (c.newest || c.jail) : null };
+    bond(a, b, 0.12); a.social -= 0.4; b.social -= 0.4;
+    if (globalThis.location?.search.includes('log=dialog'))
+      console.log('[dialogue' + (d.generated ? ', generated' : '') + '] ' + [a, b].map(x => x.name || x.id).join(' + ') + ' → ' + (d.end || '-') + '\n' +
+        d.turns.map(t => `  ${t.speaker.name || t.speaker.id}: ${en ? t.en : t.de}`).join('\n'));
+  },
   greet(a, b, { busy, say, line, bond }) {
     busy(a, b, 'wave', 2.6); busy(b, a, 'wave', 2.6);
     say(a, line(a, 'greet')); say(b, line(b, 'greet'), 2.2, 1.1);
@@ -320,7 +356,20 @@ let lastCover = 0;
 let game = null;                                   // hide and seek: { seeker, at }
 const dist = (p, q) => Math.max(Math.abs(p.cell.x - q.cell.x), Math.abs(p.cell.y - q.cell.y));
 
+// after a dialogue: do what it ended with (stroll together, dance, tag, go and look at something)
+function endDialogue(a, api) {
+  const { now, nearest, R } = api, f = a.after, b = f.with;
+  a.after = null;
+  if (!b || !api.actors().includes(b)) return;
+  const go = (x, z) => { for (const m of [a, b]) { const c = nearest(x + (R() - 0.5) * 1.2, z + (R() - 0.5) * 1.2, m); if (c) { m.goal = { type: 'wander', cell: [c.x, c.y] }; m.goalSince = now(); } } };
+  if (f.end === 'dance') INTERACTIONS.dance(a, b, api);
+  else if (f.end === 'tag') INTERACTIONS.tagStart(a, b, api);
+  else if (f.end === 'look' && f.place) go(f.place.x, f.place.z);
+  else if (f.end === 'stroll') go(a.pos.x + (R() - 0.5) * 6, a.pos.z + (R() - 0.5) * 6);
+}
+
 export function tick(actors, { now, R, pick, line, say, rel, spots, nearest }, cover) {
+  for (const a of actors) if (a.after && now() >= a.after.at) endDialogue(a, arguments[1]);
   // items: a carried item follows its carrier; a carrier who left or hid drops it; opened locks close again
   for (const it of spots().filter(s => s.kind === 'item')) {
     it.home ??= { x: it.x, z: it.z };
@@ -454,7 +503,7 @@ export function choose(a, b, r, { R, pick, rel }) {
   if ((a.eggs || b.eggs) && rel(a, b) > 0.2) return 'showEgg';
   if (!squidInvolved && rel(a, b) > 0.3 && Math.abs(a.radius - b.radius) > 0.1 && R() < 0.4) return 'chaseSmall';
   if (squidInvolved && R() < 0.3) return 'spar';
-  if (r < 0.3) return 'greet';
-  if (r > 0.6) return pick(['dance', 'highfive', 'chat', ...(!squidInvolved && a.energy > 0.5 ? ['tagStart'] : [])]);
-  return 'chat';
+  if (r < 0.3) return R() < 0.5 ? 'talk' : 'greet';
+  if (r > 0.6) return pick(['talk', 'talk', 'dance', 'highfive', ...(!squidInvolved && a.energy > 0.5 ? ['tagStart'] : [])]);
+  return R() < 0.8 ? 'talk' : 'chat';
 }
