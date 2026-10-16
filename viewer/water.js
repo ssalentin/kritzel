@@ -65,10 +65,18 @@ export function makeWater({ THREE, scene }) {
   }
 
   function track(obj, step) { live.push({ obj, step }); return obj; }
+  // limits, like lamps: a thing gets at most MAX pieces, sizes are clamped; world.js resets the
+  // count before each thing's build and reports what was left out
+  const MAX = 6;
+  let used = 0, ignored = 0;
+  const allow = () => (++used <= MAX) || (ignored++, false);
+  const clamp = (v, lo, hi, d) => Math.min(hi, Math.max(lo, Number.isFinite(v) ? v : d));
 
   return {
     // a round pond on the ground: calm water that swirls slowly, a foam rim, rings spreading out
     pond(x, z, r = 1.2) {
+      if (!allow()) return new THREE.Group();
+      r = clamp(r, 0.2, 4, 1.2);
       const g = new THREE.Group(); g.position.set(x, 0, z);
       const tex = streaks('#56aee0'); tex.repeat.set(2, 2);
       const disc = new THREE.Mesh(new THREE.CircleGeometry(r, 48), waterMat(tex, 0.82));
@@ -92,6 +100,8 @@ export function makeWater({ THREE, scene }) {
     // water falling from `from` to `to` ([x, y, z]), `width` wide: an arc over the lip, a straight
     // drop, foam and spray where it lands
     waterfall(from, to, width = 0.6) {
+      if (!allow()) return new THREE.Group();
+      width = clamp(width, 0.1, 3, 0.6);
       const g = new THREE.Group();
       const a = new THREE.Vector3(...from), b = new THREE.Vector3(...to);
       const out = new THREE.Vector3(b.x - a.x, 0, b.z - a.z);
@@ -110,6 +120,10 @@ export function makeWater({ THREE, scene }) {
 
     // a stream along the ground through points [x, z] (or [x, y, z]), `width` wide, flowing from the first point
     river(points, width = 0.7) {
+      if (!allow()) return new THREE.Group();
+      width = clamp(width, 0.1, 3, 0.7);
+      points = (Array.isArray(points) ? points : []).slice(0, 32);
+      if (!points.length) return new THREE.Group();
       const g = new THREE.Group();
       const pts = points.map(p => new THREE.Vector3(p[0], p.length > 2 ? p[1] : 0.04, p.length > 2 ? p[2] : p[1]));
       const curve = new THREE.CatmullRomCurve3(pts.length > 1 ? pts : [pts[0], pts[0].clone().add(new THREE.Vector3(1, 0, 0))]);
@@ -128,6 +142,8 @@ export function makeWater({ THREE, scene }) {
       return track(g, t => { tex.offset.y = -t * 0.6; });
     },
 
+    begin() { used = ignored = 0; },
+    ignored: () => ignored,
     tick(t) {
       for (let i = live.length - 1; i >= 0; i--) {
         let o = live[i].obj;

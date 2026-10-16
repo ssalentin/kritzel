@@ -141,7 +141,9 @@ export async function build(api, prevState = null) {
     let m = null;
     try {
       m = await import('./things/' + file + '?v=' + Date.now());
+      water.begin();
       const r = (await m.build(ctx)) || {};
+      if (water.ignored()) report(`things/${file}: ${water.ignored()} water piece(s) left out (at most 6 per thing)`);
       Object.assign(entry, { actors: r.actors || [], obstacles: r.obstacles || [], spots: r.spots || [], holds: r.holds || [], heldBy: r.heldBy || null, update: r.update || null,
         light: [].concat(r.light || []) });
     } catch (e) { report(`things/${file}: ${e.message}`); }
