@@ -15,7 +15,7 @@ const N = 33, C = 16, CELL = 0.45, TICK = 0.13;
 const LINES = {
   sun: { sqichy: ['He! Wer hat die Sonne geklaut?'], person: ['Brrr…', 'Nur eine Wolke!', 'Huch, dunkel!'] },
   rest: { sqichy: ['*blubbert leise*'], person: ['Puh, kurze Pause.', 'Zzz…', '*gähnt*'] },
-  splash: { sqichy: ['Platsch!', 'Ahh, Wasser!'] },
+  splash: { sqichy: ['Platsch!', 'Ahh, Wasser!'], person: ['Platsch!', 'Pfütze!', 'Hihi, nass!'] },
   scared: { person: ['Hilfe!', 'Bloß weg hier!', 'Iiieh!'] },
   birds: { sqichy: ['Vögel! Blubb!', 'Kommt runter, Vögel!'], person: ['Schau, Vögel!', 'Die fliegen ja tief!', 'Hallo, Vögel!'] },
   tagCaught: { person: ['Hab dich!', 'Erwischt!'] },
@@ -31,7 +31,7 @@ const LINES = {
 const LINES_EN = {
   sun: { sqichy: ['Hey! Who stole the sun?'], person: ['Brrr…', 'Just a cloud!', 'Whoa, dark!'] },
   rest: { sqichy: ['*bubbles quietly*'], person: ['Phew, a little break.', 'Zzz…', '*yawns*'] },
-  splash: { sqichy: ['Splash!', 'Ahh, water!'] },
+  splash: { sqichy: ['Splash!', 'Ahh, water!'], person: ['Splash!', 'Puddle!', 'Hehe, wet!'] },
   scared: { person: ['Help!', 'Get me out of here!', 'Eeek!'] },
   birds: { sqichy: ['Birds! Blub!', 'Come down, birds!'], person: ['Look, birds!', 'They\'re flying so low!', 'Hello, birds!'] },
   tagCaught: { person: ['Got you!', 'Caught you!'] },
@@ -437,6 +437,10 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
         r.armL.rotation.z = 2.6 + Math.sin(t * 7) * 0.3; r.armR.rotation.z = -2.6 - Math.sin(t * 7) * 0.3;
         break;
       case 'highfive': r.armR.rotation.x = -2.9; break;
+      case 'splash':                       // a little hop into the puddle
+        r.g.position.y = Math.abs(Math.sin((t - a.animStart) * 7)) * 0.25;
+        r.armL.rotation.z = 1.2; r.armR.rotation.z = -1.2;
+        break;
       case 'yawn': r.head.rotation.x = -0.35; r.armR.rotation.x = -1.6; break;             // hand to the mouth
       case 'stretch': r.armL.rotation.z = 2.5; r.armR.rotation.z = -2.5; r.body.position.y = 0.04; break;
       case 'lookup': r.head.rotation.x = -0.6; break;
@@ -510,7 +514,13 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
     snapshot() { return Object.fromEntries(actors.map(a => [a.id, snapshotOf(a)])); },
     update(t, dt, { cover = 0, birdsLow = false, night = 0, lamps = [], weather = {} } = {}) {
       now = t; nightNow = night; lampsNow = lamps;
-      coverNow = Math.max(cover, weather.rain || weather.lightning ? 1 : 0);   // rain and storms: in through a door
+      // a storm sends everyone in through a door; rain only now and then (they'd rather splash)
+      coverNow = Math.max(cover, weather.lightning ? 1 : weather.rain ? 0.4 : 0);
+      if (weather.rain) for (const a of actors) {
+        if (a.hidden || now < a.busyUntil || R() > dt * 0.12) continue;            // about every 8 s each
+        a.anim = 'splash'; a.animStart = now; a.animUntil = a.busyUntil = now + 0.9;
+        if (R() < 0.4) say(a, line(a, 'splash'), 1.4);
+      }
       acc += dt;
       while (acc >= TICK) { acc -= TICK; const a = scheduler.next(); if (a) act(a); }   // empty world: nobody to act
       if (X.tick && now >= (nextTick ?? 0)) { nextTick = now + 4; X.tick(actors, api, coverNow); }

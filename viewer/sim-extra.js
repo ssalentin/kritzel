@@ -113,7 +113,7 @@ const remember = (a, who, kind) => { a.memo = [...(a.memo || []), { who: who.id,
 // doors (go in to rest) and items (fetch a key for a lock): called for each candidate goal
 export function options(a, add, { spots, cover, spotCell }) {
   for (const sp of spots()) {
-    if (sp.kind === 'door' && spotCell(sp, a)) add(0.2 + (1 - a.energy) * 0.8 + (cover() > 0.5 ? 0.6 : 0), { type: 'visit', spot: sp, cell: spotCell(sp, a), phase: 'walk' });
+    if (sp.kind === 'door' && spotCell(sp, a)) add(0.2 + (1 - a.energy) * 0.8 + (cover() > 0.5 ? 0.6 : cover() > 0.3 ? 0.25 : 0), { type: 'visit', spot: sp, cell: spotCell(sp, a), phase: 'walk' });
     if (sp.kind === 'item' && sp.carrier === a) {       // carrying a key: keep bringing it to the lock
       const lock = spots().find(l => l.kind === 'lock' && l.needs === sp.item && !l.opened);
       if (lock) add(5, { type: 'bring', item: sp, lock });
