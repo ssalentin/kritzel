@@ -42,7 +42,7 @@ NEW_PX = 15              # changed pixels that count: vs the still picture = mov
 INK_R = 2                # new ink must be this far (thumb px) from ink already there
 SLIDE = 8                # how far (thumb px, ×6 at 1080p) the paper may slide and still be the same sheet
 INK_EDGE, INK_SHARE = 25, 0.25   # local contrast that is ink, not shade; share of a change that must be inky
-SHEET_INK = 600            # inky thumb px that make a big change a new sheet with a drawing, whatever the share
+SHEET_INK = 600            # NEW inky thumb px that make a big change a new sheet with a drawing, whatever the share
 EDGE = 10                # thumb px at the frame's edge that never count (the table shows there when the paper slides)
 BIG = 0.04               # share changed that is a big change, not drawing
 STILL_S, BIG_S, FPS = 1.2, 8.0, 8
@@ -161,8 +161,11 @@ def inky(marks, aligned, baseline):
         return ink
     # a whole new sheet changes mostly smooth paper, so its ink share is low; plenty of ink in
     # absolute terms on a big change is a new sheet with a drawing on it, not a moving shadow
-    if len(marks) >= BIG * W * H and len(ink) >= SHEET_INK:
-        return marks
+    if len(marks) >= BIG * W * H:
+        # only ink that is new: a big shadow over an existing drawing changes the old lines too
+        new_ink = sum(1 for i in marks if hi[i] - lo[i] >= INK_EDGE and bhi[i] - blo[i] < INK_EDGE)
+        if new_ink >= SHEET_INK:
+            return marks
     return []
 
 
