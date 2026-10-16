@@ -26,6 +26,7 @@ export function createStatus({ THREE, scene, el, world, banner }) {
   let st = null, lastView = '', viewSince = 0, prevCap = null, connectedAt = 0;
   const lights = new Map();          // frame → { g, light, orb, halo, sparks, spot, born, dying, claimed }
   const glow = glowTexture(THREE);
+  let modeNote = '', modeNoteUntil = 0;
   const growing = [];                // things that just arrived, folding up out of the page
   const bursts = [];                 // paper confetti flying out of them
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);   // reused every frame
@@ -95,6 +96,7 @@ export function createStatus({ THREE, scene, el, world, banner }) {
   // the pill's text for this moment, from both stages' status files
   function view(now) {
     const c = st?.capture || {}, g = st?.generate || {}, last = c.last;
+    if (performance.now() < modeNoteUntil) return { tone: 'ok', text: modeNote };   // the mode just changed
     const thumb = last?.cutout && now - last.at < 300 ? last.frame : null;
     if (g.alive && g.state === 'building') return { tone: 'busy', text: t('building', Math.max(0, Math.round(now - g.since))), thumb };
     if (g.alive && now - g.since < RESULT_S) {
@@ -131,6 +133,9 @@ export function createStatus({ THREE, scene, el, world, banner }) {
   return {
     // a fresh /api/status answer
     update(next) {
+      if (next.mode && st?.mode && next.mode !== st.mode) {           // shown briefly in the pill (issue #16)
+        modeNote = next.mode === 'switch' ? t('modeNoteSwitch') : t('modeNoteAdd'); modeNoteUntil = performance.now() + 4000;
+      }
       const c = next.capture || {}, g = next.generate || {};
       next.at = performance.now();
       const was = prevCap;

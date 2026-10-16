@@ -202,6 +202,17 @@ happens it folds to a dot. The moment a drawing is seen, a warm glowing light wi
 sparks appears on the free spot of the island where its thing will stand; the thing grows
 out of it (with a "plopp") and the light fades.
 
+### World modes and a new world
+
+Next to DE | EN the viewer has a mode button: **➕ Hinzufügen / Add** (one world; every new
+drawing is added to it) or **🔄 Wechseln / Switch** (the world is what is on the sheet right
+now; the generate watcher rebuilds it on a new sheet). The choice lives on the server in
+`viewer/things/mode.json` (`{"mode": "add" | "switch"}`, missing = add; `GET/PUT /api/mode`,
+also in `/api/status`), and the status pill shows it briefly when it changes.
+**🌍 Neue Welt / New world** (asks "Sicher?" on the first tap; a second tap within 4 s starts it)
+runs `scripts/newworld.sh` on the server (`POST /api/newworld`, at most every 10 s): the world is
+archived to `worlds/`, never deleted, and the page starts empty.
+
 ### Starting a new sheet
 
 ```bash

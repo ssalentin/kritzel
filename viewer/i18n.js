@@ -42,7 +42,8 @@ const S = {
     building: s => `🎨 wird gebaut… ${s} s`, made: n => `✓ neu: ${n || 'Ding'}`, changed: n => `↻ geändert: ${n || 'Ding'}`,
     removed: 'entfernt', unclear: '✗ nicht erkannt', seen: '✏️ neue Zeichnung erkannt', captureOff: '⚠ Kamera-Beobachter aus',
     cameraOff: 'Kamera aus', noCamera: 'keine Kamera gewählt', moving: '✋ Bewegung…', connected: 'Kamera verbunden',
-    watching: '👀 beobachtet das Papier', generatorOff: '⚠ Generator aus',
+    watching: '👀 beobachtet das Papier', generatorOff: '⚠ Generator aus', modeAdd: '➕ Hinzufügen', modeSwitch: '🔄 Wechseln', modeTitle: 'Was passiert, wenn ein neues Blatt kommt',
+    modeNoteAdd: 'Modus: Neues kommt dazu', modeNoteSwitch: 'Modus: Die Welt ist das Blatt', newWorld: '🌍 Neue Welt', sure: 'Sicher? Nochmal tippen',
   },
   en: {
     hint: 'Tap figures and things · press and hold: follow with the camera · Esc stops',
@@ -61,7 +62,8 @@ const S = {
     building: s => `🎨 building… ${s} s`, made: n => `✓ new: ${n || 'thing'}`, changed: n => `↻ changed: ${n || 'thing'}`,
     removed: 'removed', unclear: '✗ not recognised', seen: '✏️ new drawing seen', captureOff: '⚠ camera watcher off',
     cameraOff: 'camera off', noCamera: 'no camera chosen', moving: '✋ movement…', connected: 'camera connected',
-    watching: '👀 watching the paper', generatorOff: '⚠ generator off',
+    watching: '👀 watching the paper', generatorOff: '⚠ generator off', modeAdd: '➕ Add', modeSwitch: '🔄 Switch', modeTitle: 'What happens when a new sheet comes',
+    modeNoteAdd: 'Mode: new drawings are added', modeNoteSwitch: 'Mode: the world is the sheet', newWorld: '🌍 New world', sure: 'Sure? Tap again',
   },
 };
 

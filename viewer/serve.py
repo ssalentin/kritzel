@@ -7,6 +7,8 @@ Camera selection (see scripts/camera_server.py for the remote side):
   GET/PUT /api/camera           → the chosen camera, kept in camera.json for the capture stage
   GET /api/status               → what capture and generate are doing (frames/status/*.json), for the status pill
   GET /api/status/cutout.png    → the newest drawing as a paper cut-out (written by capture)
+  GET/PUT /api/mode             → the world mode, {mode: add | switch}, in viewer/things/mode.json
+  POST /api/newworld            → runs scripts/newworld.sh: archive this world to worlds/, start an empty one
   GET /api/stamps               → mtime:size of every engine file and every thing, so the viewer's poll is one request
   PUT /api/placement            → {file, d: [dx, dz] | null}: where the viewer moved a new thing (viewer/things/placement.json)
 
@@ -44,6 +46,17 @@ def version():
 CAMERA_PORT = 8766
 STATUS = ROOT / "frames" / "status"
 PLACEMENT_LOCK = threading.Lock()
+MODE_FILE = ROOT / "viewer" / "things" / "mode.json"     # {"mode": "add" | "switch"}; missing = add (issue #16)
+NEWWORLD_LOCK, NEWWORLD_GAP_S = threading.Lock(), 10
+last_newworld = [0.0]
+
+
+def read_mode():
+    try:
+        m = json.loads(MODE_FILE.read_text()).get("mode")
+    except (OSError, ValueError, AttributeError):
+        m = None
+    return m if m in ("add", "switch") else "add"
 ALIVE_S = 10          # a stage whose status file is older than this is not running
 
 
@@ -151,6 +164,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             viewer = ROOT / "viewer"
             return self.json({"engine": {**stamps(viewer, "*.js"), **stamps(viewer, "*.html")},
                               "things": stamps(viewer / "things", "*.js")})
+        if path == "/api/mode":
+            return self.json({"mode": read_mode()})
         if path == "/api/status":
             return self.json(self.status())
         if path == "/api/status/cutout.png":
@@ -180,6 +195,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 st = {}
             st["alive"] = isinstance(st.get("beat"), (int, float)) and now - st["beat"] < ALIVE_S
             out[stage] = st
+        out["mode"] = read_mode()
         return out
 
     def do_HEAD(self):
@@ -187,9 +203,37 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.json({"error": "not found"}, 404)
         super().do_HEAD()
 
+    def do_POST(self):
+        if urllib.parse.urlsplit(self.path).path != "/api/newworld":
+            return self.json({"error": "not found"}, 404)
+        # a new world: scripts/newworld.sh archives this one to worlds/ (never deletes) and empties things/
+        with NEWWORLD_LOCK:
+            if time.time() - last_newworld[0] < NEWWORLD_GAP_S:
+                return self.json({"error": "a new world was just started"}, 429)
+            try:
+                r = subprocess.run([str(ROOT / "scripts" / "newworld.sh")], capture_output=True, text=True, timeout=30)
+            except (OSError, subprocess.SubprocessError) as e:
+                return self.json({"error": str(e)[:200]}, 500)
+            if r.returncode:
+                return self.json({"error": (r.stderr or r.stdout)[-300:]}, 500)
+            last_newworld[0] = time.time()
+        return self.json({"archived": r.stdout.strip().split("worlds/")[-1]})
+
     def do_PUT(self):
         if urllib.parse.urlsplit(self.path).path == "/api/placement":
             return self.placement()
+        if urllib.parse.urlsplit(self.path).path == "/api/mode":
+            try:
+                n = int(self.headers.get("Content-Length", ""))
+                assert 0 <= n <= 64
+                mode = json.loads(self.rfile.read(n))["mode"]
+                assert mode in ("add", "switch")
+            except (ValueError, AssertionError, KeyError, TypeError):
+                return self.json({"error": "expected {mode: add | switch}"}, 400)
+            tmp = MODE_FILE.with_name(".mode.json.tmp")
+            tmp.write_text(json.dumps({"mode": mode}) + "\n")
+            tmp.replace(MODE_FILE)
+            return self.json({"mode": mode})
         if urllib.parse.urlsplit(self.path).path != "/api/camera":
             return self.json({"error": "not found"}, 404)
         try:
