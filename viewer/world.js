@@ -49,7 +49,7 @@ export async function build(api, prevState = null) {
   const ctx = { THREE, world, bubble, shadowAll, mat, limb, rand, makePerson, pond, trees, SUN_POS, islandR: 6.9, env, sound,
     water: { pond: water.pond, waterfall: water.waterfall, river: water.river } };
   const loaded = new Map();               // file → { box, actors, obstacles, spots, update }
-  let brain = null;
+  let brain = null, clockNow = 0;
 
   // ---------- placement: a NEW thing goes to a free spot near where it is on the paper ----------
   // Where each thing ended up is kept in things/placement.json (file → [dx, dz]), so a reload or
@@ -205,7 +205,7 @@ export async function build(api, prevState = null) {
       entry.meta = m.meta; entry.at = brain ? Date.now() : 0;   // arrived while the world was running: new
       const r = (await m.build(ctx)) || {};
       if (water.ignored()) report(`things/${file}: ${water.ignored()} water piece(s) left out (at most 6 per thing)`);
-      Object.assign(entry, { actors: r.actors || [], obstacles: r.obstacles || [], spots: r.spots || [], holds: r.holds || [], heldBy: r.heldBy || null, update: r.update || null,
+      Object.assign(entry, { actors: r.actors || [], obstacles: r.obstacles || [], spots: r.spots || [], holds: r.holds || [], heldBy: r.heldBy || null, update: r.update || null, onTap: r.onTap || null,
         light: [].concat(r.light || []), weather: [].concat(r.weather || []) });
     } catch (e) { report(`things/${file}: ${e.message}`); }
     // everything this thing put into the world goes into its own box, so it can be removed later
@@ -320,14 +320,32 @@ export async function build(api, prevState = null) {
       refreshWorld();
     },
     snapshot: () => brain.snapshot(),
+    // someone tapped (part of) a drawn thing: it wiggles, its lamps blink, and its own onTap() runs
+    tapThing(obj) {
+      for (const [file, e] of loaded) {
+        let o = obj; while (o && o !== e.box) o = o.parent;
+        if (!o) continue;
+        if (!e.wiggle) e.wiggle = { at: clockNow, parts: e.box.children.map(c => [c, c.scale.clone()]) };
+        api.mood?.blink?.(file);
+        try { e.onTap?.(); } catch (err) { report(`things/${file}: onTap: ${err.message}`); }
+        return file;
+      }
+      return null;
+    },
     freeSpot: (x, z, r) => freeSpot(x, z, r),
     places: () => ({ perches: env.perches, water: env.water }),   // where animals land, climb and swim (for tests)
     feet: () => [...loaded].map(([f, e]) => ({ file: f, foot: e.foot, obstacles: e.obstacles, pinned: !!pinned(e) })),   // for tests   // for the light that shows where a drawing will appear
     brain: () => brain,                   // for UI in index.html (e.g. click a character); sim exposes its actors
     update(t, dt) {
+      clockNow = t;
       island.update(t);
       water.tick(t);
       for (const e of loaded.values()) {
+        if (e.wiggle) {                       // tapped: a squash-and-stretch wiggle, then back exactly
+          const k = (t - e.wiggle.at) / 0.7;
+          if (k >= 1) { for (const [o, s] of e.wiggle.parts) o.scale.copy(s); e.wiggle = null; }
+          else { const w = Math.sin(k * Math.PI * 5) * 0.14 * (1 - k); for (const [o, s] of e.wiggle.parts) o.scale.set(s.x * (1 - w * 0.5), s.y * (1 + w), s.z * (1 - w * 0.5)); }
+        }
         if (!e.update) continue;
         try { e.update(t, dt, env); } catch (err) { report('things: ' + err.message); e.update = null; }
       }

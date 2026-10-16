@@ -284,6 +284,11 @@ drawn water nearest to it (ponds and rivers on the ground; with no water it walk
 (a spider) wanders, climbs the nearest tall thing, sits on top and climbs down again. Flyers,
 swimmers and climbers move on their own and don't join the others' games.
 
+**Tap to play.** Tapping a character makes it hop, giggle and say hello; tapping a thing makes
+it wiggle (and its lamps blink). A thing can add its own reaction by returning `onTap()` from
+build (a tree drops an apple, a door opens). Press and hold a character to follow it with the
+camera; Esc stops.
+
 **Weather.** A thing that brings weather (a rain cloud, snowflakes, a rainbow, a storm cloud)
 returns `weather: { kind: 'rain' | 'snow' | 'rainbow' | 'lightning' }` (or a list). It lasts as long
 as the thing is on the island and eases in and out. Rain greys the sky, falls and leaves puddles

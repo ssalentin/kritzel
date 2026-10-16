@@ -349,6 +349,7 @@ window.__paperWorld = () => current;      // debug handles (inspection from devt
 window.__lighting = () => lighting;
 window.__camera = camera;
 window.__status = status;
+window.__camera = camera;                // tests: project a character to the screen to tap it
 window.__render = () => style.render();   // one frame on demand (tests that step the world themselves)
 
 function clearWorld() {
@@ -455,23 +456,29 @@ import('./camera.js?v=' + Date.now())
   .then(m => m.cameraPicker({ button: document.getElementById('camBtn'), panel: document.getElementById('cam') }))
   .catch(e => { document.getElementById('err').textContent = 'camera.js: ' + e.message; });
 
-// click a character to follow it with the camera; Esc or a click on empty ground stops
+// tap a character: it jumps and says hello; tap a thing: it wiggles. A long press on a character
+// follows it with the camera; Esc (or a long press on empty ground) stops
 const card = document.getElementById('card');
 const ray = new THREE.Raycaster(), ptr = new THREE.Vector2();
 const canvas = renderer.domElement;
 let focus = null, downAt = null, cardAt = 0;
 const actorsNow = () => { try { return current?.brain?.()?.actors() || []; } catch { return []; } };
 const isUnder = (o, root) => { for (; o; o = o.parent) if (o === root) return true; return false; };
-canvas.addEventListener('pointerdown', e => { downAt = [e.clientX, e.clientY]; });
+canvas.addEventListener('pointerdown', e => { downAt = [e.clientX, e.clientY, performance.now()]; });
 canvas.addEventListener('pointerup', e => {
   if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) return;   // a drag, not a click
   const r = canvas.getBoundingClientRect();
   ptr.set((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1);
   ray.setFromCamera(ptr, camera);
   const hit = ray.intersectObjects(world.children, true)[0]?.object;
-  focus = (hit && actorsNow().find(a => isUnder(hit, a.rig.g))) || null;
-  cardAt = 0;
-  if (!focus) card.style.display = 'none';
+  const who = (hit && actorsNow().find(a => isUnder(hit, a.rig.g))) || null;
+  if (performance.now() - downAt[2] >= 450) {          // long press: follow (or stop following)
+    focus = who; cardAt = 0;
+    if (!focus) card.style.display = 'none';
+    return;
+  }
+  if (who) { try { current.brain().tap?.(who); } catch {} sound?.fx('plopp', who.rig.g); }
+  else if (hit) { try { current?.tapThing?.(hit); } catch {} }
 });
 addEventListener('keydown', e => { if (e.key === 'Escape') { focus = null; card.style.display = 'none'; } });
 
