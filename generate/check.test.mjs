@@ -127,3 +127,11 @@ test('weather: kind is checked', async () => {
   assert.deepEqual((await buildCheck(w("[{ kind: 'rainbow' }, { kind: 'lightning' }]"))).problems, []);
   assert.ok((await buildCheck(w("{ kind: 'hail' }"))).problems.some(p => p.includes("weather.kind")));
 });
+
+test('speech lines: German arrays or { de, en } twins of the same length', async () => {
+  const withLines = lines => thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(0.4, 1, 0.4), ctx.mat(1))); ctx.world.add(g);
+    return { actors: [{ id: 'x1', name: 'X', rig: { kind: 'person', g, say() {} }, lines: ${lines} }] };`);
+  assert.deepEqual((await buildCheck(withLines("{ greet: ['Hallo!'] }"))).problems, []);
+  assert.deepEqual((await buildCheck(withLines("{ greet: { de: ['Hallo!', 'Hi!'], en: ['Hello!', 'Hi!'] } }"))).problems, []);
+  assert.ok((await buildCheck(withLines("{ greet: { de: ['Hallo!', 'Hi!'], en: ['Hello!'] } }"))).problems.some(p => p.includes('twin')));
+});

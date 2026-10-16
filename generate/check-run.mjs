@@ -112,6 +112,15 @@ async function buildCheck(file, takenIds) {
         }
       }
     }
+    // speech: each lines group is a German array (old shape) or { de: [...], en: [...] } of the same length
+    const linesOk = (g, where) => {
+      if (Array.isArray(g)) return g.every(x => typeof x === 'string') || problems.push(`${where}: lines must be strings`);
+      if (!g || typeof g !== 'object' || !Array.isArray(g.de) || !Array.isArray(g.en)) return problems.push(`${where}: lines need { de: [...], en: [...] }`);
+      if (g.de.length !== g.en.length) problems.push(`${where}: ${g.de.length} German but ${g.en.length} English lines; give each line its twin`);
+      if (![...g.de, ...g.en].every(x => typeof x === 'string' && x.length <= 120)) problems.push(`${where}: lines must be short strings`);
+    };
+    for (const a of actors) for (const [k, g] of Object.entries(a?.lines || {})) linesOk(g, `actor ${a?.id} lines.${k}`);
+    for (const sp of spots) if (sp?.lines) linesOk(sp.lines, `spot ${sp.kind} lines`);
     for (const o of obstacles) if (!num(o?.x) || !num(o?.z) || !num(o?.r)) { problems.push('obstacles need numeric { x, z, r }'); break; }
     for (const s of spots) if (!s?.kind || !num(s?.x) || !num(s?.z)) { problems.push('spots need { kind, x, z }'); break; }
     // holds: this thing keeps an actor (its own or another thing's) inside a circle, e.g. a jail around the spider
