@@ -552,6 +552,7 @@ function pageSheet() {                 // one page of paper, hinged at the spine
 }
 // returns once the old things lie flat, so they can be taken away (poll() awaits it)
 function newWorldTransition(turn = true) {
+  if (morph?.sheet) { scene.remove(morph.sheet.pivot); morph.sheet.geo.dispose(); }   // a turn already running: drop its page
   morph = { t0: performance.now() - (turn ? 0 : 2000), release: null, folds: [], sheet: null };
   if (!turn) { veil.classList.add('on'); return Promise.resolve(); }
   sound?.fx('melodie');
