@@ -7,6 +7,7 @@ Camera selection (see scripts/camera_server.py for the remote side):
   GET/PUT /api/camera           → the chosen camera, kept in camera.json for the capture stage
   GET /api/status               → what capture and generate are doing (frames/status/*.json), for the status pill
   GET /api/status/cutout.png    → the newest drawing as a paper cut-out (written by capture)
+  GET /api/stamps               → mtime:size of every engine file and every thing, so the viewer's poll is one request
   PUT /api/placement            → {file, d: [dx, dz] | null}: where the viewer moved a new thing (viewer/things/placement.json)
 
 HOST / PORT env vars change the listen address (default 127.0.0.1:8765).
@@ -137,6 +138,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self.json(json.loads(CHOICE.read_text()))
             except (OSError, ValueError):
                 return self.json(None)
+        if path == "/api/stamps":
+            def stamps(folder, pattern):
+                out = {}
+                for f in folder.glob(pattern):
+                    try:
+                        st = f.stat()
+                        out[f.name] = f"{st.st_mtime_ns}:{st.st_size}"
+                    except OSError:
+                        pass
+                return out
+            viewer = ROOT / "viewer"
+            return self.json({"engine": {**stamps(viewer, "*.js"), **stamps(viewer, "*.html")},
+                              "things": stamps(viewer / "things", "*.js")})
         if path == "/api/status":
             return self.json(self.status())
         if path == "/api/status/cutout.png":
