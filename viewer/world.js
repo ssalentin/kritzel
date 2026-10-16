@@ -150,7 +150,9 @@ export async function build(api, prevState = null) {
     if (entry.free) bakeAO(THREE, entry.free);
     if (live) {                           // a drawing comes alive: the engine celebrates, the others come to look
       api.arrived?.(entry.box, m?.meta?.name, entry.foot);
-      if (entry.foot) brain?.inspect?.(entry.foot.x, entry.foot.z);
+      // the sim already sends the curious over for new characters (addActor) and new obstacles or
+      // spots (setWorld); only a thing with neither needs it here, so nobody is called twice
+      if (entry.foot && !entry.actors.length && !entry.obstacles.length && !entry.spots.length) brain?.inspect?.(entry.foot.x, entry.foot.z);
     }
     const dropped = api.mood?.set(file, entry.light, entry.box);
     if (dropped) report(`things/${file}: ${dropped} lamp(s) left dark (at most 3 per thing, 8 in all)`);

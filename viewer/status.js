@@ -28,6 +28,7 @@ export function createStatus({ THREE, scene, el, world, banner }) {
   const glow = glowTexture(THREE);
   const growing = [];                // things that just arrived, growing out of their light
   const bursts = [];                 // paper confetti flying out of them
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);   // reused every frame
   let lastTick = performance.now();
 
   // a burst of little paper snippets in pastel colours, flying up and fluttering down
@@ -168,7 +169,6 @@ export function createStatus({ THREE, scene, el, world, banner }) {
       render();
       const now = performance.now(), t = now / 1000, dt = Math.min(0.05, (now - lastTick) / 1000);
       lastTick = now;
-      const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
       for (let i = bursts.length - 1; i >= 0; i--) {
         const bu = bursts[i], age = (now - bu.born) / 1000;
         bu.parts.forEach((pa, j) => {
