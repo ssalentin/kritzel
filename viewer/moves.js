@@ -70,7 +70,7 @@ export function makeMoves({ THREE, R, ground = null }) {
           a.alt += ((2.6 + Math.sin(now * 1.7) * 0.3) - a.alt) * Math.min(1, dt * 2);
           if (now > m.until) {                    // land on top of a thing (not too high), or on the grass
             const ok = perches.filter(p => p.top < 4.5);
-            const p = ok.length && R() < 0.75 ? pick(ok) : inIsland({ x: (R() - 0.5) * 9, z: (R() - 0.5) * 9, top: 0 });
+            const p = ok.length && R() < 0.75 ? pick(ok) : inIsland({ x: (R() - 0.5) * 15, z: (R() - 0.5) * 11, top: 0 });
             Object.assign(m, { phase: 'land', tx: p.x, tz: p.z, top: p.top });
           }
           return true;

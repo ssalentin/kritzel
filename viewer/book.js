@@ -2,7 +2,14 @@
 // into the spine, on page stacks and a cloth cover. Things stand on the pages (y = 0); the
 // ground every part of the engine uses is the pages' rectangle, GROUND.
 
-export const GROUND = { shape: 'rect', w: 14, d: 10 };          // x −7…7 (spine at x = 0), z −5…5
+export const GROUND = { shape: 'rect', w: 18, d: 13 };          // x −9…9 (spine at x = 0), z −6.5…6.5
+// the pages' height across the book: rising gently toward the spine, dipping into the gutter at
+// x = 0, and lifting a little at the outer edges, like an open book lying on a table. Things and
+// characters stand at groundY(x).
+export function groundY(x) {
+  const u = Math.min(1, Math.abs(x) / (GROUND.w / 2));          // 0 at the spine, 1 at the outer edge
+  return 0.18 * (1 - u) ** 1.5 + 0.08 * Math.exp(-((((1 - u) * GROUND.w / 2) / 0.5) ** 2)) - 0.45 * Math.exp(-((x / 0.55) ** 2));
+}
 // the circle that fits on the pages, for things written for the old round island (ctx.islandR)
 export const FIT_R = Math.min(GROUND.w, GROUND.d) / 2;
 
@@ -36,13 +43,12 @@ export function buildBook({ THREE, world }) {
   const pageMat = new THREE.MeshStandardMaterial({ map: paper, roughness: 0.95, side: THREE.DoubleSide });
 
   // a page: flat where things stand, dipping into the gutter near the spine
-  const dip = x => -0.28 * Math.exp(-((x / 0.7) ** 2));
   for (const side of [-1, 1]) {
     const geo = new THREE.PlaneGeometry(half, D, 40, 4);
     geo.rotateX(-Math.PI / 2);
     geo.translate(side * half / 2, 0, 0);
     const pos = geo.attributes.position;
-    for (let i = 0; i < pos.count; i++) pos.setY(i, dip(pos.getX(i)));
+    for (let i = 0; i < pos.count; i++) pos.setY(i, groundY(pos.getX(i)));
     geo.computeVertexNormals();
     const page = new THREE.Mesh(geo, pageMat);
     page.receiveShadow = true;

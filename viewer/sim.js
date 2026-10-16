@@ -10,7 +10,7 @@ import * as ROT from 'rot-js';
 import { sound } from './sound.js';
 import { lang, pickLines } from './i18n.js';
 
-const N = 33, C = 16, CELL = 0.45, TICK = 0.13;
+const N = 41, C = 20, CELL = 0.45, TICK = 0.13;   // the grid reaches ±9: the whole book's pages
 
 const LINES = {
   sun: { sqichy: ['He! Wer hat die Sonne geklaut?'], person: ['Brrr…', 'Nur eine Wolke!', 'Huch, dunkel!'] },
@@ -46,7 +46,7 @@ const LINES_EN = {
   flash: { sqichy: ['Blub!'], person: ['Whoa!', 'Lightning!', 'Eeek!'] },
 };
 
-export function create({ THREE, actors, trees, pond, spots = [], islandR, ground = null, states = null, seed = Date.now() % 100000, extra = null, moves = null }) {
+export function create({ THREE, actors, trees, pond, spots = [], islandR, ground = null, groundY = () => 0, states = null, seed = Date.now() % 100000, extra = null, moves = null }) {
   ROT.RNG.setSeed(seed);
   const R = () => ROT.RNG.getUniform();
   const MV = moves?.makeMoves({ THREE, ground, R: () => ROT.RNG.getUniform() });
@@ -114,7 +114,9 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, ground
       Object.assign(a, { energy: st.energy, social: st.social, fear: st.fear, hunger: st.hunger ?? a.hunger,
         lastMet: {}, calmUntil: 0, face: st.face ?? a.face });   // saved times are from the old clock: forget them
       const ok = passable(a);
-      if (st.cell && ok(st.cell.x, st.cell.y)) a.cell = st.cell;
+      // the cell from the saved world position (grid cells can change between versions), else the saved cell
+      const c = st.pos && nearestCell(st.pos[0], st.pos[1], a);
+      if (c) a.cell = c; else if (st.cell && ok(st.cell.x, st.cell.y)) a.cell = st.cell;
       a.pos.set(st.pos?.[0] ?? a.pos.x, 0, st.pos?.[1] ?? a.pos.z);
       a.rig.g.rotation.y = a.face;
     }
@@ -621,7 +623,7 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, ground
           a.alt = a.move === 'hop' && moving ? Math.abs(Math.sin(now * 8 * a.speed)) * 0.3 : 0;   // hoppers bounce along
         }
         const j = now - (a.jumpAt ?? -9);       // tapped: one hop on the lift, under whatever animate() does
-        if (a.lift) a.lift.position.y = a.alt + (j < 0.6 ? Math.sin(j / 0.6 * Math.PI) * 0.6 : 0);
+        if (a.lift) a.lift.position.y = groundY(a.pos.x) + a.alt + (j < 0.6 ? Math.sin(j / 0.6 * Math.PI) * 0.6 : 0);
         a.rig.g.position.x = a.pos.x;
         a.rig.g.position.z = a.pos.z;
         a.rig.g.rotation.y = lerpAngle(a.rig.g.rotation.y, a.face, Math.min(1, dt * 8));
