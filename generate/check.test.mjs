@@ -148,3 +148,13 @@ test('dialogue filter: German "die" is an article, English "die" is not', async 
   const d = { between: ['A', 'B'], end: null, turns: [{ who: 'A', de: 'Schau, die Sonne!', en: 'Look, the sun!' }, { who: 'B', de: 'Die ist schön.', en: 'It is pretty.' }] };
   assert.ok(safeDialogue(d));
 });
+
+test('dialogue filter: whole words only, per language (issue #12)', async () => {
+  const { safeLine } = await import('../viewer/dialogues.js');
+  for (const [t, l] of [['Ich mag Waffeln!', 'de'], ['Wir gehen in die Drogerie.', 'de'], ['Eine Blutorange!', 'de'], ['Look, a shooting star!', 'en'],
+    ['Off to the drugstore!', 'en'], ['Schau, die Sonne!', 'de'], ['Das ist total lustig!', 'de'], ['Ich weine nicht.', 'de']])
+    assert.ok(safeLine(t, l), 'must pass: ' + t);
+  for (const [t, l] of [['Der Vogel ist tot.', 'de'], ['Du bist so dumm!', 'de'], ['So ein scheiß Tag', 'de'], ['Er hat Waffen.', 'de'], ['Du Idiot!', 'de'],
+    ['Blut überall', 'de'], ['I will die', 'en'], ['He has guns', 'en'], ['They were shooting', 'en'], ['You are stupid', 'en']])
+    assert.ok(!safeLine(t, l), 'must be blocked: ' + t);
+});
