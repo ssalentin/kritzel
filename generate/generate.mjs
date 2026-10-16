@@ -108,7 +108,7 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
 }
 
 // ---------- one settled frame ----------
-export async function processFrame(frame, { thingsDir, reportsDir, box = null, previous = null, render = false }) {
+export async function processFrame(frame, { thingsDir, reportsDir, box = null, previous = null, bigChange = false, render = false }) {
   mkdirSync(reportsDir, { recursive: true });
   const name = basename(frame).replace(/\.\w+$/, '');
   const settledAt = statSync(frame).mtimeMs;
@@ -127,9 +127,11 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
     const renders = [];
     // many removals at once is a new or moved sheet, not a child erasing: remove nothing and say so
     const removes = sections.filter(s => s.kind === 'REMOVE');
-    if (removes.length > 2) {
-      for (const s of removes) report.rejected.push({ kind: s.kind, file: s.file, problems: [`${removes.length} removals in one frame: a new sheet? not removing`] });
-      log(`${name}: ${removes.length} REMOVEs in one reply: a new sheet? not removing any`);
+    // a big change (new or moved sheet) never removes anything: that is newworld's job, the person decides
+    if (removes.length && (bigChange || removes.length > 2)) {
+      const why = bigChange ? 'a big change (new or moved sheet): nothing is removed then' : `${removes.length} removals in one frame: a new sheet? not removing`;
+      for (const s of removes) report.rejected.push({ kind: s.kind, file: s.file, problems: [why] });
+      log(`${name}: ${removes.length} REMOVE(s) refused: ${why}`);
       sections.splice(0, sections.length, ...sections.filter(s => s.kind !== 'REMOVE'));
     }
     for (const s of sections) {
@@ -221,6 +223,7 @@ async function watch(dir, opts) {
   const sleep = ms => new Promise(ok => setTimeout(ok, ms));
   let tries = 0, triesFor = null;           // failed attempts, and for which frame
   let lastGenerated = last;                 // the last frame processFrame really ran on (skipped frames don't count)
+  let movedSince = false;                   // a big change was skipped since lastGenerated: no REMOVEs until a frame is generated
   for (;;) {
     const newest = list().at(-1);
     if (newest && newest !== last) {
@@ -230,7 +233,7 @@ async function watch(dir, opts) {
         log(`${newest}: big change (new sheet or moved paper?): nothing generated; archiving the old world is scripts/newworld.sh's call`);
         writeFileSync(join(opts.reportsDir, newest.replace('.jpg', '.json')), JSON.stringify({ frame: newest, skipped: 'big-change', side }, null, 1));
         status('idle', newest);
-        last = newest;
+        last = newest; movedSince = true;
         continue;
       }
       // capture's changed_box is only trusted if it was measured against the frame we last generated
@@ -238,12 +241,12 @@ async function watch(dir, opts) {
       // frame, so a scribble that appeared in a skipped frame is still seen
       const box = side.previous && side.previous === lastGenerated ? side.changed_box : null;
       status('building', newest);
-      const r = await processFrame(join(dir, newest), { ...opts, box, previous: lastGenerated ? join(dir, lastGenerated) : null });
+      const r = await processFrame(join(dir, newest), { ...opts, box, bigChange: movedSince || side.reason === 'big-change', previous: lastGenerated ? join(dir, lastGenerated) : null });
       const names = r.written.map(w => w.name).join(', ');
       if (r.error) status('failed', newest, r.error.slice(0, 80));
       else if (r.written.length) status(r.written.every(w => w.kind === 'UPDATE') ? 'changed' : 'new', newest, names);
       else status(r.removed.length ? 'changed' : 'unclear', newest, r.removed.length ? 'entfernt' : '');
-      if (!r.error) { last = lastGenerated = newest; tries = 0; continue; }
+      if (!r.error) { last = lastGenerated = newest; tries = 0; movedSince = false; continue; }
       // claude missing for a moment: Claude Code updates itself in place (the binary is replaced), so
       // pinning its path at startup would not help; wait and try the same frame again, not counted
       if (/ENOENT/.test(r.error)) { await sleep(30_000); continue; }
