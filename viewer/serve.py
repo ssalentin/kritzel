@@ -92,6 +92,11 @@ def public(path):
     return path in ("/viewer", "/worlds", "/scripts/camera_server.py") or path.startswith(("/viewer/", "/worlds/"))
 
 
+def archived_worlds():
+    """The archived worlds, oldest first (their names carry the time); the live world is not in it."""
+    return sorted(d.name for d in (ROOT / "worlds").glob("*") if (d / "index.html").is_file())
+
+
 def clean_choice(c):
     """Keep only known fields of a camera choice; a remote one must name a camera on a tailnet host."""
     kind = c.get("kind")
@@ -166,6 +171,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                               "things": stamps(viewer / "things", "*.js")})
         if path == "/api/mode":
             return self.json({"mode": read_mode()})
+        if path == "/api/worlds":
+            return self.json(archived_worlds())
+        if re.fullmatch(r"/worlds/\w[\w.-]*/(index\.html)?", path):
+            return self.archived_page(path)
         if path == "/api/status":
             return self.json(self.status())
         if path == "/api/status/cutout.png":
@@ -203,9 +212,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.json({"error": "not found"}, 404)
         super().do_HEAD()
 
+    def archived_page(self, path):
+        # an archived world is read-only: its page gets the gallery control, and it may not write
+        # (do_POST and do_PUT refuse anything sent from one)
+        f = ROOT / "worlds" / path.split("/")[2] / "index.html"
+        try:
+            html = f.read_text()
+        except OSError:
+            return self.json({"error": "not found"}, 404)
+        body = html.replace("</body>", '<script type="module" src="/viewer/gallery.js"></script>\n</body>').encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def from_archive(self):
+        return urllib.parse.urlsplit(self.headers.get("Referer", "")).path.startswith("/worlds/")
+
     def do_POST(self):
         if urllib.parse.urlsplit(self.path).path != "/api/newworld":
             return self.json({"error": "not found"}, 404)
+        if self.from_archive():
+            return self.json({"error": "an archived world is read-only"}, 403)
         # only the viewer itself: a page on another site can send a plain POST without asking first,
         # but not one with this header (that needs a CORS preflight, which we never grant)
         if self.headers.get("X-Kritzel") != "1":
@@ -224,6 +253,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return self.json({"archived": r.stdout.strip().split("worlds/")[-1]})
 
     def do_PUT(self):
+        if self.from_archive():
+            return self.json({"error": "an archived world is read-only"}, 403)
         if urllib.parse.urlsplit(self.path).path == "/api/placement":
             return self.placement()
         if urllib.parse.urlsplit(self.path).path == "/api/mode":
