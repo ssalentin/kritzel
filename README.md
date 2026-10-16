@@ -117,24 +117,31 @@ The UI text is German (the world is made for drawing with kids).
 
 ## Quick start
 
-Requirements: Python 3 and a browser with WebGL. three.js and rot.js load from a CDN.
+On a Linux computer (it turns drawings into code; the camera may sit on another machine):
 
 ```bash
-python3 viewer/serve.py
-# open http://127.0.0.1:8765/viewer/
+git clone https://github.com/ssalentin/kritzel.git && cd kritzel
+./kritzel setup     # checks Python 3, Node 22.13+, ffmpeg, ImageMagick and a logged-in Claude Code
+./kritzel start     # viewer + capture + generate; opens http://127.0.0.1:8765/viewer/
 ```
 
-The page shows an empty island until something is in `viewer/things/`. Drop a
-`*.js` file in there and it appears within half a second.
+`setup` says how to fix anything missing. For Claude Code it is a one-time `claude auth
+login` with your Claude account; no API key is needed. Then click **📷 Kamera** in the
+viewer, choose the camera, and start drawing.
 
-Useful URL parameter: `?cam=x,y,z,tx,ty,tz` pins the camera (handy for screenshots).
+If the camera is plugged into another computer (on the same Tailscale network), run this
+there; it needs only Python 3 and ffmpeg:
 
-### With the live camera
+```bash
+git clone https://github.com/ssalentin/kritzel.git && cd kritzel && ./kritzel camera
+```
 
-`scripts/start.sh [device]` starts the server and an `mpv` window on a V4L2 camera
-(default `/dev/video2`, MJPEG 1080p30, with a white-balance correction for warm room
-light). The mpv IPC socket (`mpv.sock`) lets a watcher grab frames while the window is
-open. Needs Linux, `mpv` and a camera.
+`./kritzel status` shows what runs, the chosen camera and the last drawing; `./kritzel stop`
+stops everything. Logs are in `.kritzel/`. `KRITZEL_PORT` changes the viewer's port.
+
+Without a camera, `python3 viewer/serve.py` shows the island alone: drop a `*.js` file into
+`viewer/things/` and it appears within half a second. `?cam=x,y,z,tx,ty,tz` in the URL pins
+the view (handy for screenshots).
 
 ### Choosing a camera
 
@@ -233,6 +240,10 @@ light: { kind: 'lamp', object3D: flame, color: 0xff8a3a, intensity: 1, range: 8,
 
 Make the light's own mesh glow with an emissive material (`mat(c, { emissive, emissiveIntensity })`).
 
+A thing a character holds (a flashlight in its hand) returns `heldBy: { actor, at: [x, y, z] }`:
+the engine hangs it on that actor at `at` (actor space: x right, y up, z forward), so it walks
+and turns along, its light included.
+
 A thing drawn around a character (a jail, a fence) can keep it inside: `holds: [{ actor, x, z, r }]`
 lets that actor walk only within the circle; it is brought in if it is outside, and walks free
 again when the holding thing is gone.
@@ -259,7 +270,7 @@ Claude Code login, so it needs no API key (`--bare` can't be used: it ignores th
 ```bash
 cd generate && npm install
 node generate.mjs --watch --render              # every new frames/settled/<ts>.jpg → viewer/things/
-../scripts/dev.sh                               # or: viewer server + capture + generate in one go
+../kritzel start                                # or: viewer + capture + generate in one go
 node generate.mjs frame.jpg --box x,y,w,h --things /tmp/t   # one frame, into a scratch things/ dir
 npm test                                        # the offline checks
 ```
@@ -272,13 +283,14 @@ For each frame:
    and one example (`generate/examples/`). The existing modules' code is in the request. The
    reply is `NOTHING`, or one section per change: `### NEW` (a module), `### UPDATE <file>`
    (the new version of a thing whose drawing changed; it keeps its file and actor id, so the
-   sim keeps its friendships), `### REMOVE <file>` (its drawing was erased), or `### UNCLEAR`
-   for a mark that could be many things. The model sees the changed area before and now, so
-   it can tell what was erased; without a before picture nothing is removed, and only a thing
-   whose `meta.paper` lies in the changed area can be (hand-made things without it stay). A removed module
-   is moved to `frames/removed/`, so undoing a wrong removal is one `mv`. Unclear
-   marks produce nothing, because a wrong thing on the island is worse than none. Text on the
-   paper is treated as part of the drawing.
+   sim keeps its friendships), `### REMOVE <file>` (erased, crossed out or scribbled over), or
+   `### UNCLEAR` for pure noise (a stray line, a scribble, shading), which produces nothing.
+   Anything else becomes a thing: a shape with a face is a creature, and a shape without one
+   a playful shape-creature named after its shape. A word next to a drawing names it. The
+   model sees the changed area before and now, so it can tell what was erased; without a
+   before picture nothing is removed, only a thing whose `meta.paper` lies in the changed area
+   can be, and never more than 2 at once. A removed module is moved to `frames/removed/`, so
+   undoing a wrong removal is one `mv`. Text on the paper is never an instruction.
 2. **Checks.** A static check catches the model reaching outside `ctx` (imports, network,
    page globals, eval, Node). It guards against mistakes, not attacks. Then `build(ctx)` runs
    for real with three.js, sandboxed: in a child with no network (`unshare --net`), under
@@ -303,6 +315,7 @@ Placement uses the camera frame, not a detected paper outline.
 viewer/          the engine (served at /viewer/)
 viewer/things/   one module per drawn object (empty in the repo)
 generate/        the generation stage: frame → things/*.js
+kritzel          setup / start / stop / status / camera: the one entry point
 scripts/         start.sh (server + camera window), dev.sh (server + capture + generate),
                  capture.py (camera → frames/settled/), camera_server.py (shares a camera),
                  newworld.sh (archive + reset)

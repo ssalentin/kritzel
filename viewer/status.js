@@ -6,6 +6,7 @@ const RESULT_S = 10;       // how long "✓ neu: …" / "✗ nicht erkannt" stay
 const SEEN_S = 6;          // how long "✏️ neue Zeichnung erkannt" stays up (if generate is slower to start)
 const IDLE_S = 4;          // a calm pill folds to a dot after this long
 const LIGHT_MAX_S = 120;   // a light whose thing never arrives (generator running) goes away after this long
+const LIGHT_MAX = 3;       // waiting lights at once; with the generator down, the oldest goes when a new drawing comes
 
 // a soft round glow for the light's halo, drawn once
 function glowTexture(THREE) {
@@ -54,6 +55,9 @@ export function createStatus({ THREE, scene, el, world, banner }) {
 
   function addLight(last) {
     const want = placeOf(last);
+    // every light is a PointLight; a stopped generator must not let them pile up (each one recompiles all materials)
+    const waiting = [...lights].filter(([, l]) => !l.dying);
+    for (const [f] of waiting.slice(0, Math.max(0, waiting.length - (LIGHT_MAX - 1)))) retire(f);
     const spot = world()?.freeSpot?.(want.x, want.z, want.r) || want;
     const g = new THREE.Group();
     g.position.set(spot.x, 0, spot.z);
