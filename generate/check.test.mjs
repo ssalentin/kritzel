@@ -158,3 +158,11 @@ test('dialogue filter: whole words only, per language (issue #12)', async () => 
     ['Blut überall', 'de'], ['I will die', 'en'], ['He has guns', 'en'], ['They were shooting', 'en'], ['You are stupid', 'en']])
     assert.ok(!safeLine(t, l), 'must be blocked: ' + t);
 });
+
+test('speech lines: German arrays or { de, en } twins of the same length', async () => {
+  const withLines = lines => thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(0.4, 1, 0.4), ctx.mat(1))); ctx.world.add(g);
+    return { actors: [{ id: 'x1', name: 'X', rig: { kind: 'person', g, say() {} }, lines: ${lines} }] };`);
+  assert.deepEqual((await buildCheck(withLines("{ greet: ['Hallo!'] }"))).problems, []);
+  assert.deepEqual((await buildCheck(withLines("{ greet: { de: ['Hallo!', 'Hi!'], en: ['Hello!', 'Hi!'] } }"))).problems, []);
+  assert.ok((await buildCheck(withLines("{ greet: { de: ['Hallo!', 'Hi!'], en: ['Hello!'] } }"))).problems.some(p => p.includes('twin')));
+});
