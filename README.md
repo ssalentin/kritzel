@@ -117,24 +117,31 @@ The UI text is German (the world is made for drawing with kids).
 
 ## Quick start
 
-Requirements: Python 3 and a browser with WebGL. three.js and rot.js load from a CDN.
+On a Linux computer (it turns drawings into code; the camera may sit on another machine):
 
 ```bash
-python3 viewer/serve.py
-# open http://127.0.0.1:8765/viewer/
+git clone https://github.com/ssalentin/kritzel.git && cd kritzel
+./kritzel setup     # checks Python 3, Node 22.13+, ffmpeg, ImageMagick and a logged-in Claude Code
+./kritzel start     # viewer + capture + generate; opens http://127.0.0.1:8765/viewer/
 ```
 
-The page shows an empty island until something is in `viewer/things/`. Drop a
-`*.js` file in there and it appears within half a second.
+`setup` says how to fix anything missing. For Claude Code it is a one-time `claude auth
+login` with your Claude account; no API key is needed. Then click **📷 Kamera** in the
+viewer, choose the camera, and start drawing.
 
-Useful URL parameter: `?cam=x,y,z,tx,ty,tz` pins the camera (handy for screenshots).
+If the camera is plugged into another computer (on the same Tailscale network), run this
+there; it needs only Python 3 and ffmpeg:
 
-### With the live camera
+```bash
+git clone https://github.com/ssalentin/kritzel.git && cd kritzel && ./kritzel camera
+```
 
-`scripts/start.sh [device]` starts the server and an `mpv` window on a V4L2 camera
-(default `/dev/video2`, MJPEG 1080p30, with a white-balance correction for warm room
-light). The mpv IPC socket (`mpv.sock`) lets a watcher grab frames while the window is
-open. Needs Linux, `mpv` and a camera.
+`./kritzel status` shows what runs, the chosen camera and the last drawing; `./kritzel stop`
+stops everything. Logs are in `.kritzel/`. `KRITZEL_PORT` changes the viewer's port.
+
+Without a camera, `python3 viewer/serve.py` shows the island alone: drop a `*.js` file into
+`viewer/things/` and it appears within half a second. `?cam=x,y,z,tx,ty,tz` in the URL pins
+the view (handy for screenshots).
 
 ### Choosing a camera
 
@@ -263,7 +270,7 @@ Claude Code login, so it needs no API key (`--bare` can't be used: it ignores th
 ```bash
 cd generate && npm install
 node generate.mjs --watch --render              # every new frames/settled/<ts>.jpg → viewer/things/
-../scripts/dev.sh                               # or: viewer server + capture + generate in one go
+../kritzel start                                # or: viewer + capture + generate in one go
 node generate.mjs frame.jpg --box x,y,w,h --things /tmp/t   # one frame, into a scratch things/ dir
 npm test                                        # the offline checks
 ```
@@ -308,6 +315,7 @@ Placement uses the camera frame, not a detected paper outline.
 viewer/          the engine (served at /viewer/)
 viewer/things/   one module per drawn object (empty in the repo)
 generate/        the generation stage: frame → things/*.js
+kritzel          setup / start / stop / status / camera: the one entry point
 scripts/         start.sh (server + camera window), dev.sh (server + capture + generate),
                  capture.py (camera → frames/settled/), camera_server.py (shares a camera),
                  newworld.sh (archive + reset)
