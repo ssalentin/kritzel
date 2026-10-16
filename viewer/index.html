@@ -290,7 +290,8 @@ function layoutBubbles(dt) {
     // really covered or off screen, and not more often than every 400 ms per bubble.
     // Back home (right above the speaker) as soon as that spot is clear again.
     if ((u.slot.dx || u.slot.dy) && now >= (u.movedAt || 0) + 400 && cost(rect(b, 0, 0)) === 0) { u.slot = { dx: 0, dy: 0 }; u.movedAt = now; }
-    if (cost(rect(b, u.slot.dx, u.slot.dy)) > tolerance && !(now < (u.movedAt || 0) + 400)) {
+    const curC = cost(rect(b, u.slot.dx, u.slot.dy));
+    if (curC > tolerance && !(now < (u.movedAt || 0) + 400)) {
       let best = null, bestC = Infinity;
       // up first, then sideways, then below the speaker (when above is cut off by the screen edge)
       search: for (let k = 0; k <= 10; k++) {
@@ -302,7 +303,8 @@ function layoutBubbles(dt) {
           }
         }
       }
-      if (best && (best.dx !== u.slot.dx || best.dy !== u.slot.dy)) { u.slot = best; u.movedAt = now; }
+      // hysteresis: in a crowd, only move for a clearly better spot, or the bubble hops as the camera turns
+      if (best && bestC < curC * 0.6 && (best.dx !== u.slot.dx || best.dy !== u.slot.dy)) { u.slot = best; u.movedAt = now; }
     }
     placed.push(rect(b, u.slot.dx, u.slot.dy));
     const k = 1 - Math.exp(-dt / 0.25);                              // glide (~0.25 s), same at any frame rate
