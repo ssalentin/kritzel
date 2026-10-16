@@ -278,31 +278,33 @@ function layoutBubbles(dt) {
   const now = performance.now();
   const overlap = r => { let ov = 0; for (const o of placed) ov += Math.max(0, Math.min(r.r, o.r) - Math.max(r.l, o.l)) * Math.max(0, Math.min(r.b, o.b) - Math.max(r.t, o.t)); return ov; };
   const rect = (b, dx, dy) => ({ l: b.x + dx - b.w / 2, r: b.x + dx + b.w / 2, t: b.yb - dy - b.h, b: b.yb - dy });
-  const onScreen = r => r.t >= 4 && r.l >= 4 && r.r <= innerWidth - 4;
+  // a spot's cost: covered area, plus (weighted) area off the screen — never a hard rejection,
+  // so a speaker at the edge or top still gets the least-bad spot instead of an overlap
+  const offScreen = r => (r.r - r.l) * (r.b - r.t) - Math.max(0, Math.min(r.r, innerWidth - 4) - Math.max(r.l, 4)) * Math.max(0, Math.min(r.b, innerHeight - 4) - Math.max(r.t, 4));
+  const cost = r => overlap(r) + 3 * offScreen(r);
   list.forEach((b, i) => {
     const u = b.sp.userData;
     u.slot ??= { dx: 0, dy: 0 };
-    // sticky: keep the current slot while it's on screen and (almost) clear; only look for a new
-    // one when it's really covered, and not more often than every 400 ms per bubble
-    // back home (right above the speaker) as soon as that spot is clear again
-    if ((u.slot.dx || u.slot.dy) && now >= (u.movedAt || 0) + 400) {
-      const home = rect(b, 0, 0);
-      if (onScreen(home) && overlap(home) === 0) { u.slot = { dx: 0, dy: 0 }; u.movedAt = now; }
-    }
-    const cur = rect(b, u.slot.dx, u.slot.dy);
     const tolerance = b.w * b.h * 0.04;
-    if (!(onScreen(cur) && overlap(cur) <= tolerance) && !(now < (u.movedAt || 0) + 400)) {
-      let best = null, bestOv = Infinity;
+    // sticky: keep the current slot while it's (almost) clear; look for a new one only when it's
+    // really covered or off screen, and not more often than every 400 ms per bubble.
+    // Back home (right above the speaker) as soon as that spot is clear again.
+    if ((u.slot.dx || u.slot.dy) && now >= (u.movedAt || 0) + 400 && cost(rect(b, 0, 0)) === 0) { u.slot = { dx: 0, dy: 0 }; u.movedAt = now; }
+    const curC = cost(rect(b, u.slot.dx, u.slot.dy));
+    if (curC > tolerance && !(now < (u.movedAt || 0) + 400)) {
+      let best = null, bestC = Infinity;
+      // up first, then sideways, then below the speaker (when above is cut off by the screen edge)
       search: for (let k = 0; k <= 10; k++) {
-        for (const sx of [0, -1, 1, -2, 2, -3, 3]) {
-          const dx = sx * b.w * 0.55, dy = k * b.h * 0.5, r = rect(b, dx, dy);
-          if (!onScreen(r)) continue;
-          const ov = overlap(r);
-          if (ov < bestOv) { bestOv = ov; best = { dx, dy }; }
-          if (ov === 0) break search;
+        for (const dy of k ? [k * b.h * 0.5, -k * b.h * 0.5] : [0]) {
+          for (const sx of [0, -1, 1, -2, 2, -3, 3]) {
+            const dx = sx * b.w * 0.55, c = cost(rect(b, dx, dy));
+            if (c < bestC) { bestC = c; best = { dx, dy }; }
+            if (c === 0) break search;
+          }
         }
       }
-      if (best && (best.dx !== u.slot.dx || best.dy !== u.slot.dy)) { u.slot = best; u.movedAt = now; }
+      // hysteresis: in a crowd, only move for a clearly better spot, or the bubble hops as the camera turns
+      if (best && bestC < curC * 0.6 && (best.dx !== u.slot.dx || best.dy !== u.slot.dy)) { u.slot = best; u.movedAt = now; }
     }
     placed.push(rect(b, u.slot.dx, u.slot.dy));
     const k = 1 - Math.exp(-dt / 0.25);                              // glide (~0.25 s), same at any frame rate
@@ -345,6 +347,7 @@ const err = document.getElementById('err');
 let current = null;
 window.__paperWorld = () => current;      // debug handles (inspection from devtools / tests)
 window.__lighting = () => lighting;
+window.__camera = camera;
 window.__status = status;
 window.__render = () => style.render();   // one frame on demand (tests that step the world themselves)
 
