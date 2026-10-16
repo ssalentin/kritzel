@@ -311,6 +311,7 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, ground
 
   function busy(a, partner, anim, dur) {
     a.partner = partner; a.anim = anim; a.animStart = now; a.animUntil = now + dur; a.busyUntil = now + dur;
+    a.partnerUntil = partner ? now + dur : 0;   // the moment with this partner ends here, whatever else keeps it busy
     a.goal = null;
   }
 
@@ -611,7 +612,7 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, ground
         if (a.sayUntil && now > a.sayUntil) { a.rig.say(''); a.sayUntil = 0; }
         let moving;
         // in a dialogue (or another moment with a partner): stay put and keep facing them until it ends
-        const withPartner = now < a.busyUntil && a.partner && !a.partner.hidden;
+        const withPartner = now < (a.partnerUntil ?? 0) && a.partner && !a.partner.hidden;
         if (withPartner) {
           moving = false;
           a.face = Math.atan2(a.partner.pos.x - a.pos.x, a.partner.pos.z - a.pos.z);
