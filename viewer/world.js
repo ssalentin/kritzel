@@ -202,6 +202,7 @@ export async function build(api, prevState = null) {
     try {
       m = await import('./things/' + file + '?v=' + Date.now());
       water.begin();
+      entry.meta = m.meta; entry.at = brain ? Date.now() : 0;   // arrived while the world was running: new
       const r = (await m.build(ctx)) || {};
       if (water.ignored()) report(`things/${file}: ${water.ignored()} water piece(s) left out (at most 6 per thing)`);
       Object.assign(entry, { actors: r.actors || [], obstacles: r.obstacles || [], spots: r.spots || [], holds: r.holds || [], heldBy: r.heldBy || null, update: r.update || null,
@@ -260,6 +261,17 @@ export async function build(api, prevState = null) {
     brain.setWorld({ trees, spots });
     brain.setHolds([...loaded.values()].flatMap(e => e.holds));
     attachHeld();
+    brain.setThings(thingList());
+  }
+  // what the characters can talk about: every drawn thing, where it is, and when it arrived
+  // (things there at page load count as old: at 0)
+  function thingList() {
+    const box = new THREE.Box3(), c = new THREE.Vector3();
+    return [...loaded.entries()].map(([file, e]) => {
+      box.setFromObject(e.box); box.getCenter(c);
+      return { file, name: e.meta?.name || file.replace(/\.js$/, ''), x: c.x, z: c.z, at: e.at || 0,
+        actors: e.actors.map(a => a.id), holds: e.holds.map(h => h.actor), heldBy: e.heldBy?.actor || null };
+    });
   }
   // a thing held by a character (a flashlight in Bana's hand): its box hangs on the actor's rig at
   // heldBy.at (actor space: x right, y up, z forward), so it walks and turns along; back to the world
@@ -286,6 +298,7 @@ export async function build(api, prevState = null) {
   brain = sim.create({ THREE, actors, trees, pond, spots, islandR: 6.9, states: prevState, extra });
   brain.setHolds([...loaded.values()].flatMap(e => e.holds));
   attachHeld();
+  brain.setThings(thingList());
 
   return {
     // engine calls this when only things/ changed: reload just those files

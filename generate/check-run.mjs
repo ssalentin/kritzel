@@ -93,6 +93,9 @@ async function buildCheck(file, takenIds) {
     for (const [name, arr] of [['actors', actors], ['obstacles', obstacles], ['spots', spots]])
       if (!Array.isArray(arr)) problems.push(`${name} must be an array`);
     info.actors = actors.map(a => a?.id);
+    // two characters of one thing need their own names: they talk to and about each other
+    const names = actors.map(a => a?.name).filter(Boolean);
+    if (new Set(names).size < names.length) problems.push(`two actors share a name (${names.join(', ')}): give each its own (e.g. "Große Kerze", "Kleine Kerze")`);
     const ids = new Set(takenIds);
     for (const a of actors) {
       if (!a?.id || typeof a.id !== 'string') { problems.push('an actor has no string id'); continue; }

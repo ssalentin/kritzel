@@ -127,3 +127,24 @@ test('weather: kind is checked', async () => {
   assert.deepEqual((await buildCheck(w("[{ kind: 'rainbow' }, { kind: 'lightning' }]"))).problems, []);
   assert.ok((await buildCheck(w("{ kind: 'hail' }"))).problems.some(p => p.includes("weather.kind")));
 });
+
+test('actors of one thing need their own names', async () => {
+  const two = (n1, n2) => thing(`const mk = () => { const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(0.4, 1, 0.4), ctx.mat(1))); ctx.world.add(g); return g; };
+    const rig = g => ({ kind: 'person', g, say() {} });
+    return { actors: [{ id: 'k1', name: '${n1}', rig: rig(mk()) }, { id: 'k2', name: '${n2}', rig: rig(mk()) }] };`);
+  assert.ok((await buildCheck(two('Kerze', 'Kerze'))).problems.some(p => p.includes('share a name')));
+  assert.ok(!(await buildCheck(two('Große Kerze', 'Kleine Kerze'))).problems.some(p => p.includes('share a name')));
+});
+
+test('dialogue filter: German "die" is an article, English "die" is not', async () => {
+  const { safeLine, safeDialogue } = await import('../viewer/dialogues.js');
+  assert.ok(safeLine('Schau, die Sonne!', 'de'));
+  assert.ok(safeLine('Wo ist die Kerze?', 'de'));
+  assert.ok(!safeLine('Du bist so dumm!', 'de'));
+  assert.ok(safeLine('Das ist total lustig!', 'de'));
+  assert.ok(!safeLine('Der Vogel ist tot.', 'de'));
+  assert.ok(!safeLine('I will die', 'en'));
+  assert.ok(safeLine('Look at the sun!', 'en'));
+  const d = { between: ['A', 'B'], end: null, turns: [{ who: 'A', de: 'Schau, die Sonne!', en: 'Look, the sun!' }, { who: 'B', de: 'Die ist schön.', en: 'It is pretty.' }] };
+  assert.ok(safeDialogue(d));
+});
