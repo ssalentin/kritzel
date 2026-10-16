@@ -284,6 +284,19 @@ async function watch(dir, opts) {
   log(`watching ${dir} → ${opts.thingsDir} (model ${MODEL}, fallback ${FALLBACK_MODEL}); handled up to ${last || '(nothing)'}`);
   const sleep = ms => new Promise(ok => setTimeout(ok, ms));
   let tries = 0, triesFor = null;           // failed attempts, and for which frame
+  let archivedFor = null;                   // switch mode: the sheet whose new world is already set up
+  // after a failed frame: true = try the same frame again (after a wait), false = give up on it.
+  // A frame given up on never counts as generated (lastGenerated stays).
+  async function retrySame(error, frame) {
+    // claude missing for a moment: Claude Code updates itself in place (the binary is replaced); not counted
+    if (/ENOENT/.test(error)) { await sleep(30_000); return true; }
+    if (/not logged in|401|authenticat/i.test(error)) { log('claude is not logged in: waiting 10 min'); await sleep(600_000); return true; }
+    if (triesFor !== frame) { triesFor = frame; tries = 0; }   // a newer frame starts with a clean count
+    if (++tries < ATTEMPTS) { await sleep(20_000 * 2 ** (tries - 1)); return true; }
+    log(`${frame}: FAILED after ${ATTEMPTS} attempts, moving on: ${error}`);
+    tries = 0;
+    return false;
+  }
   let lastGenerated = last;                 // the last frame processFrame really ran on (skipped frames don't count)
   // a big change was skipped since lastGenerated: no REMOVEs until a frame is generated (also across a restart)
   let movedSince = frames.some(f => (!lastGenerated || f > lastGenerated) && report(f)?.skipped === 'big-change');
@@ -298,15 +311,24 @@ async function watch(dir, opts) {
       // A big drawing or a slid sheet has a measured affine and is a normal frame.
       const newSheet = side.reason === 'big-change' && side.affine == null;
       if (newSheet && modeOf(opts.thingsDir) === 'switch') {
-        log(`${newest}: new sheet in switch mode: archiving the world, building the whole sheet`);
-        status('building', newest, 'neue Welt');
-        const root = resolve(opts.thingsDir, '..', '..');
-        try { log(execFileSync(join(root, 'scripts', 'newworld.sh'), [], { cwd: root, encoding: 'utf8' }).trim()); }
-        catch (e) { log(`${newest}: newworld.sh failed: ${e.message}`); }
-        writePaper(opts.reportsDir, { _through: newest });          // a new world has no old paper positions
+        // archive once per sheet, even when the build has to be retried
+        if (archivedFor !== newest) {
+          log(`${newest}: new sheet in switch mode: archiving the world, building the whole sheet`);
+          status('building', newest, 'neue Welt');
+          const root = resolve(opts.thingsDir, '..', '..');
+          try { log(execFileSync(join(root, 'scripts', 'newworld.sh'), [], { cwd: root, encoding: 'utf8' }).trim()); }
+          catch (e) {                 // the old world is still there: don't build a new one into it
+            log(`${newest}: newworld.sh failed, no new world: ${e.message}`);
+            status('failed', newest, 'neue Welt fehlgeschlagen');
+            last = newest; tries = 0;
+            continue;
+          }
+          archivedFor = newest;
+          writePaper(opts.reportsDir, { _through: newest });        // a new world has no old paper positions
+        }
         const r = await processFrame(join(dir, newest), { ...opts, box: null, previous: null, newSheet: 'switch' });
-        if (r.error) status('failed', newest, r.error.slice(0, 80));
-        else status(r.written.length ? 'new' : 'unclear', newest, r.written.map(w => w.name).join(', '));
+        if (r.error) { status('failed', newest, r.error.slice(0, 80)); if (await retrySame(r.error, newest)) continue; last = newest; continue; }
+        status(r.written.length ? 'new' : 'unclear', newest, r.written.map(w => w.name).join(', '));
         last = lastGenerated = newest; movedSince = false; tries = 0;
         continue;
       }
@@ -316,9 +338,8 @@ async function watch(dir, opts) {
         status('building', newest);
         await movePaperAlong(dir, newest, opts);
         const r = await processFrame(join(dir, newest), { ...opts, box: null, previous: null, newSheet: 'add' });
-        if (r.error) status('failed', newest, r.error.slice(0, 80));
-        else status(r.written.length ? 'new' : 'unclear', newest, r.written.map(w => w.name).join(', '));
-        if (r.error && ++tries < ATTEMPTS) { await sleep(20_000 * 2 ** (tries - 1)); continue; }
+        if (r.error) { status('failed', newest, r.error.slice(0, 80)); if (await retrySame(r.error, newest)) continue; last = newest; continue; }
+        status(r.written.length ? 'new' : 'unclear', newest, r.written.map(w => w.name).join(', '));
         last = lastGenerated = newest; movedSince = false; tries = 0;
         continue;
       }
@@ -335,14 +356,8 @@ async function watch(dir, opts) {
       else status(r.removed.length ? 'changed' : 'unclear', newest, r.removed.length ? 'removed' : '');
       if (!r.error && (r.written.length || r.removed.length)) refreshDialogues(opts);
       if (!r.error) { last = lastGenerated = newest; tries = 0; movedSince = false; continue; }
-      // claude missing for a moment: Claude Code updates itself in place (the binary is replaced), so
-      // pinning its path at startup would not help; wait and try the same frame again, not counted
-      if (/ENOENT/.test(r.error)) { await sleep(30_000); continue; }
-      if (/not logged in|401|authenticat/i.test(r.error)) { log('claude is not logged in: waiting 10 min'); await sleep(600_000); continue; }
-      if (triesFor !== newest) { triesFor = newest; tries = 0; }   // a newer frame starts with a clean count
-      if (++tries < ATTEMPTS) { await sleep(20_000 * 2 ** (tries - 1)); continue; }
-      log(`${newest}: FAILED after ${ATTEMPTS} attempts, moving on: ${r.error}`);
-      last = newest; tries = 0;
+      if (await retrySame(r.error, newest)) continue;
+      last = newest;
     }
     await sleep(300);
   }
