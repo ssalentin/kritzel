@@ -99,7 +99,7 @@ export function createStatus({ THREE, scene, el, world, banner }) {
     if (g.alive && g.state === 'building') return { tone: 'busy', text: t('building', Math.max(0, Math.round(now - g.since))), thumb };
     if (g.alive && now - g.since < RESULT_S) {
       if (g.state === 'new') return { tone: 'ok', text: t('made', g.detail), thumb };
-      if (g.state === 'changed') return { tone: 'ok', text: t('changed', g.detail), thumb };
+      if (g.state === 'changed') return { tone: 'ok', text: t('changed', g.detail === 'removed' ? t('removed') : g.detail), thumb };
       if (g.state === 'unclear' || g.state === 'failed') return { tone: 'warn', text: t('unclear'), thumb };
     }
     if (last && now - last.at < SEEN_S) return { tone: 'busy', text: t('seen'), thumb };
