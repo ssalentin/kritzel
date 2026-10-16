@@ -32,7 +32,7 @@ test('a creature without its own animation, a duplicate id, and a thing off the 
   const { problems } = await buildCheck(blob, { takenIds: ['schnecke'] });
   assert.ok(problems.some(p => p.includes('already taken')), problems.join('\n'));
   assert.ok(problems.some(p => p.includes('no rig.animate')), problems.join('\n'));
-  assert.ok(problems.some(p => p.includes('island')), problems.join('\n'));
+  assert.ok(problems.some(p => p.includes('off the pages')), problems.join('\n'));
 });
 
 test('a build that throws or adds nothing is caught', async () => {
@@ -157,4 +157,12 @@ test('dialogue filter: whole words only, per language (issue #12)', async () => 
   for (const [t, l] of [['Der Vogel ist tot.', 'de'], ['Du bist so dumm!', 'de'], ['So ein scheiß Tag', 'de'], ['Er hat Waffen.', 'de'], ['Du Idiot!', 'de'], ['Scheißding!', 'de'],
     ['Blut überall', 'de'], ['I will die', 'en'], ['He has guns', 'en'], ['They were shooting', 'en'], ['You are stupid', 'en']])
     assert.ok(!safeLine(t, l), 'must be blocked: ' + t);
+});
+
+test('the world is an open book: things must stand on its pages (x -9..9, z -6.5..6.5)', async () => {
+  const at = (x, z) => thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(1, 1, 1), ctx.mat(1))); g.position.set(${x}, 0.5, ${z}); ctx.world.add(g);
+    return {};`);
+  assert.deepEqual((await buildCheck(at(8, 5.5))).problems, []);
+  assert.ok((await buildCheck(at(0, 6.7))).problems.some(p => p.includes('off the pages')));
+  assert.ok((await buildCheck(at(-9.2, 0))).problems.some(p => p.includes('off the pages')));
 });

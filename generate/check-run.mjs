@@ -10,7 +10,8 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const VIEWER = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'viewer');
-const ISLAND_R = 6.9;
+// the world is an open pop-up book: two pages, x -9..9 (spine at x = 0), z -6.5..6.5, ground y = 0 (= BOOK in place.mjs)
+const PAGE_X = 9, PAGE_Z = 6.5;
 const STATES = ['idle', 'walk', 'talk', 'wave', 'dance', 'sit', 'scared', 'highfive', 'lookup', 'yawn', 'stretch'];
 const out = process.stdout.write.bind(process.stdout);   // taken before the module can replace it
 
@@ -56,7 +57,7 @@ async function makeCtx() {
     },
   };
   return { THREE, world, bubble, shadowAll, mat, limb, rand, makePerson, water, waterUse, pond: { x: 0, z: 0, r: 0 }, trees: [],
-    SUN_POS: new THREE.Vector3(2.5, 6.8, -6.5), islandR: ISLAND_R, env, sound: { fx() {} } };
+    SUN_POS: new THREE.Vector3(2.5, 6.8, -6.5), islandR: 6.5, ground: { shape: 'rect', w: 2 * PAGE_X, d: 2 * PAGE_Z }, env, sound: { fx() {} } };
 }
 
 const num = v => typeof v === 'number' && Number.isFinite(v);
@@ -82,8 +83,8 @@ async function buildCheck(file, takenIds) {
     if (!meshes) problems.push('build() added nothing visible to ctx.world');
     else {
       info.box = { min: box.min.toArray().map(v => +v.toFixed(2)), max: box.max.toArray().map(v => +v.toFixed(2)) };
-      const reach = Math.max(...[box.min.x, box.max.x, box.min.z, box.max.z].map(Math.abs));
-      if (reach > ISLAND_R) problems.push(`reaches ${reach.toFixed(1)} from the centre; the island's radius is ${ISLAND_R}`);
+      if (Math.max(Math.abs(box.min.x), Math.abs(box.max.x)) > PAGE_X || Math.max(Math.abs(box.min.z), Math.abs(box.max.z)) > PAGE_Z)
+        problems.push(`stands off the pages (x ${box.min.x.toFixed(1)}..${box.max.x.toFixed(1)}, z ${box.min.z.toFixed(1)}..${box.max.z.toFixed(1)}); the open book is x -${PAGE_X}..${PAGE_X}, z -${PAGE_Z}..${PAGE_Z}`);
       if (box.min.y < -0.6) problems.push(`sinks into the ground (lowest point y=${box.min.y.toFixed(2)})`);
       if (box.max.y - box.min.y > 7) problems.push(`is ${(box.max.y - box.min.y).toFixed(1)} tall; a person is ~2.2`);
       if (box.max.y - box.min.y < 0.1) problems.push('is flat (under 0.1 tall)');
