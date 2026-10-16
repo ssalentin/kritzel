@@ -36,7 +36,8 @@ export function makeMoves({ THREE, R }) {
 
   return {
     // fly, climb, and swim where there is water, leave the grid
-    special: (a, env) => a.move === 'fly' || a.move === 'climb' || (a.move === 'swim' && env.water?.length > 0),
+    // (not while held: a creature in a cage walks the grid, where the hold keeps it in)
+    special: (a, env) => !a.hold && (a.move === 'fly' || a.move === 'climb' || (a.move === 'swim' && env.water?.length > 0)),
 
     setup(a) {
       const g = a.rig?.g;
