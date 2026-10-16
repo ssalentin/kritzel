@@ -231,8 +231,8 @@ export async function build(api, prevState = null) {
       if (later) later.push([file, entry, m?.meta]);           // at page load: placed once everything is there
       else place(file, entry, m?.meta, live);
     } catch (e) { report(`things/${file}: placing: ${e.message}`); }
-    bakeAO(THREE, entry.box);
-    if (entry.free) bakeAO(THREE, entry.free);
+    if (ORIGAMI) { origami(THREE, entry.box); if (entry.free) origami(THREE, entry.free); }
+    else { bakeAO(THREE, entry.box); if (entry.free) bakeAO(THREE, entry.free); }
     entry.base = entry.box.children.map(c => [c, c.scale.clone()]);   // true scales, before any grow-in
     entry.bornAt = clockNow;
     if (live) {                           // a drawing comes alive: the engine celebrates, the others come to look
@@ -407,5 +407,52 @@ function bakeAO(THREE, container) {
       g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
       for (const m of mats) { m.vertexColors = true; m.userData.ao = true; m.needsUpdate = true; }
     });
+  }
+}
+
+
+// ---------- preview: ?style=origami — every drawn thing as folded paper ----------
+// few large facets (primitives rebuilt with few segments, everything flat-shaded), matte paper
+// with a faint grain, and soft crease lines along the folds. Preview only: no thing has to cooperate.
+const ORIGAMI = new URLSearchParams(location.search).get('style') === 'origami';
+let grain = null;
+function paperGrain(THREE) {
+  if (grain) return grain;
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+  const g = cv.getContext('2d'), img = g.createImageData(128, 128);
+  for (let i = 0; i < img.data.length; i += 4) { const v = 236 + Math.random() * 19; img.data[i] = img.data[i + 1] = img.data[i + 2] = v; img.data[i + 3] = 255; }
+  g.putImageData(img, 0, 0);
+  grain = new THREE.CanvasTexture(cv); grain.wrapS = grain.wrapT = THREE.RepeatWrapping; grain.repeat.set(3, 3);
+  grain.colorSpace = THREE.SRGBColorSpace;
+  return grain;
+}
+function folded(THREE, geo) {
+  const p = geo.parameters || {};
+  switch (geo.type) {
+    case 'SphereGeometry': return new THREE.SphereGeometry(p.radius, 7, 5, p.phiStart, p.phiLength, p.thetaStart, p.thetaLength);
+    case 'CapsuleGeometry': return new THREE.CapsuleGeometry(p.radius, p.length, 2, 6);
+    case 'CylinderGeometry': return new THREE.CylinderGeometry(p.radiusTop, p.radiusBottom, p.height, Math.min(p.radialSegments, 6), 1, p.openEnded);
+    case 'ConeGeometry': return new THREE.ConeGeometry(p.radius, p.height, Math.min(p.radialSegments, 6), 1, p.openEnded);
+    case 'TorusGeometry': return new THREE.TorusGeometry(p.radius, p.tube, 4, Math.min(p.tubularSegments, 10), p.arc);
+    case 'LatheGeometry': return new THREE.LatheGeometry(p.points.filter((_, i, a) => i % 2 === 0 || i === a.length - 1), 7);
+    default: return null;
+  }
+}
+function origami(THREE, root) {
+  const tex = paperGrain(THREE);
+  const meshes = [];
+  root.traverse(o => { if (o.isMesh && !o.isInstancedMesh && o.geometry && !o.userData.water) meshes.push(o); });
+  for (const o of meshes) {
+    const mats = [].concat(o.material);
+    if (mats.some(m => m.transparent || m.isMeshBasicMaterial)) continue;   // water, glows, flames stay as they are
+    const nu = folded(THREE, o.geometry);
+    if (nu) { o.geometry.dispose(); o.geometry = nu; }
+    const paper = m => new THREE.MeshStandardMaterial({ color: (m.color || new THREE.Color(0xffffff)).clone().lerp(new THREE.Color(0xfff8ec), 0.12),
+      map: tex, flatShading: true, roughness: 0.95, metalness: 0, emissive: m.emissive?.clone?.() || 0x000000, emissiveIntensity: m.emissiveIntensity ?? 1 });
+    o.material = Array.isArray(o.material) ? o.material.map(paper) : paper(o.material);
+    const creases = new THREE.LineSegments(new THREE.EdgesGeometry(o.geometry, 28),
+      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 }));
+    creases.raycast = () => {};
+    o.add(creases);
   }
 }
