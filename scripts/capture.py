@@ -358,7 +358,7 @@ def main():
     done = sorted(OUT.glob("*.jpg"))
     previous = done[-1].name if done else None
     det = Detector(small(done[-1].read_bytes()) if done else None)
-    status, stream, url, seq, checked = Status(), None, None, 0, 0
+    status, stream, url, seq, checked, cam = Status(), None, None, 0, 0, None
     while True:
         if time.monotonic() - checked > 1:   # the picker may switch cameras at any time
             checked, cam = time.monotonic(), camera()
@@ -366,13 +366,14 @@ def main():
                 if stream:
                     stream.stop()
                 stream, url, seq, det.anchor = None, cam and cam[0], 0, None
-            if cam is None:
-                status.set("no-camera")
-                time.sleep(0.5)
-                continue
-            if stream is None:
-                print(f"watching {cam[1]['name']} on {cam[1]['host']}", flush=True)
-                stream = Stream(url[:-4] + ".mjpg")
+        if cam is None:                       # none chosen (or no camera.json): wait, and say so
+            status.set("no-camera")
+            time.sleep(0.5)
+            continue
+        if stream is None:
+            print(f"watching {cam[1]['name']} on {cam[1]['host']}", flush=True)
+            url = cam[0]
+            stream = Stream(url[:-4] + ".mjpg")
         px, seq = stream.next(seq)
         if px is None:
             if stream.error:
