@@ -47,7 +47,7 @@ function runSandboxed(mode, code, extra = []) {
   const dir = mkdtempSync(join(tmpdir(), 'kritzel-check-'));
   const file = join(dir, 'thing.mjs');
   writeFileSync(file, code);
-  const reads = [join(HERE, 'check-run.mjs'), join(HERE, 'node_modules', 'three'), join(HERE, 'package.json'), join(VIEWER, 'characters.js'), dir];
+  const reads = [join(HERE, 'check-run.mjs'), join(HERE, 'node_modules', 'three'), join(HERE, 'package.json'), join(VIEWER, 'characters.js'), join(VIEWER, 'dialogues.js'), dir];
   const args = ['--net', process.execPath, '--permission', ...reads.map(p => '--allow-fs-read=' + p), join(HERE, 'check-run.mjs'), mode, file, ...extra];
   return new Promise(ok => {
     const p = track(spawn('unshare', args, { stdio: ['ignore', 'pipe', 'pipe'], cwd: dir }));

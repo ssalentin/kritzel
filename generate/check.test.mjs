@@ -174,3 +174,11 @@ test('speech lines: German arrays or { de, en } twins of the same length', async
   assert.deepEqual((await buildCheck(withLines("{ greet: { de: ['Hallo!', 'Hi!'], en: ['Hello!', 'Hi!'] } }"))).problems, []);
   assert.ok((await buildCheck(withLines("{ greet: { de: ['Hallo!', 'Hi!'], en: ['Hello!'] } }"))).problems.some(p => p.includes('twin')));
 });
+
+test('a thing\'s own lines pass the child-safe filter too', async () => {
+  const withLines = lines => thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(0.4, 1, 0.4), ctx.mat(1))); ctx.world.add(g);
+    return { actors: [{ id: 'x1', name: 'X', rig: { kind: 'person', g, say() {} }, lines: ${lines} }] };`);
+  assert.deepEqual((await buildCheck(withLines("{ greet: { de: ['Ich mag Waffeln!'], en: ['I like waffles!'] } }"))).problems, []);
+  assert.ok((await buildCheck(withLines("{ chat: { de: ['Du bist dumm!'], en: ['You are nice!'] } }"))).problems.some(p => p.includes('not right for children')));
+  assert.ok((await buildCheck(withLines("{ chat: ['Hallo!', 'Ich hasse dich.'] }"))).problems.some(p => p.includes('not right for children')));
+});
