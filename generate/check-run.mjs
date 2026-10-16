@@ -106,6 +106,22 @@ async function buildCheck(file, takenIds) {
       ids.add(a.id);
       if (!a.rig?.g?.isObject3D) problems.push(`actor ${a.id}: rig.g must be its THREE.Group`);
       else { let inWorld = false; a.rig.g.traverseAncestors(p => { if (p === ctx.world) inWorld = true; }); if (!inWorld) problems.push(`actor ${a.id}: rig.g is not in ctx.world`); }
+      // the rig is only the body: a long straight pole or branch in it walks around with the creature
+      if (a.rig?.g?.isObject3D) {
+        const pole = [];
+        a.rig.g.updateMatrixWorld(true);
+        const at = a.rig.g.getWorldPosition(new THREE.Vector3());
+        a.rig.g.traverse(o => {
+          if (!o.isMesh || !/^(Cylinder|Box|Capsule)Geometry$/.test(o.geometry?.type)) return;
+          const b = new THREE.Box3().setFromObject(o), size = b.getSize(new THREE.Vector3()).toArray(), c = b.getCenter(new THREE.Vector3());
+          const long = Math.max(...size), axis = size.indexOf(long), mid = [...size].sort((p, q) => q - p)[1];
+          if (long < 1.3 || long < 8 * mid) return;               // a long straight body (a pencil, a snake) is fine
+          const bar = axis !== 1 && c.y - at.y > 0.8;              // lying high up: a branch or perch to hang or sit on
+          const post = axis === 1 && b.min.y - at.y < 0.15 && Math.hypot(c.x - at.x, c.z - at.z) > 0.6;   // down to the ground, away from its feet
+          if (bar || post) pole.push(long.toFixed(1));
+        });
+        if (pole.length) problems.push(`actor ${a.id}: its rig carries a long thin pole or branch (${pole.join(', ')} long), which would walk around with it; the rig is only the body: build what it hangs from, sits on or stands in as its own thing without actors`);
+      }
       if (typeof a.rig?.say !== 'function') problems.push(`actor ${a.id}: rig.say(text) is missing`);
       if (!a.rig?.kind) problems.push(`actor ${a.id}: rig.kind is missing`);
       if (a.move != null && !['walk', 'hop', 'crawl', 'fly', 'swim', 'climb'].includes(a.move)) problems.push(`actor ${a.id}: move must be 'walk', 'hop', 'crawl', 'fly', 'swim' or 'climb' (got ${JSON.stringify(a.move)})`);
