@@ -100,6 +100,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { createMood } from './mood.js';
 import { createStatus } from './status.js';
+import { GROUND } from './book.js';
 import { createStyle } from './style.js';
 import { t, lang, setLang, onLang } from './i18n.js';
 
@@ -119,7 +120,7 @@ const scene = new THREE.Scene();
 scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
 
 const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 300);
-camera.position.set(13, 5.8, 16.5);
+camera.position.set(16, 8.5, 20);       // the whole open book in the first view
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 0.6, 0);
 controls.enableDamping = true;
@@ -139,7 +140,7 @@ const sun = new THREE.DirectionalLight(0xfff1dc, 0.9);
 sun.position.set(8, 14, 6);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -11, right: 11, top: 11, bottom: -11 });
+Object.assign(sun.shadow.camera, { left: -14, right: 14, top: 14, bottom: -14 });   // covers the book's pages
 sun.shadow.bias = -0.0005;
 sun.shadow.radius = 8;
 sun.shadow.blurSamples = 16;
@@ -431,7 +432,7 @@ async function poll() {
       // only drawn things changed: reload just those, everyone else keeps going
       const changed = files.filter(f => thingStamps.get(f) !== stamps.get(f));
       const removed = [...thingStamps.keys()].filter(f => !stamps.has(f));
-      if (removed.length && !files.length) newWorldTransition();   // all things gone at once: a new sheet, a new world
+      if (removed.length && !files.length) await newWorldTransition();   // all things gone at once: a new sheet, a new world (page turn)
       if (morph && files.length) releaseMorph();                    // the first thing of the new world is here
       thingStamps = stamps;
       if ((changed.length || removed.length) && current.reloadThings) {
@@ -535,29 +536,50 @@ function followFocus() {
   controls.target.add(d); camera.position.add(d);
 }
 
-// ---------- new-world transition: old island shrinks away, veil, new island grows in ----------
+// ---------- new world = turning the page: the old things fold flat, a page turns over, a fresh page ----------
 const veil = document.getElementById('veil');
-// the veil stays up until the first drawn thing of the new world has arrived
-let morph = null;                      // { t0, release }
-function newWorldTransition(shrink = true) {
-  morph = { t0: performance.now() - (shrink ? 0 : 800), release: null };
-  veil.classList.add('on');
-  if (shrink) sound?.fx('melodie');
+// the veil ("a new world is being drawn") comes after the turn and stays until the first new thing is there
+let morph = null;                      // { t0, release, folds, sheet }
+function pageSheet() {                 // one page of paper, hinged at the spine, lying on the right page
+  const pivot = new THREE.Group(), w = GROUND.w / 2, d = GROUND.d;
+  const geo = new THREE.PlaneGeometry(w, d, 24, 1);
+  geo.rotateX(-Math.PI / 2); geo.translate(w / 2, 0, 0);
+  const sheet = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xf4ecdc, roughness: 0.95, side: THREE.DoubleSide }));
+  sheet.castShadow = true;
+  pivot.add(sheet);
+  pivot.position.y = 0.2;
+  scene.add(pivot);
+  return { pivot, geo, base: geo.attributes.position.array.slice() };
 }
-function releaseMorph() { if (morph && !morph.release) morph.release = Math.max(performance.now(), morph.t0 + 1200); }
+// returns once the old things lie flat, so they can be taken away (poll() awaits it)
+function newWorldTransition(turn = true) {
+  if (morph?.sheet) { scene.remove(morph.sheet.pivot); morph.sheet.geo.dispose(); }   // a turn already running: drop its page
+  morph = { t0: performance.now() - (turn ? 0 : 2000), release: null, folds: [], sheet: null };
+  if (!turn) { veil.classList.add('on'); return Promise.resolve(); }
+  sound?.fx('melodie');
+  for (const box of world.children) if (!box.userData.book) for (const o of box.children) morph.folds.push([o, o.rotation.x]);
+  morph.sheet = pageSheet();
+  return new Promise(ok => setTimeout(ok, 750));
+}
+function releaseMorph() { if (morph && !morph.release) morph.release = Math.max(performance.now(), morph.t0 + 2000); }
 function stepMorph() {
   if (!morph) return;
   const now = performance.now(), t = (now - morph.t0) / 1000;
-  let s = 0;
-  if (t < 0.8) s = 1 - (t / 0.8) ** 2;                       // shrink away
-  if (morph.release && now >= morph.release) {
-    const k = Math.min(1, (now - morph.release) / 1200);      // grow back with a little bounce
-    s = 1 + Math.sin(k * Math.PI) * 0.12 * (1 - k) - (1 - k) ** 3;
-    veil.classList.remove('on');
-    if (k >= 1) { s = 1; morph = null; }
+  const fold = Math.min(1, t / 0.7);                          // the old things fold flat onto the page
+  for (const [o, rx] of morph.folds) o.rotation.x = rx - (1 - (1 - fold) ** 2) * Math.PI / 2;
+  if (morph.sheet) {                                          // the page turns over, from the right page to the left
+    const k = Math.min(1, Math.max(0, (t - 0.6) / 1.3)), e = k * k * (3 - 2 * k);
+    const { pivot, geo, base } = morph.sheet, pos = geo.attributes.position;
+    pivot.rotation.z = e * Math.PI;
+    for (let i = 0; i < pos.count; i++) {                     // it bends while it is in the air
+      const x = base[i * 3];
+      pos.setY(i, Math.sin(e * Math.PI) * 0.35 * (x / (GROUND.w / 2)) ** 2 * -1);
+    }
+    pos.needsUpdate = true;
+    if (k >= 1) { scene.remove(pivot); geo.dispose(); pivot.children[0].material.dispose(); morph.sheet = null; }
   }
-  world.scale.setScalar(Math.max(0.0001, s));
-  world.rotation.y = (1 - Math.min(1, s)) * 1.2;
+  if (t > 1.9 && !morph.release) veil.classList.add('on');
+  if (morph.release && now >= morph.release) { veil.classList.remove('on'); morph = null; }
 }
 
 const clock = new THREE.Clock();

@@ -32,7 +32,7 @@ test('a creature without its own animation, a duplicate id, and a thing off the 
   const { problems } = await buildCheck(blob, { takenIds: ['schnecke'] });
   assert.ok(problems.some(p => p.includes('already taken')), problems.join('\n'));
   assert.ok(problems.some(p => p.includes('no rig.animate')), problems.join('\n'));
-  assert.ok(problems.some(p => p.includes('island')), problems.join('\n'));
+  assert.ok(problems.some(p => p.includes('off the pages')), problems.join('\n'));
 });
 
 test('a build that throws or adds nothing is caught', async () => {
@@ -157,4 +157,35 @@ test('dialogue filter: whole words only, per language (issue #12)', async () => 
   for (const [t, l] of [['Der Vogel ist tot.', 'de'], ['Du bist so dumm!', 'de'], ['So ein scheiß Tag', 'de'], ['Er hat Waffen.', 'de'], ['Du Idiot!', 'de'], ['Scheißding!', 'de'],
     ['Blut überall', 'de'], ['I will die', 'en'], ['He has guns', 'en'], ['They were shooting', 'en'], ['You are stupid', 'en']])
     assert.ok(!safeLine(t, l), 'must be blocked: ' + t);
+});
+
+test('the world is an open book: things must stand on its pages (x -9..9, z -6.5..6.5)', async () => {
+  const at = (x, z) => thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(1, 1, 1), ctx.mat(1))); g.position.set(${x}, 0.5, ${z}); ctx.world.add(g);
+    return {};`);
+  assert.deepEqual((await buildCheck(at(8, 5.5))).problems, []);
+  assert.ok((await buildCheck(at(0, 6.7))).problems.some(p => p.includes('off the pages')));
+  assert.ok((await buildCheck(at(-9.2, 0))).problems.some(p => p.includes('off the pages')));
+});
+
+test('speech lines: German arrays or { de, en } twins of the same length', async () => {
+  const withLines = lines => thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(0.4, 1, 0.4), ctx.mat(1))); ctx.world.add(g);
+    return { actors: [{ id: 'x1', name: 'X', rig: { kind: 'person', g, say() {} }, lines: ${lines} }] };`);
+  assert.deepEqual((await buildCheck(withLines("{ greet: ['Hallo!'] }"))).problems, []);
+  assert.deepEqual((await buildCheck(withLines("{ greet: { de: ['Hallo!', 'Hi!'], en: ['Hello!', 'Hi!'] } }"))).problems, []);
+  assert.ok((await buildCheck(withLines("{ greet: { de: ['Hallo!', 'Hi!'], en: ['Hello!'] } }"))).problems.some(p => p.includes('twin')));
+});
+
+test('actor move: one of walk, hop, crawl, fly, swim, climb', async () => {
+  const mv = m => thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(0.4, 1, 0.4), ctx.mat(1))); ctx.world.add(g);
+    return { actors: [{ id: 'v1', name: 'Vogel', move: ${m}, rig: { kind: 'person', g, say() {} } }] };`);
+  assert.deepEqual((await buildCheck(mv("'fly'"))).problems, []);
+  assert.ok((await buildCheck(mv("'teleport'"))).problems.some(p => p.includes('move must be')));
+});
+
+test('a thing\'s own lines pass the child-safe filter too', async () => {
+  const withLines = lines => thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(0.4, 1, 0.4), ctx.mat(1))); ctx.world.add(g);
+    return { actors: [{ id: 'x1', name: 'X', rig: { kind: 'person', g, say() {} }, lines: ${lines} }] };`);
+  assert.deepEqual((await buildCheck(withLines("{ greet: { de: ['Ich mag Waffeln!'], en: ['I like waffles!'] } }"))).problems, []);
+  assert.ok((await buildCheck(withLines("{ chat: { de: ['Du bist dumm!'], en: ['You are nice!'] } }"))).problems.some(p => p.includes('not right for children')));
+  assert.ok((await buildCheck(withLines("{ chat: ['Hallo!', 'Ich hasse dich.'] }"))).problems.some(p => p.includes('not right for children')));
 });

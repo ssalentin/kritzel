@@ -26,7 +26,7 @@ export function createStatus({ THREE, scene, el, world, banner }) {
   let st = null, lastView = '', viewSince = 0, prevCap = null, connectedAt = 0;
   const lights = new Map();          // frame → { g, light, orb, halo, sparks, spot, born, dying, claimed }
   const glow = glowTexture(THREE);
-  const growing = [];                // things that just arrived, growing out of their light
+  const growing = [];                // things that just arrived, folding up out of the page
   const bursts = [];                 // paper confetti flying out of them
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);   // reused every frame
   let lastTick = performance.now();
@@ -49,8 +49,8 @@ export function createStatus({ THREE, scene, el, world, banner }) {
   // where generate puts a thing for this changed_box (same mapping as generate/generate.mjs cropOf),
   // and roughly how much room it will need
   function placeOf({ box: [x, y, w, h], width: W, height: H }) {
-    let ix = ((x + w / 2) / W - 0.5) * 9, iz = ((y + h / 2) / H - 0.5) * 7;
-    ix = Math.max(-6.3, Math.min(6.3, ix)); iz = Math.max(-4.3, Math.min(4.3, iz));   // on the book's pages
+    // the whole frame onto the whole pages (as world.js fromPaper does)
+    const ix = Math.max(-8.3, Math.min(8.3, ((x + w / 2) / W - 0.5) * 16.6)), iz = Math.max(-6, Math.min(6, ((y + h / 2) / H - 0.5) * 12));
     return { x: ix, z: iz, r: Math.min(1.8, Math.max(0.6, (Math.max(w / W, h / H)) * 4.5 * 0.4)) };
   }
 
@@ -159,8 +159,9 @@ export function createStatus({ THREE, scene, el, world, banner }) {
       const b = new THREE.Box3().setFromObject(box);
       if (!b.isEmpty()) confetti(foot?.x ?? (b.min.x + b.max.x) / 2, Math.min(b.max.y, 3), foot?.z ?? (b.min.z + b.max.z) / 2);
       if (banner && name) { banner.textContent = `${name.length > 24 ? name.slice(0, 23) + '…' : name}!`; banner.classList.remove('on'); void banner.offsetWidth; banner.classList.add('on'); }
-      const kids = box.children.map(o => [o, o.scale.clone()]);
-      for (const [o] of kids) o.scale.multiplyScalar(0.001);
+      // pop-up: each piece lies flat on the page and folds up, hinged at its base (its own origin)
+      const kids = box.children.map(o => [o, o.rotation.x]);
+      for (const [o, rx] of kids) o.rotation.x = rx - Math.PI / 2;
       growing.push({ kids, born: performance.now() });
     },
     // every frame: the pill's seconds counter, lights pulsing and fading, new things growing
@@ -204,9 +205,9 @@ export function createStatus({ THREE, scene, el, world, banner }) {
         l.sparks.material.opacity = 0.9 * k;
       }
       for (let i = growing.length - 1; i >= 0; i--) {
-        const gr = growing[i], u = Math.min(1, (now - gr.born) / 700);
-        const k = 1 + Math.sin(u * Math.PI) * 0.18 * (1 - u) - (1 - u) ** 3;   // grows with a little bounce
-        for (const [o, s] of gr.kids) o.scale.copy(s).multiplyScalar(Math.max(0.001, k));
+        const gr = growing[i], u = Math.min(1, (now - gr.born) / 800);
+        const k = 1 + Math.sin(u * Math.PI) * 0.12 * (1 - u) - (1 - u) ** 3;   // folds up, a little past upright and back
+        for (const [o, rx] of gr.kids) o.rotation.x = rx - (1 - k) * Math.PI / 2;
         if (u >= 1) growing.splice(i, 1);
       }
     },

@@ -1,9 +1,11 @@
-// paper position (0..1, top-left origin) → island (x, z): the paper's top is the island's back (-z)
+// The world is an open pop-up book (viewer/book.js): two pages x -BOOK.x..BOOK.x (spine at x = 0),
+// z -BOOK.z..BOOK.z, ground y = 0. The paper frame fills both pages, mapped the same way the viewer does.
+// (check-run.mjs runs sandboxed and keeps its own copy of BOOK.x / BOOK.z.)
+export const BOOK = { x: 9, z: 6.5, kx: 16.6, kz: 12, cx: 8.3, cz: 6 };
+// paper position (0..1, top-left origin) → the book's pages (x, z); the paper's top is the far edge (-z)
 export function islandOf(px, py) {
-  let ix = (px - 0.5) * 9, iz = (py - 0.5) * 7;
-  const r = Math.hypot(ix, iz);
-  if (r > 5) { ix *= 5 / r; iz *= 5 / r; }
-  return [+ix.toFixed(2), +iz.toFixed(2)];
+  const x = Math.min(BOOK.cx, Math.max(-BOOK.cx, (px - 0.5) * BOOK.kx)), z = Math.min(BOOK.cz, Math.max(-BOOK.cz, (py - 0.5) * BOOK.kz));
+  return [+x.toFixed(2), +z.toFixed(2)];
 }
 
 // a paper position (0..1 of the frame) moved by capture's sheet transform: affine [a, b, c, d, e, f]

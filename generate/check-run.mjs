@@ -10,7 +10,8 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const VIEWER = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'viewer');
-const ISLAND_R = 6.9;
+// the world is an open pop-up book: two pages, x -9..9 (spine at x = 0), z -6.5..6.5, ground y = 0 (= BOOK in place.mjs)
+const PAGE_X = 9, PAGE_Z = 6.5;
 const STATES = ['idle', 'walk', 'talk', 'wave', 'dance', 'sit', 'scared', 'highfive', 'lookup', 'yawn', 'stretch'];
 const out = process.stdout.write.bind(process.stdout);   // taken before the module can replace it
 
@@ -56,7 +57,7 @@ async function makeCtx() {
     },
   };
   return { THREE, world, bubble, shadowAll, mat, limb, rand, makePerson, water, waterUse, pond: { x: 0, z: 0, r: 0 }, trees: [],
-    SUN_POS: new THREE.Vector3(2.5, 6.8, -6.5), islandR: ISLAND_R, env, sound: { fx() {} } };
+    SUN_POS: new THREE.Vector3(2.5, 6.8, -6.5), islandR: 6.5, ground: { shape: 'rect', w: 2 * PAGE_X, d: 2 * PAGE_Z }, env, sound: { fx() {} } };
 }
 
 const num = v => typeof v === 'number' && Number.isFinite(v);
@@ -82,8 +83,8 @@ async function buildCheck(file, takenIds) {
     if (!meshes) problems.push('build() added nothing visible to ctx.world');
     else {
       info.box = { min: box.min.toArray().map(v => +v.toFixed(2)), max: box.max.toArray().map(v => +v.toFixed(2)) };
-      const reach = Math.max(...[box.min.x, box.max.x, box.min.z, box.max.z].map(Math.abs));
-      if (reach > ISLAND_R) problems.push(`reaches ${reach.toFixed(1)} from the centre; the island's radius is ${ISLAND_R}`);
+      if (Math.max(Math.abs(box.min.x), Math.abs(box.max.x)) > PAGE_X || Math.max(Math.abs(box.min.z), Math.abs(box.max.z)) > PAGE_Z)
+        problems.push(`stands off the pages (x ${box.min.x.toFixed(1)}..${box.max.x.toFixed(1)}, z ${box.min.z.toFixed(1)}..${box.max.z.toFixed(1)}); the open book is x -${PAGE_X}..${PAGE_X}, z -${PAGE_Z}..${PAGE_Z}`);
       if (box.min.y < -0.6) problems.push(`sinks into the ground (lowest point y=${box.min.y.toFixed(2)})`);
       if (box.max.y - box.min.y > 7) problems.push(`is ${(box.max.y - box.min.y).toFixed(1)} tall; a person is ~2.2`);
       if (box.max.y - box.min.y < 0.1) problems.push('is flat (under 0.1 tall)');
@@ -105,6 +106,7 @@ async function buildCheck(file, takenIds) {
       else { let inWorld = false; a.rig.g.traverseAncestors(p => { if (p === ctx.world) inWorld = true; }); if (!inWorld) problems.push(`actor ${a.id}: rig.g is not in ctx.world`); }
       if (typeof a.rig?.say !== 'function') problems.push(`actor ${a.id}: rig.say(text) is missing`);
       if (!a.rig?.kind) problems.push(`actor ${a.id}: rig.kind is missing`);
+      if (a.move != null && !['walk', 'hop', 'crawl', 'fly', 'swim', 'climb'].includes(a.move)) problems.push(`actor ${a.id}: move must be 'walk', 'hop', 'crawl', 'fly', 'swim' or 'climb' (got ${JSON.stringify(a.move)})`);
       if (a.rig?.kind && a.rig.kind !== 'person' && typeof a.rig.animate !== 'function')
         problems.push(`actor ${a.id}: kind "${a.rig.kind}" has no rig.animate, so the sim would animate it as a person with arms and legs it lacks`);
       if (a.start && !(Array.isArray(a.start) && a.start.length === 2 && a.start.every(num))) problems.push(`actor ${a.id}: start must be [x, z]`);
@@ -115,6 +117,20 @@ async function buildCheck(file, takenIds) {
         }
       }
     }
+    // speech: each lines group is a German array (old shape) or { de: [...], en: [...] } of the same length
+    // everything a character can say passes the same child-safe filter as the dialogues (viewer/dialogues.js)
+    const { safeLine } = await import(pathToFileURL(join(VIEWER, 'dialogues.js')).href);
+    const unsafe = (list, lang) => list.filter(x => typeof x === 'string' && !safeLine(x, lang));
+    const linesOk = (g, where) => {
+      const bad = Array.isArray(g) ? unsafe(g, 'de') : g && typeof g === 'object' ? [...unsafe(g.de || [], 'de'), ...unsafe(g.en || [], 'en')] : [];
+      if (bad.length) problems.push(`${where}: not right for children: ${bad.map(x => JSON.stringify(x)).join(', ')}`);
+      if (Array.isArray(g)) return g.every(x => typeof x === 'string') || problems.push(`${where}: lines must be strings`);
+      if (!g || typeof g !== 'object' || !Array.isArray(g.de) || !Array.isArray(g.en)) return problems.push(`${where}: lines need { de: [...], en: [...] }`);
+      if (g.de.length !== g.en.length) problems.push(`${where}: ${g.de.length} German but ${g.en.length} English lines; give each line its twin`);
+      if (![...g.de, ...g.en].every(x => typeof x === 'string' && x.length <= 120)) problems.push(`${where}: lines must be short strings`);
+    };
+    for (const a of actors) for (const [k, g] of Object.entries(a?.lines || {})) linesOk(g, `actor ${a?.id} lines.${k}`);
+    for (const sp of spots) if (sp?.lines) linesOk(sp.lines, `spot ${sp.kind} lines`);
     for (const o of obstacles) if (!num(o?.x) || !num(o?.z) || !num(o?.r)) { problems.push('obstacles need numeric { x, z, r }'); break; }
     for (const s of spots) if (!s?.kind || !num(s?.x) || !num(s?.z)) { problems.push('spots need { kind, x, z }'); break; }
     // holds: this thing keeps an actor (its own or another thing's) inside a circle, e.g. a jail around the spider

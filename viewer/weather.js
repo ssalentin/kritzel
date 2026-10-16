@@ -6,6 +6,8 @@
 const KINDS = ['rain', 'snow', 'rainbow', 'lightning'];
 const EASE_S = 1.5;
 
+import { groundY } from './book.js';
+
 export function createWeather({ THREE, scene }) {
   const wanted = new Map();                    // thing id → Set of kinds
   const level = { rain: 0, snow: 0, rainbow: 0, lightning: 0 };
@@ -14,14 +16,14 @@ export function createWeather({ THREE, scene }) {
 
   // rain: short streaks falling fast over the island
   const nRain = 600, rainPos = new Float32Array(nRain * 6), drops = [];
-  for (let i = 0; i < nRain; i++) drops.push({ x: (rnd() - 0.5) * 18, z: (rnd() - 0.5) * 18, y: rnd() * 12, v: 9 + rnd() * 3 });
+  for (let i = 0; i < nRain; i++) drops.push({ x: (rnd() - 0.5) * 22, z: (rnd() - 0.5) * 22, y: rnd() * 12, v: 9 + rnd() * 3 });
   const rain = new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(rainPos, 3)),
     new THREE.LineBasicMaterial({ color: 0xbcd6ff, transparent: true, opacity: 0, depthWrite: false }));
   rain.frustumCulled = false;
 
   // snow: flakes drifting down slowly
   const nSnow = 450, snowPos = new Float32Array(nSnow * 3), flakes = [];
-  for (let i = 0; i < nSnow; i++) flakes.push({ x: (rnd() - 0.5) * 18, z: (rnd() - 0.5) * 18, y: rnd() * 12, v: 0.6 + rnd() * 0.6, p: rnd() * 6 });
+  for (let i = 0; i < nSnow; i++) flakes.push({ x: (rnd() - 0.5) * 22, z: (rnd() - 0.5) * 22, y: rnd() * 12, v: 0.6 + rnd() * 0.6, p: rnd() * 6 });
   const snow = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(snowPos, 3)),
     new THREE.PointsMaterial({ color: 0xffffff, size: 0.09, transparent: true, opacity: 0, depthWrite: false }));
   snow.frustumCulled = false;
@@ -32,7 +34,8 @@ export function createWeather({ THREE, scene }) {
   for (let i = 0; i < 7; i++) {
     const m = new THREE.Mesh(new THREE.CircleGeometry(0.35 + rnd() * 0.45, 20), puddleMat);
     m.rotation.x = -Math.PI / 2; m.scale.set(1, 0.6 + rnd() * 0.4, 1);
-    m.position.set((rnd() - 0.5) * 11, 0.03, (rnd() - 0.5) * 7.5);   // on the book's pages (14 × 10)
+    const px = (rnd() - 0.5) * 15;
+    m.position.set(px, groundY(px) + 0.03, (rnd() - 0.5) * 10);       // on the book's pages (18 × 13), on their curve
     puddles.add(m);
   }
 
@@ -79,7 +82,7 @@ export function createWeather({ THREE, scene }) {
     rain.visible = level.rain > 0.01;
     if (rain.visible) drops.forEach((d, i) => {
       d.y -= d.v * dt;
-      if (d.y < 0) { d.y = 11 + rnd() * 2; d.x = (rnd() - 0.5) * 18; d.z = (rnd() - 0.5) * 18; }
+      if (d.y < 0) { d.y = 11 + rnd() * 2; d.x = (rnd() - 0.5) * 22; d.z = (rnd() - 0.5) * 22; }
       const j = i * 6;                         // straight into the buffer: no array per drop per frame
       rainPos[j] = d.x; rainPos[j + 1] = d.y; rainPos[j + 2] = d.z; rainPos[j + 3] = d.x - 0.03; rainPos[j + 4] = d.y + 0.35; rainPos[j + 5] = d.z;
     });
@@ -89,7 +92,7 @@ export function createWeather({ THREE, scene }) {
     snow.visible = level.snow > 0.01;
     if (snow.visible) flakes.forEach((f, i) => {
       f.y -= f.v * dt;
-      if (f.y < 0) { f.y = 11 + rnd() * 2; f.x = (rnd() - 0.5) * 18; f.z = (rnd() - 0.5) * 18; }
+      if (f.y < 0) { f.y = 11 + rnd() * 2; f.x = (rnd() - 0.5) * 22; f.z = (rnd() - 0.5) * 22; }
       snowPos[i * 3] = f.x + Math.sin(t * 0.8 + f.p) * 0.3; snowPos[i * 3 + 1] = f.y; snowPos[i * 3 + 2] = f.z + Math.cos(t * 0.6 + f.p) * 0.3;
     });
     snow.geometry.attributes.position.needsUpdate = snow.visible;

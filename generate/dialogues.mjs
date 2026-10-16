@@ -25,14 +25,14 @@ export function castOf(thingsDir) {
   return cast;
 }
 
-const SYSTEM = `You write short dialogues for Kritzel, a living island of characters children drew on paper.
+const SYSTEM = `You write short dialogues for Kritzel, a living pop-up book of characters children drew on paper.
 Reply with JSON only: { "dialogues": [ { "between": [nameA, nameB], "end": "stroll" | "dance" | "tag" | "look" | null, "turns": [ { "who": nameA or nameB, "de": German line, "en": English line } ] } ] }.
-Each dialogue: 3 to 5 turns, the two take turns, every line answers the one before, and together they make a tiny scene that fits these two (what they are, what they look like) and can end in something they do together ("end"). Lines are short (at most 60 characters), warm, playful and right for small children: no violence, no insults, nothing scary beyond a friendly "boo". German first, natural for children; "en" is short child-friendly English, not a word-for-word copy. Use the characters' names as given.`;
+Each dialogue: 3 to 5 turns, the two take turns, every line answers the one before, and together they make a tiny scene that fits these two (what they are, what they look like) and can end in something they do together ("end"). Lines are short (at most 60 characters), warm, playful and right for small children: no violence, no insults, nothing scary beyond a friendly "boo". German first, natural for children; "en" is short child-friendly English, not a word-for-word copy. Use the characters' names as given. They all live on the open pages of a big pop-up book: when a line mentions where they are, it is the book or its pages, never an island.`;
 
 export async function makePool({ thingsDir = join(ROOT, 'viewer', 'things'), count = 12, model = POOL_MODEL } = {}) {
   const cast = castOf(thingsDir);
   if (cast.length < 2) return { written: 0, reason: 'fewer than two characters' };
-  const text = `The characters on the island now:\n${cast.map(c => `- ${c.name}: ${c.drawing}`).join('\n')}\n\nWrite ${count} dialogues, spread over different pairs of these characters.`;
+  const text = `The characters in the book now:\n${cast.map(c => `- ${c.name}: ${c.drawing}`).join('\n')}\n\nWrite ${count} dialogues, spread over different pairs of these characters.`;
   const t0 = Date.now();
   const r = await oneShot({ system: SYSTEM, text, images: [], model, effort: 'low' });
   let list = [];
