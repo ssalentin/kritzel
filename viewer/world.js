@@ -280,7 +280,7 @@ export async function build(api, prevState = null) {
     if (entry.free) { world.remove(entry.free); entry.free.traverse(o => { o.geometry?.dispose(); [].concat(o.material || []).forEach(m => m.dispose()); }); }
     entry.box.traverse(o => {
       o.geometry?.dispose();
-      if (o.material) [].concat(o.material).forEach(m => { m.map?.dispose(); m.dispose(); });
+      if (o.material) [].concat(o.material).forEach(m => { if (!m.map?.userData?.shared) m.map?.dispose(); m.dispose(); });
     });
     loaded.delete(file);
   }
@@ -428,8 +428,8 @@ function bakeAO(THREE, container) {
 // ---------- preview: ?style=origami — every drawn thing as folded paper ----------
 // few large facets (primitives rebuilt with few segments, everything flat-shaded), matte paper
 // with a faint grain, and soft crease lines along the folds. Preview only: no thing has to cooperate.
-// the look of drawn things: coloured pencil by default; ?style=plain|cutout|origami to compare
-const STYLE = new URLSearchParams(location.search).get('style') || 'crayon';
+// the look of drawn things: coloured pencil by default; ?look=plain|cutout|origami to compare
+const STYLE = new URLSearchParams(location.search).get('look') || 'crayon';   // separate from ?style=paper, so both combine
 const ORIGAMI = STYLE === 'origami';
 let grain = null;
 function paperGrain(THREE) {
@@ -439,6 +439,7 @@ function paperGrain(THREE) {
   for (let i = 0; i < img.data.length; i += 4) { const v = 236 + Math.random() * 19; img.data[i] = img.data[i + 1] = img.data[i + 2] = v; img.data[i + 3] = 255; }
   g.putImageData(img, 0, 0);
   grain = new THREE.CanvasTexture(cv); grain.wrapS = grain.wrapT = THREE.RepeatWrapping; grain.repeat.set(3, 3);
+  grain.userData.shared = true;
   grain.colorSpace = THREE.SRGBColorSpace;
   return grain;
 }
@@ -513,23 +514,19 @@ function cutout(THREE, root) {
 // ---------- preview: ?style=crayon — things that look drawn with coloured pencil ----------
 // a stroke texture per colour (diagonal pencil strokes with paper showing through) and a dark
 // pencil outline. Stand-in for the child's real strokes from the frame.
-const crayonTex = new Map();
-function crayonStrokes(THREE, color) {
-  // colours are rounded to 32 steps per channel, so a world never holds more than a few dozen textures
-  const q = color.clone(); q.r = Math.round(q.r * 31) / 31; q.g = Math.round(q.g * 31) / 31; q.b = Math.round(q.b * 31) / 31;
-  const key = q.getHexString();
-  if (crayonTex.has(key)) return crayonTex.get(key);
-  color = q;
+let crayonTex = null;
+function crayonStrokes(THREE) {
+  if (crayonTex) return crayonTex;
+  // grey pencil strokes on white: the material colour multiplies it, so one texture serves every colour
   const cv = document.createElement('canvas'); cv.width = cv.height = 512;
   const g = cv.getContext('2d');
-  g.fillStyle = '#fbf7ee'; g.fillRect(0, 0, 512, 512);
-  const c = color.clone(), dark = c.clone().multiplyScalar(0.7);
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, 512, 512);
   for (let pass = 0; pass < 2; pass++) {
-    const ang = pass ? -0.7 : 0.85;
-    g.save(); g.translate(256, 256); g.rotate(ang); g.translate(-400, -400);
+    g.save(); g.translate(256, 256); g.rotate(pass ? -0.7 : 0.85); g.translate(-400, -400);
     for (let i = 0; i < 260; i++) {
       const y = i * 3.1 + Math.random() * 2, x0 = Math.random() * 60, len = 600 + Math.random() * 200;
-      g.strokeStyle = `#${(Math.random() < 0.25 ? dark : c).getHexString()}`;
+      const v = Math.round(150 + Math.random() * 70);
+      g.strokeStyle = `rgb(${v},${v},${v})`;
       g.globalAlpha = 0.35 + Math.random() * 0.45; g.lineWidth = 1.5 + Math.random() * 2.5;
       g.beginPath(); g.moveTo(x0, y);
       for (let x = x0; x < x0 + len; x += 40) g.lineTo(x, y + Math.sin(x * 0.03 + i) * 1.6);
@@ -537,14 +534,14 @@ function crayonStrokes(THREE, color) {
     }
     g.restore();
   }
-  const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(2, 2);
-  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
-  crayonTex.set(key, t);
-  return t;
+  crayonTex = new THREE.CanvasTexture(cv); crayonTex.wrapS = crayonTex.wrapT = THREE.RepeatWrapping; crayonTex.repeat.set(2, 2);
+  crayonTex.colorSpace = THREE.SRGBColorSpace; crayonTex.anisotropy = 8;
+  crayonTex.userData.shared = true;               // used by every thing: never disposed with one of them
+  return crayonTex;
 }
 function crayon(THREE, root) {
   for (const o of styleable(root)) {
-    const drawn = m => new THREE.MeshStandardMaterial({ map: crayonStrokes(THREE, m.color || new THREE.Color(0xffffff)), roughness: 1, metalness: 0,
+    const drawn = m => new THREE.MeshStandardMaterial({ map: crayonStrokes(THREE), color: (m.color || new THREE.Color(0xffffff)).clone().lerp(new THREE.Color(0xffffff), 0.08), roughness: 1, metalness: 0,
       emissive: m.emissive?.clone?.() || 0x000000, emissiveIntensity: m.emissiveIntensity ?? 1 });
     o.material = Array.isArray(o.material) ? o.material.map(drawn) : drawn(o.material);
     shell(THREE, o, 0x2a2622, 0.03);               // the pencil line round the outside

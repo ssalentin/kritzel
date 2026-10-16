@@ -381,7 +381,7 @@ window.__render = () => style.render();   // one frame on demand (tests that ste
 function clearWorld() {
   world.traverse(o => {
     if (o.geometry) o.geometry.dispose();
-    if (o.material) [].concat(o.material).forEach(m => { m.map?.dispose(); m.dispose(); });
+    if (o.material) [].concat(o.material).forEach(m => { if (!m.map?.userData?.shared) m.map?.dispose(); m.dispose(); });
   });
   world.clear();
 }
