@@ -80,10 +80,11 @@ export function createStatus({ THREE, scene, el, world, banner }) {
     lights.set(last.frame, { g, light, orb, halo, sparks, spot: { ...spot, r: want.r }, born: performance.now(), dying: 0, claimed: false });
   }
 
-  function retire(frame) {
+  function retire(frame, fast = false) {
     const l = lights.get(frame);
-    if (l && !l.dying) l.dying = performance.now();
+    if (l && !l.dying) { l.dying = performance.now(); l.fadeMs = fast ? 250 : 1000; }
   }
+
 
   function drop(frame) {
     const l = lights.get(frame);
@@ -140,7 +141,10 @@ export function createStatus({ THREE, scene, el, world, banner }) {
       const last = c.last;
       if (Array.isArray(last?.box) && !lights.has(last.frame) && next.now - last.at < 30 && st !== null) addLight(last);
       // its thing has been built (or nothing could be made of it): the light fades
-      if (['new', 'changed', 'unclear', 'failed'].includes(g.state) && g.frame) retire(g.frame);
+      if (['new', 'changed', 'failed'].includes(g.state) && g.frame) retire(g.frame);
+      // nothing new after all (a nudged sheet, a shadow): generate says so (triage 'none' → idle, or
+      // unclear) and the light goes out at once instead of glowing on for a thing that never comes
+      if (g.frame && (g.state === 'idle' || g.state === 'unclear' || g.triage?.kind === 'none')) retire(g.frame, true);
       st = next;
       render();
     },
@@ -187,7 +191,7 @@ export function createStatus({ THREE, scene, el, world, banner }) {
         const pop = Math.min(1, (now - l.born) / 500);
         let k = 1 + Math.sin(pop * Math.PI) * 0.15 * (1 - pop) - (1 - pop) ** 3;
         if (l.dying) {
-          const d = Math.min(1, (now - l.dying) / 1000);
+          const d = Math.min(1, (now - l.dying) / (l.fadeMs || 1000));
           k *= 1 - d;
           if (d >= 1) { drop(frame); continue; }
         }
