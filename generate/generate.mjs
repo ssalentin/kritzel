@@ -247,7 +247,7 @@ async function watch(dir, opts) {
       const names = r.written.map(w => w.name).join(', ');
       if (r.error) status('failed', newest, r.error.slice(0, 80));
       else if (r.written.length) status(r.written.every(w => w.kind === 'UPDATE') ? 'changed' : 'new', newest, names);
-      else status(r.removed.length ? 'changed' : 'unclear', newest, r.removed.length ? 'entfernt' : '');
+      else status(r.removed.length ? 'changed' : 'unclear', newest, r.removed.length ? 'removed' : '');
       if (!r.error) { last = lastGenerated = newest; tries = 0; movedSince = false; continue; }
       // claude missing for a moment: Claude Code updates itself in place (the binary is replaced), so
       // pinning its path at startup would not help; wait and try the same frame again, not counted
