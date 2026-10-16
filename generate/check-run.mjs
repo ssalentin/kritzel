@@ -129,6 +129,10 @@ async function buildCheck(file, takenIds) {
       if (h?.at != null && !(Array.isArray(h.at) && h.at.length === 3 && h.at.every(num))) problems.push('heldBy.at must be [x, y, z] (right, up, forward from the actor)');
       if (meshes && Math.max(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z) > 4) problems.push('a held thing must be hand-sized (under 4 across, beam included), built around (0, 0, 0)');
     }
+    // weather (the engine's weather contract): { kind } or a list
+    for (const w of [].concat(r.weather ?? [])) {
+      if (!['rain', 'snow', 'rainbow', 'lightning'].includes(w?.kind)) problems.push(`weather.kind must be 'rain', 'snow', 'rainbow' or 'lightning' (got ${JSON.stringify(w?.kind)})`);
+    }
     // light (the engine's light contract): one object or a list of { kind, object3D, color, intensity, range, flicker }
     const lights = r.light == null ? [] : [].concat(r.light);
     for (const l of lights) {
