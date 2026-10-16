@@ -619,15 +619,14 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, states
           else if (a.partner) a.face = Math.atan2(a.partner.pos.x - a.pos.x, a.partner.pos.z - a.pos.z);
           a.alt = a.move === 'hop' && moving ? Math.abs(Math.sin(now * 8 * a.speed)) * 0.3 : 0;   // hoppers bounce along
         }
-        if (a.lift) a.lift.position.y = a.alt;
+        const j = now - (a.jumpAt ?? -9);       // tapped: one hop on the lift, under whatever animate() does
+        if (a.lift) a.lift.position.y = a.alt + (j < 0.6 ? Math.sin(j / 0.6 * Math.PI) * 0.6 : 0);
         a.rig.g.position.x = a.pos.x;
         a.rig.g.position.z = a.pos.z;
         a.rig.g.rotation.y = lerpAngle(a.rig.g.rotation.y, a.face, Math.min(1, dt * 8));
         const state = now < a.animUntil ? a.anim : moving ? 'walk' : /rest|warm/.test(a.goal?.type) ? 'sit' : 'idle';
         if (a.rig.animate) a.rig.animate(state, t, moving, a);
         else if (a.kind === 'squid') animSquid(a, state, t, moving); else animPerson(a, state, t, moving);
-        const j = now - (a.jumpAt ?? -9);                  // tapped: one hop, on top of whatever it does
-        if (j < 0.6) a.rig.g.position.y += Math.sin(j / 0.6 * Math.PI) * 0.6;
       }
     },
   };

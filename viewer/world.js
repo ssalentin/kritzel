@@ -219,6 +219,8 @@ export async function build(api, prevState = null) {
     } catch (e) { report(`things/${file}: placing: ${e.message}`); }
     bakeAO(THREE, entry.box);
     if (entry.free) bakeAO(THREE, entry.free);
+    entry.base = entry.box.children.map(c => [c, c.scale.clone()]);   // true scales, before any grow-in
+    entry.bornAt = clockNow;
     if (live) {                           // a drawing comes alive: the engine celebrates, the others come to look
       api.arrived?.(entry.box, m?.meta?.name, entry.foot);
       // the sim already sends the curious over for new characters (addActor) and new obstacles or
@@ -325,7 +327,8 @@ export async function build(api, prevState = null) {
       for (const [file, e] of loaded) {
         let o = obj; while (o && o !== e.box) o = o.parent;
         if (!o) continue;
-        if (!e.wiggle) e.wiggle = { at: clockNow, parts: e.box.children.map(c => [c, c.scale.clone()]) };
+        // with the scales it had when loaded, and not while it is still growing in (status.arrived)
+        if (!e.wiggle && clockNow - (e.bornAt ?? -9) > 0.8) e.wiggle = { at: clockNow, parts: e.base || e.box.children.map(c => [c, c.scale.clone()]) };
         api.mood?.blink?.(file);
         try { e.onTap?.(); } catch (err) { report(`things/${file}: onTap: ${err.message}`); }
         return file;
@@ -334,6 +337,7 @@ export async function build(api, prevState = null) {
     },
     freeSpot: (x, z, r) => freeSpot(x, z, r),
     places: () => ({ perches: env.perches, water: env.water }),   // where animals land, climb and swim (for tests)
+    box: file => loaded.get(file)?.box,    // a thing's group (for tests)
     feet: () => [...loaded].map(([f, e]) => ({ file: f, foot: e.foot, obstacles: e.obstacles, pinned: !!pinned(e) })),   // for tests   // for the light that shows where a drawing will appear
     brain: () => brain,                   // for UI in index.html (e.g. click a character); sim exposes its actors
     update(t, dt) {

@@ -465,6 +465,9 @@ let focus = null, downAt = null, cardAt = 0;
 const actorsNow = () => { try { return current?.brain?.()?.actors() || []; } catch { return []; } };
 const isUnder = (o, root) => { for (; o; o = o.parent) if (o === root) return true; return false; };
 canvas.addEventListener('pointerdown', e => { downAt = [e.clientX, e.clientY, performance.now()]; });
+canvas.addEventListener('contextmenu', e => e.preventDefault());   // a long press is ours, not the browser's menu
+canvas.style.userSelect = canvas.style.webkitUserSelect = 'none';
+canvas.style.webkitTouchCallout = 'none';
 canvas.addEventListener('pointerup', e => {
   if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) return;   // a drag, not a click
   const r = canvas.getBoundingClientRect();
