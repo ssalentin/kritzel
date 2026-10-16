@@ -247,7 +247,7 @@ export async function build(api, prevState = null) {
     else if (STYLE === 'cutout') { cutout(THREE, entry.box); if (entry.free) cutout(THREE, entry.free); }
     else if (STYLE === 'crayon') {
       crayon(THREE, entry.box); if (entry.free) crayon(THREE, entry.free);
-      cropOf(THREE, file.replace(/\.js$/, '')).then(c => { if (c && loaded.get(file) === entry) cropOn(THREE, entry.box, c, entry.box.position, fromPaper); }).catch(() => {});
+      cropOf(THREE, file.replace(/\.js$/, '')).then(c => { if (c && loaded.get(file) === entry) { cropOn(THREE, entry.box, c, entry.box.position, fromPaper); if (entry.free) cropOn(THREE, entry.free, c, null, fromPaper); } }).catch(() => {});
     }
     else { bakeAO(THREE, entry.box); if (entry.free) bakeAO(THREE, entry.free); }
     entry.base = entry.box.children.map(c => [c, c.scale.clone()]);   // true scales, before any grow-in
@@ -571,16 +571,19 @@ function cropOf(THREE, base) {
 }
 // top-down planar projection (along y): a drawing is a picture of the paper seen from above, so the crop lands on the thing
 // the way the camera saw it; side faces streak. UVs are per mesh (a cloned geometry; the outline shell keeps the original).
-// `off` is the placement shift: the crop rectangle is where the thing was drawn.
+// `off` is the placement shift: the crop rectangle is where the thing was drawn. A creature (off null) walks, so it is projected in its
+// rig's own frame with the rig origin at the crop's centre (the drawn spot).
 function cropOn(THREE, root, c, off, fromPaper) {
   const [x0, y0, x1, y1] = c.area, A = fromPaper({ x: x0, y: y0 }), B = fromPaper({ x: x1, y: y1 }), v = new THREE.Vector3();
   for (const o of styleable(root)) {
     const pos = o.geometry.attributes.position, uv = new Float32Array(pos.count * 2);
     o.updateWorldMatrix(true, false);
+    let g = o; while (!off && g.parent && g.parent !== root) g = g.parent;
+    const m = off ? o.matrixWorld : new THREE.Matrix4().copy(g.matrixWorld).invert().multiply(o.matrixWorld), dx = off ? -off.x : (A.x + B.x) / 2, dz = off ? -off.z : (A.z + B.z) / 2;
     for (let i = 0; i < pos.count; i++) {
-      v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
-      uv[2 * i] = Math.max(0, Math.min(1, (v.x - off.x - A.x) / (B.x - A.x)));
-      uv[2 * i + 1] = 1 - Math.max(0, Math.min(1, (v.z - off.z - A.z) / (B.z - A.z)));
+      v.fromBufferAttribute(pos, i).applyMatrix4(m);
+      uv[2 * i] = Math.max(0, Math.min(1, (v.x + dx - A.x) / (B.x - A.x)));
+      uv[2 * i + 1] = 1 - Math.max(0, Math.min(1, (v.z + dz - A.z) / (B.z - A.z)));
     }
     const geo = o.geometry.clone(); geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     o.geometry = geo;
