@@ -88,6 +88,7 @@ export function makeWater({ THREE, scene }) {
         ring.rotation.x = Math.PI / 2; ring.position.y = 0.05; g.add(ring); return ring;
       });
       g.add(disc, rim);
+      g.userData.zone = { kind: 'pond', r };       // where swimmers may go (zones())
       return track(g, t => {
         tex.offset.set(Math.sin(t * 0.15) * 0.2, t * 0.04);
         rings.forEach((ring, i) => {
@@ -139,10 +140,28 @@ export function makeWater({ THREE, scene }) {
         return new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(edge), edge.length, 0.04, 5), foamMat());
       });
       g.add(water, ...banks);
+      g.userData.zone = { kind: 'river', points: curve.getPoints(24), width };
       return track(g, t => { tex.offset.y = -t * 0.6; });
     },
 
     begin() { used = ignored = 0; },
+    // the water on the island now, in world coordinates, for creatures that swim:
+    // { kind: 'pond', x, z, r } or { kind: 'river', points: [{ x, z }], width }
+    zones() {
+      const out = [], v = new THREE.Vector3();
+      for (const { obj } of live) {
+        const z = obj.userData.zone;
+        let o = obj; while (o.parent) o = o.parent;
+        if (!z || o !== scene) continue;
+        obj.updateMatrixWorld(true);
+        if (z.kind === 'pond') { obj.getWorldPosition(v); out.push({ kind: 'pond', x: v.x, z: v.z, r: z.r }); }
+        else {                             // only stretches on the ground (a river can also run down a rock face)
+          const pts = z.points.map(p => obj.localToWorld(v.copy(p)).clone()).filter(p => p.y < 0.3).map(p => ({ x: p.x, z: p.z }));
+          if (pts.length) out.push({ kind: 'river', width: z.width, points: pts });
+        }
+      }
+      return out;
+    },
     ignored: () => ignored,
     tick(t) {
       for (let i = live.length - 1; i >= 0; i--) {
