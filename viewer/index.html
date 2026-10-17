@@ -44,8 +44,26 @@
   #log h3 { margin: 0 0 6px; font-size: 15px; }
   #log .day { margin: 10px 0 2px; font-weight: 600; color: #557; }
   #log li { margin: 2px 0; } #log ul { margin: 0; padding-left: 18px; } #log code { color: #889; font-size: 11px; }
-  #card { position: fixed; right: 16px; bottom: 12px; max-width: min(280px, calc(100vw - 32px)); display: none;
+  /* the live camera in a picture frame, bottom right (camframe.js): a wooden edge, the pipeline's words under it */
+  #frame { position: fixed; right: 16px; bottom: 12px; width: min(24vw, 300px); box-sizing: border-box; padding: 10px 10px 8px; z-index: 5;
+    background: linear-gradient(135deg, #d8b679, #a9773c); border-radius: 6px; box-shadow: 0 8px 20px #0005, inset 0 0 0 2px #f1dca455; font: inherit; }
+  #frame .pic { position: relative; aspect-ratio: 4 / 3; background: #f4efe6; border-radius: 3px; overflow: hidden; }
+  #frame .pic video, #frame .pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; margin: 0; border-radius: 0; }
+  #frame .none { position: absolute; inset: 0; display: grid; place-items: center; padding: 6px; text-align: center; font-size: 14px; color: #6b5a44; }
+  #frame .cap { margin-top: 6px; min-height: 1.6em; font-size: 13px; color: #fff; background: #3b2f22d9; border-radius: 6px; padding: 4px 8px; }
+  #frame .txt { display: block; }
+  #frame[data-mode=hold] .cap { background: #8a5a00e6; }
+  #frame[data-mode=done] { box-shadow: 0 0 0 4px #3ccf6a, 0 8px 20px #0005; }
+  #frame[data-mode=done] .cap { background: #1f7a43e6; font-weight: 600; }
+  #frame .min { position: absolute; top: 2px; right: 2px; width: 26px; height: 26px; border: 0; border-radius: 13px; background: #fff9; font-size: 14px; line-height: 1; cursor: pointer; }
+  #frame[data-min="1"] .pic, #frame[data-min="1"] .cap { display: none; }
+  #frame[data-min="1"] { width: auto; padding: 4px; }
+  #frame[data-min="1"] .min { position: static; }
+  @media (max-width: 560px) { #frame { width: 34vw; right: 10px; bottom: 10px; padding: 6px; }
+    #frame .cap { font-size: 11px; } }
+  #card { position: fixed; right: 16px; bottom: calc(min(24vw, 300px) * 0.75 + 84px); max-width: min(280px, calc(100vw - 32px)); display: none;
     background: var(--panel); border-radius: 10px; padding: 8px 12px; }
+  @media (max-width: 560px) { #card { bottom: calc(34vw * 0.75 + 80px); } }
   #card b { display: block; font-size: 15px; }
   #card .rel { margin-top: 4px; font-size: 13px; }
   #snd { position: fixed; right: 16px; top: 12px; font: 13px system-ui, sans-serif; color: var(--fg); background: var(--panel);
@@ -93,6 +111,7 @@
 <div id="status" data-tone="ok"><span class="dot"></span><span class="text"></span><span class="gen" hidden>⚠ Generator aus</span></div>
 <div id="veil"><div><span class="pen">✏️</span> Leg los mit dem Malen!</div></div>
 <div id="hint">Tippe eine Figur an, um ihr mit der Kamera zu folgen · Esc beendet <span id="ver"></span></div>
+<div id="frame" data-mode="live"><div class="pic"><div class="none"></div></div><div class="cap"><span class="txt"></span></div><button class="min" type="button" aria-label="Bild ein-/ausblenden"></button></div>
 <div id="card"></div>
 <div id="log" hidden></div>
 <button id="snd" type="button" aria-pressed="false">🔇 Ton an</button>
@@ -114,6 +133,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { createMood } from './mood.js';
 import { createStatus } from './status.js';
+import { createCamFrame } from './camframe.js';
 import { GROUND } from './book.js';
 import { createStyle } from './style.js';
 import { t, lang, setLang, onLang } from './i18n.js';
@@ -381,9 +401,10 @@ newBtn.addEventListener('click', async e => {
   try { await fetch('/api/newworld', { method: 'POST', body: '{}', headers: { 'X-Kritzel': '1' } }); } catch {}   // the poll sees the page empty and turns it
 });
 
-// what capture and generate are doing, and a glowing light where a new drawing will appear
+// what capture and generate are doing, and a glowing light where a new drawing will appear; the picture frame says the same
+const frame = createCamFrame(document.getElementById('frame'));
 const status = createStatus({ THREE, scene, el: document.getElementById('status'), world: () => current,
-  banner: document.getElementById('arrive') });
+  banner: document.getElementById('arrive'), onView: (v, st) => frame.update(v, st) });
 
 const api = { THREE, scene, world, camera, controls, bubble, shadowAll, mood: lighting,
   reserved: () => status.reserved(), claimSpot: () => status.claimSpot(),
@@ -554,7 +575,7 @@ addEventListener('keydown', e => { if (e.key === 'Escape') logEl.hidden = true; 
 
 // camera picker (local or network cameras) with a small live preview
 import('./camera.js?v=' + Date.now())
-  .then(m => m.cameraPicker({ button: document.getElementById('camBtn'), panel: document.getElementById('cam') }))
+  .then(m => m.cameraPicker({ button: document.getElementById('camBtn'), panel: document.getElementById('cam'), preview: frame.pic }))
   .catch(e => { document.getElementById('err').textContent = 'camera.js: ' + e.message; });
 
 // tap a character: it jumps and says hello; tap a thing: it wiggles. A long press on a character

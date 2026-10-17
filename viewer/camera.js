@@ -4,10 +4,12 @@
 // The choice is kept in camera.json on the server (PUT /api/camera), so the capture stage knows it,
 // and a small live preview shows what the chosen camera sees.
 import { t } from './i18n.js';
-export function cameraPicker({ button, panel }) {
+// preview: the element that shows the live picture (the picture frame, camframe.js); the stream opens once, there
+export function cameraPicker({ button, panel, preview = null }) {
   const select = panel.querySelector('select');
   const video = panel.querySelector('video');
   const img = panel.querySelector('img');
+  if (preview) { preview.append(video, img); panel.querySelector('.note').textContent = ''; }
   const note = panel.querySelector('.note');
   let options = [], stream = null;
 
