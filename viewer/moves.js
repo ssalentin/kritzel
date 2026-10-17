@@ -40,7 +40,7 @@ export function makeMoves({ THREE, R, ground = null }) {
   // (more than 0 is inside; -Infinity when nothing is near).
   const pen = (a, x, z, env, skip) => {
     let p = -Infinity;
-    for (const f of env.feet || []) if (f !== skip) p = Math.max(p, Math.min(f.hx + a.radius - Math.abs(x - f.x), f.hz + a.radius - Math.abs(z - f.z)));
+    for (const f of env.feet || []) if (f !== skip?.foot) p = Math.max(p, Math.min(f.hx + a.radius - Math.abs(x - f.x), f.hz + a.radius - Math.abs(z - f.z)));
     for (const o of env.actors || []) if (o !== a && !o.hidden && (o.alt || 0) < 0.3) p = Math.max(p, a.radius + (o.radius || 0.1) - Math.hypot(x - o.pos.x, z - o.pos.z));
     return p;
   };
@@ -137,7 +137,7 @@ export function makeMoves({ THREE, R, ground = null }) {
           const d = Math.hypot(a.pos.x - p.x, a.pos.z - p.z) || 1;
           Object.assign(m, { phase: 'go', tx: p.x + (a.pos.x - p.x) / d * p.r, tz: p.z + (a.pos.z - p.z) / d * p.r, top: p.top, px: p.x, pz: p.z, perch: p });
         }
-        return !!there;
+        return there === false;                 // walking (not while arrived, nor blocked)
       }
       if (m.phase === 'go') {
         const there = walkTo(a, m.tx, m.tz, sp * 0.7, dt, env, m.perch);

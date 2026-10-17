@@ -287,7 +287,7 @@ export async function build(api, prevState = null) {
   // where animals can go: tops of things to land or climb on, and the drawn water
   function places() {
     env.perches = [...loaded.values()].filter(e => e.foot && !e.heldBy && e.foot.top > 0.3)
-      .map(e => ({ x: e.foot.x, z: e.foot.z, top: e.foot.top, r: Math.min(e.foot.hx, e.foot.hz) }));
+      .map(e => ({ x: e.foot.x, z: e.foot.z, top: e.foot.top, r: Math.min(e.foot.hx, e.foot.hz), foot: e.foot }));
     env.water = water.zones();
   }
   // footprints characters must not stand in (a jail holds its prisoner inside, so it isn't one)
