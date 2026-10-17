@@ -3,7 +3,7 @@
 How Kritzel works inside, for people who want to run, change or extend it. For what Kritzel
 is and how to get started, see the [README](../README.md).
 
-Kritzel is a prototype, version 0.3.0 (see `VERSION`; the viewer shows it with the commit in
+Kritzel is a prototype, version 0.4.0 (see `VERSION`; the viewer shows it with the commit in
 its bottom line). The whole loop runs: camera → capture → generation → viewer. It is built and
 run by a small team of AI agents with one person deciding what's worth building.
 
