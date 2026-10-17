@@ -4,12 +4,12 @@
 // serves both; with no camera chosen the frame says so. The caption is the status pill's words otherwise.
 import { t } from './i18n.js';
 
-const DONE_S = 15;                       // "you can take the paper away" stays this long after the picture is taken
+const DONE_S = 15;                       // "you can take the paper away" stays this long after capture settles a picture
 const MIN_KEY = 'kritzelFrameMin';
 
 export function createCamFrame(el) {
   const cap = el.querySelector('.txt'), none = el.querySelector('.none'), min = el.querySelector('.min');
-  let minimised = false, doneFor = null, doneAt = -Infinity;
+  let minimised = false;
   try { minimised = localStorage.getItem(MIN_KEY) === '1'; } catch {}
   const showMin = () => { el.dataset.min = minimised ? '1' : ''; min.textContent = minimised ? '▣' : '–'; min.setAttribute('aria-expanded', String(!minimised)); };
   min.addEventListener('click', () => {
@@ -22,12 +22,10 @@ export function createCamFrame(el) {
     pic: el.querySelector('.pic'),
     // called by status.js after every pill update: v = { tone, text }, st = both stages' status files
     update(v, st) {
-      const c = st?.capture || {}, g = st?.generate || {};
+      const c = st?.capture || {}, now = st?.now ?? Date.now() / 1000;                 // server clock, as in status.js
       const hold = !!c.alive && c.state === 'moving';                                   // capture waits for the paper to be still
-      const taken = !!c.alive && !!c.last && g.frame === c.last.frame && !(g.alive && g.state === 'building');
-      const now = performance.now();
-      if (taken && g.frame !== doneFor) { doneFor = g.frame; doneAt = now; }           // a newly settled picture: say so once
-      const done = !hold && taken && now - doneAt < DONE_S * 1000;
+      // capture has settled a picture: the paper can go (generate already has the JPG)
+      const done = !hold && !!c.alive && c.state === 'watching' && !!c.last && now - c.last.at < DONE_S;
       const mode = hold ? 'hold' : done ? 'done' : 'live';
       if (el.dataset.mode !== mode) el.dataset.mode = mode;
       const text = hold ? t('camHold') : done ? t('camDone') : v.text;
