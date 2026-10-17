@@ -187,7 +187,9 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
         tell({ seen: seenOf(said.seen), now: nowOf(said.seen[s.n]) });
         const check = takenIds => finish({ body: s.body, model: MODEL, frame, images, takenIds, keepIds: old?.ids || [], oldName: old?.meta.name || null, calls: report.calls, deferHolds: !last });
         const f = await check(takenNow(old));
-        await (lock = lock.then(() => commit(s, old, f, last, check)));
+        const run = lock.then(() => commit(s, old, f, last, check));
+        lock = run.catch(() => {});                             // one failed write must not block the next ones
+        await run;
       })().catch(e => {                                         // a failed fix call (timeout, limit) costs this one thing, not the watcher
         report.rejected.push({ kind: s.kind, file: s.file, problems: [`not written: ${e.message.slice(0, 200)}`] });
         log(`${name}: ${s.kind} ${s.file || ''} not written: ${e.message}`);
@@ -271,6 +273,7 @@ Several builders make this sheet at the same time. You build only this one drawi
       halted = true;
       await Promise.allSettled(helpers);
       await Promise.allSettled(pending);
+      for (const s of waiting.splice(0)) report.rejected.push({ kind: s.kind, file: s.file, problems: ['not written: the main call failed before the creature it holds was written'] });
       if (!report.written.length) throw e;
       report.mainError = e.message;
       log(`${name}: the main call failed after ${report.written.length} thing(s) were written; not retrying: ${e.message}`);
