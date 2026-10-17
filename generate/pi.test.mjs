@@ -41,3 +41,18 @@ test('a pi call that gives no text in time falls back too', async () => {
   process.env.FAKE_PI = 'slow';
   await assert.rejects(piCall({ system: 'S4', text: 'go', images: [], model: M, timeoutMs: 100, firstTextMs: 10 }), /gave no text within|timed out/);
 });
+
+test('a text delta is read in pi\'s key order and in any other', async () => {
+  const { deltaOf } = await import('./pi.mjs');
+  assert.equal(deltaOf('{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"a\\"b","partial":{"content":[]}}}'), 'a"b');
+  assert.equal(deltaOf('{"assistantMessageEvent":{"delta":"xy","type":"text_delta"},"type":"message_update"}'), 'xy');
+  assert.equal(deltaOf('{"type":"message_update","assistantMessageEvent":{"type":"text_start"}}'), null);
+  assert.equal(deltaOf('{"type":"agent_end","messages":[]}'), null);
+});
+
+test('a call whose signal is already aborted does not start', async () => {
+  const ac = new AbortController(); ac.abort();
+  const r = await oneShot({ system: 'S5', text: 'go', images: [], model: M, signal: ac.signal });
+  assert.equal(r.aborted, true);
+  assert.equal(r.text, '');
+});
