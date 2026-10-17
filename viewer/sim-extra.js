@@ -3,7 +3,7 @@
 // choose(a, b, r, api) picks the interaction for a pair that just met (r = their lower relationship).
 
 import { sound } from './sound.js';
-import { pickDialogue, fromPool, readTime, personaOf } from './dialogues.js';
+import { pickDialogue, fromPool, readTime, personaOf, refreshPool } from './dialogues.js';
 import { lang } from './i18n.js';
 
 export const LINES = {
@@ -133,6 +133,7 @@ const CARRY_MAX = 3, CARRY_FOR = 25;
 const carriedBy = (spots, a) => spots().find(s => s.kind === 'portable' && s.carrier === a);
 
 export function options(a, add, { spots, cover, spotCell, things, nearest, actors, now }) {
+  refreshPool();                         // the personas load from dialogues.json even before any dialogue is picked
   const p = personaOf(a.id);             // a personality (dialogues.json personas): steers where it goes and what it does
   for (const sp of spots()) {
     if (sp.kind === 'portable' && sp.carrier === a) add(5, { type: 'carry', item: sp, until: null });

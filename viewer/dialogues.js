@@ -130,7 +130,8 @@ export function safePersona(p) {
     } : null;
 }
 export const personaOf = id => personas[id] || null;
-async function refreshPool() {
+// the pool and the personas are read from dialogues.json (at most once a minute); called by the sim, not only when a dialogue is picked
+export async function refreshPool() {
   if (Date.now() - poolAt < 60_000) return;
   poolAt = Date.now();
   try {
