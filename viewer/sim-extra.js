@@ -180,7 +180,8 @@ export function portable(a, g, api) {
   // carry: wander about with it; now and then a friend close by is offered it
   if (g.until === null) g.until = now() + CARRY_FOR;
   if (now() > g.until) return drop();
-  const friend = actors().find(b => b !== a && !b.hidden && b.kind !== 'squid' && !carriedBy(spots, b) &&
+  // (a friend who carries something too can swap: the give hands theirs back)
+  const friend = actors().find(b => b !== a && !b.hidden && b.kind !== 'squid' &&
     Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y)) <= 2 && (b.goal?.type ?? 'idle') !== 'give');
   if (friend && R() < 0.4) { a.goal = { type: 'give', item: it, to: friend, until: now() + 8 }; a.goalSince = now(); return; }
   // a throw: a friend a few cells off; it flies in an arc and lands, and is caught if they are still there
@@ -207,7 +208,10 @@ function throwTo(a, it, to, { now, say, line }) {
 export function frame(actors, api) {
   const { now, say, line, ground, spots } = api;
   for (const it of spots().filter(s => s.kind === 'portable' && s.carrier)) {
-    if (!actors.includes(it.carrier) || it.carrier.hidden || !/^(carry|give)$/.test(it.carrier.goal?.type ?? '')) it.carrier = null;   // something else took over: let go
+    if (!actors.includes(it.carrier) || it.carrier.hidden) { it.carrier = null; continue; }   // gone or hidden: let go
+    // a brief talk or greeting keeps it; a goal that stays something else for over a second lets it go
+    if (/^(carry|give)$/.test(it.carrier.goal?.type ?? '')) it.letGoAt = null;
+    else if ((it.letGoAt ??= now()) && now() - it.letGoAt > 1) { it.carrier = null; it.letGoAt = null; continue; }
     else { it.x = it.carrier.pos.x; it.z = it.carrier.pos.z; }
   }
   flyPortables(spots, actors, { now, say, line, ground });
