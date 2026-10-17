@@ -307,6 +307,10 @@ async function detectSheet({ images, existing, calls }) {
 }
 
 // ---------- one settled frame ----------
+// the status's build list (generate.things: one row per drawing of the current sheet) belongs to one frame at a time:
+// a frame's late clear must not wipe a newer frame's list
+let thingsOwner = null;
+const THINGS_LINGER_MS = +process.env.KRITZEL_THINGS_LINGER_MS || 10_000;
 // a new sheet with more than two drawings is written by the main call and up to HELPERS parallel calls
 const HELPERS = 3, PARALLEL = process.env.KRITZEL_PARALLEL !== '0';
 // onLater({ written }): things written after processFrame returned (a final's split parts)
@@ -332,6 +336,20 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
     const files = new Set(existing.map(t => t.file.replace(/\.js$/, '')));
     let said = { seen: [], begun: 0 }, told = '';
     const tell = p => { const k = JSON.stringify(p); if (k !== told) { told = k; try { onProgress(p); } catch { /* narration never breaks a frame */ } } };
+    // the build list for the viewer's queue (Sebastian: show what is being built, often several at once):
+    // [{ name: { de, en }, state: listed | building | draft | done | failed, file? }], at most 16
+    const things = [];
+    const showThings = () => { thingsOwner = name; try { onProgress({ things: things.filter(Boolean).slice(0, 16) }); } catch { /* never breaks a frame */ } };
+    const listThings = () => {
+      let added = false;
+      said.seen.forEach((x, k) => { if (!things[k]) { things[k] = { name: kid(x.de, x.en) || { de: 'etwas', en: 'something' }, state: 'listed' }; added = true; } });
+      if (added) showThings();
+    };
+    const thingState = (k, state, file = null) => {
+      if (k == null || !things[k]) return;
+      things[k] = { ...things[k], state, ...(file && { file }) };
+      showThings();
+    };
     const numbered = secs => { let n = 0; for (const x of secs) if (x.kind === 'NEW' || x.kind === 'UPDATE') x.n = n++; return secs; };   // n: its entry in SEEN
     const ask = userText({ existing, place, height, takenIds: existing.flatMap(t => t.ids), hasBefore: !!before, newSheet });
 
@@ -368,15 +386,17 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
     const write = (s, last = false) => {
       const job = (async () => {
         const old = s.kind === 'UPDATE' ? existing.find(t => t.file === s.file) : null;
-        if (s.kind === 'UPDATE' && !old) { report.rejected.push({ kind: s.kind, file: s.file, problems: ['no such thing to update'] }); log(`${name}: UPDATE of unknown ${s.file} ignored`); return; }
-        if (s.kind === 'NEW' && wordOnly(s.body)) { report.rejected.push({ kind: s.kind, problems: ['a written word alone is not a thing'] }); log(`${name}: a word alone, not built`); return; }   // no fix call: nothing to fix
+        if (s.kind === 'UPDATE' && !old) { thingState(s.n, 'failed'); report.rejected.push({ kind: s.kind, file: s.file, problems: ['no such thing to update'] }); log(`${name}: UPDATE of unknown ${s.file} ignored`); return; }
+        if (s.kind === 'NEW' && wordOnly(s.body)) { thingState(s.n, 'failed'); report.rejected.push({ kind: s.kind, problems: ['a written word alone is not a thing'] }); log(`${name}: a word alone, not built`); return; }   // no fix call: nothing to fix
         tell({ seen: seenOf(said.seen), now: nowOf(said.seen[s.n]) });
+        thingState(s.n, 'building');
         const check = (takenIds, extra = null) => finish({ body: s.body, model: BUILD, frame, images: s.images || images, takenIds, keepIds: old?.ids || [], oldName: old?.meta.name || null, calls: report.calls, deferHolds: !last, extra });
         const f = await check(takenNow(old));
         const run = lock.then(() => commit(s, old, f, last, check));
         lock = run.catch(() => {});                             // one failed write must not block the next ones
         await run;
       })().catch(e => {                                         // a failed fix call (timeout, limit) costs this one thing, not the watcher
+        thingState(s.n, 'failed');
         report.rejected.push({ kind: s.kind, file: s.file, problems: [`not written: ${e.message.slice(0, 200)}`] });
         log(`${name}: ${s.kind} ${s.file || ''} not written: ${e.message}`);
       });
@@ -395,7 +415,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
           f = await check(takenNow(old), hangingLoose(old?.file));
         }
       }
-      if (!f.code) { report.rejected.push({ kind: s.kind, file: s.file, name: thingName, problems: f.problems }); log(`${name}: REJECTED ${s.kind} ${s.file || thingName}: ${f.problems.join('; ')}`); return; }
+      if (!f.code) { thingState(s.n, 'failed'); report.rejected.push({ kind: s.kind, file: s.file, name: thingName, problems: f.problems }); log(`${name}: REJECTED ${s.kind} ${s.file || thingName}: ${f.problems.join('; ')}`); return; }
       // a NEW thing's name is unique in the book ("Strichfigur 2"): dialogues and quests name figures, and four
       // "Strichfigur" made the dialogue writer invent speakers (live: 6 of 12 dropped)
       if (!old) {
@@ -422,6 +442,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
       report.written.push({ kind: s.kind, file, name: thingName, model: f.model, latency, at: T(), ids, ...(made && { made }), ...(f.warnings.length && { warnings: f.warnings }) });
       log(`${name}: ${s.kind === 'UPDATE' ? 'UPDATED' : 'WROTE'} ${file} (${thingName}) by ${f.model}, ${latency}s after the frame settled`);
       renders.push({ base, file, code: f.code });
+      thingState(s.n, DRAFT_MODEL && f.model !== MODEL && s.kind === 'NEW' ? 'draft' : 'done', file);
       // finals for new drafts only: an UPDATE's final would need its own question (the old module, what changed)
       if (DRAFT_MODEL && f.model !== MODEL && s.kind === 'NEW') finals.push(finalOf({ s, file, draft: f.code, thingName, ids, draftBox: f.info?.box }));
     }
@@ -453,7 +474,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
 A quick draft of this drawing is in the book now (below)${at ? `, centred at x ${at[0].toFixed(2)}, z ${at[1].toFixed(2)}: build yours centred there too` : ''}. Build the drawing properly yourself, from the image, not from the draft's shapes. Keep what the book already knows about it: name '${thingName}'${ids.length ? `, actor id${ids.length > 1 ? 's' : ''} ${ids.map(i => `'${i}'`).join(', ')}${start ? ` (${start})` : ''}` : ''}${paperAt ? `, meta ${paperAt}` : ''}. Usually it is one thing: reply with its one ### NEW section. But the draft may have taken several things for one: if what is drawn there is really several separate things (by the rules: each object and each living figure its own), reply with one ### NEW section per thing; the first is the one the book knows (with the name, ids and place above), the others get their own names and actor ids and stand where they are drawn.
 
 ${draft}`;
-        const done = (x) => { report.finals.push({ file, at: T(), ...x }); mark('finalsDone'); report.timing.finalsDone = T(); save(); };
+        const done = (x) => { const k = things.findIndex(t => t?.file === file); if (k >= 0) thingState(k, 'done'); report.finals.push({ file, at: T(), ...x }); mark('finalsDone'); report.timing.finalsDone = T(); save(); };
         try {
           const r = await oneShot({ system: SYSTEM, text, images: s.images || images, model: MODEL });
           report.calls.push(callOf(r, { final: file }));
@@ -570,13 +591,14 @@ Several builders make this sheet at the same time. You build only this one drawi
         const h = await buildSlot(() => oneShot({ system: SYSTEM, images: seen, text, model: BUILD }));
         report.calls.push(callOf(h, { helper: e.de }));
         const sec = parseReply(h.text).find(x => x.kind === 'NEW');
-        if (!sec) { report.rejected.push({ kind: 'NEW', name: e.de, problems: ['the helper wrote no NEW section'] }); return; }
+        if (!sec) { thingState(k, 'failed'); report.rejected.push({ kind: 'NEW', name: e.de, problems: ['the helper wrote no NEW section'] }); return; }
         sec.n = k; sec.images = seen; sec.prompt = text; sent.add(k);
         write(sec);                                  // checked while this helper takes the next one
-      } catch (err) { report.rejected.push({ kind: 'NEW', name: e.de, problems: [`helper call failed: ${err.message.slice(0, 200)}`] }); }
+      } catch (err) { thingState(k, 'failed'); report.rejected.push({ kind: 'NEW', name: e.de, problems: [`helper call failed: ${err.message.slice(0, 200)}`] }); }
     }
     const onText = text => {
       said = narrate(text);
+      listThings();
       mark('firstText');
       if (said.seen.length) mark('seen');
       tell({ seen: seenOf(said.seen), now: nowOf(said.seen[said.begun - 1]) });
@@ -605,6 +627,7 @@ Several builders make this sheet at the same time. You build only this one drawi
       said = { seen: listed, begun: listed.length };
       report.said = listed;
       tell({ seen: seenOf(listed), now: null });
+      listThings();
       // every actor id is set before any build starts, so each build knows the others' ids too (a branch holds
       // the sloth by its id, a held thing names its holder), and parallel builds never collide
       const taken = new Set(existing.flatMap(t => t.ids));
@@ -625,6 +648,7 @@ Several builders make this sheet at the same time. You build only this one drawi
         return report;
       }
       said = narrate(r.text);
+      listThings();
       report.said = said.seen;
       report.calls.push(callOf(r, r.aborted ? { stopped: 'the rest went to helpers' } : {}));
       report.reply = r.text.slice(0, 4000);
@@ -681,6 +705,9 @@ Several builders make this sheet at the same time. You build only this one drawi
       })();
     }
     Object.defineProperty(report, 'finalsDone', { value: Promise.allSettled(finals), enumerable: false });
+    // rows still listed or building when the frame ends were not built; then the list goes, 10 s after the finals
+    things.forEach((t, k) => { if (t && (t.state === 'listed' || t.state === 'building')) thingState(k, 'failed'); });
+    report.finalsDone.then(() => setTimeout(() => { if (thingsOwner === name) { thingsOwner = null; try { onProgress({ things: [] }); } catch { /* */ } } }, THINGS_LINGER_MS).unref?.());
     return report;
   } catch (e) {
     report.error = e.message;
@@ -830,7 +857,7 @@ function statusFile(file) {
   const write = () => { try { mkdirSync(dirname(file), { recursive: true }); atomicWrite(file, JSON.stringify({ ...st, beat: Date.now() / 1000 })); } catch {} };
   setInterval(write, 2000).unref();
   write();
-  const set = (state, frame, detail = '', extra = {}) => { st = { state, since: Date.now() / 1000, detail, frame: frame.replace(/\.jpg$/, ''), ...extra }; write(); };
+  const set = (state, frame, detail = '', extra = {}) => { st = { ...(st.things && { things: st.things }), state, since: Date.now() / 1000, detail, frame: frame.replace(/\.jpg$/, ''), ...extra }; write(); };
   set.more = extra => { st = { ...st, ...extra }; write(); };   // same state, more to tell
   return set;
 }
@@ -910,7 +937,7 @@ async function watch(dir, opts) {
           archivedFor = newest;
           writePaper(opts.reportsDir, { _through: newest });        // a new world has no old paper positions
         }
-        const r = await processFrame(join(dir, newest), { ...opts, onLater: later, box: null, previous: null, newSheet: 'switch' });
+        const r = await processFrame(join(dir, newest), { ...opts, onLater: later, box: null, previous: null, newSheet: 'switch' , onProgress: status.more });
         if (r.error) { status('failed', newest, r.error.slice(0, 80)); if (await retrySame(r.error, newest)) continue; last = newest; continue; }
         status(r.written.length ? 'new' : 'unclear', newest, r.written.map(w => w.name).join(', '));
         if (r.written.length) wantDialogues(opts, `new sheet: ${r.written.length} things`, r.written.map(w => w.name));
@@ -922,7 +949,7 @@ async function watch(dir, opts) {
         log(`${newest}: new sheet (add mode): building what's on it, the world stays`);
         status('building', newest);
         await movePaperAlong(dir, newest, opts);
-        const r = await processFrame(join(dir, newest), { ...opts, onLater: later, box: null, previous: null, newSheet: 'add' });
+        const r = await processFrame(join(dir, newest), { ...opts, onLater: later, box: null, previous: null, newSheet: 'add' , onProgress: status.more });
         if (r.error) { status('failed', newest, r.error.slice(0, 80)); if (await retrySame(r.error, newest)) continue; last = newest; continue; }
         status(r.written.length ? 'new' : 'unclear', newest, r.written.map(w => w.name).join(', '));
         if (r.written.length) wantDialogues(opts, `new sheet: ${r.written.length} things`, r.written.map(w => w.name));
