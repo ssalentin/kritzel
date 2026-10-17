@@ -108,3 +108,17 @@ test('a word written alone is not a thing: not listed, and a module that only sh
   const l = parseList(JSON.stringify({ things: [{ ...entry('ein Wort', [0, 0, 0.2, 0.1]), what: 'the handwritten word Sqichy at the top' }, entry('ein Stein', [0, 0, 1, 1])] }));
   assert.deepEqual(l.map(x => x.de), ['ein Stein']);
 });
+
+test('the same sheet seen again: what is in the book already is not built twice, by name or by kind', async () => {
+  const { againInBook } = await import('./generate.mjs');
+  const book = ['Strichfigur', 'Strichfigur', 'Männchen mit Zylinder', 'Maus', 'Wolke', 'Sonne', 'Haus'].map(name => ({ meta: { name } }));
+  const e = de => ({ de });
+  // 154727 as DeepSeek listed it: other words for the same figures, plus 3 new birds
+  const list = [e('eine Maus'), e('ein Mann'), e('ein Kind'), e('ein Mensch'), e('eine Wolke'), e('eine Sonne'), e('ein Vogel'), e('ein Vogel'), e('ein Vogel')];
+  assert.deepEqual(list.filter(x => !againInBook(list, book).includes(x)).map(x => x.de), ['ein Vogel', 'ein Vogel', 'ein Vogel']);
+  // a different sheet that shares one sun: everything is built
+  const other = [e('eine Sonne'), e('ein Baum'), e('ein Hund'), e('eine Blume')];
+  assert.deepEqual(againInBook(other, book), []);
+  // named by the list itself
+  assert.deepEqual(againInBook([{ de: 'ein Ding', inBook: 'Haus' }], book).map(x => x.inBook), ['Haus']);
+});

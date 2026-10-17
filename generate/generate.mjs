@@ -179,6 +179,25 @@ export function wordOnly(code) {
   return WORD.test(drawing) || /(?:^|[-\s])(?:wort|schriftzug|titel|text|buchstaben)$/i.test(name);
 }
 
+// what kind of drawing a name or description is, roughly: the same stick figure is "Strichfigur" on one frame and
+// "ein Mensch" on the next, so the same sheet seen again is matched by kind, not by exact name
+const KINDS = [['figure', /strich|person|mensch|mann|männchen|maennchen|kind|junge|mädchen|maedchen|figur|frau/i], ['bird', /vogel|bird/i],
+  ['sun', /sonne|sun/i], ['cloud', /wolke|cloud/i], ['house', /haus|house/i], ['tree', /baum|tree/i], ['flower', /blume|flower/i],
+  ['cat', /katze|kätzchen|cat/i], ['dog', /hund|dog/i], ['mouse', /maus|mouse/i], ['fish', /fisch|fish/i]];
+export const kindOf = s => KINDS.find(([, re]) => re.test(s))?.[0] || String(s).toLowerCase().replace(/^(ein|eine|einen|der|die|das|a|an|the)\s+/, '').split(/\s+/)[0];
+// list entries that are things already in the book: the ones the list names (inBook), and, when most of the list
+// matches the book's kinds (the same sheet), as many of each kind as the book has
+export function againInBook(listed, existing) {
+  const names = new Set(existing.map(t => String(t.meta.name).toLowerCase()));
+  const named = listed.filter(e => e.inBook && names.has(e.inBook.toLowerCase()));
+  const left = {};
+  for (const t of existing) { const k = kindOf(t.meta.name); left[k] = (left[k] || 0) + 1; }
+  const byKind = [];
+  for (const e of listed) { const k = kindOf(e.de); if (left[k] > 0) { left[k]--; byKind.push(e); } }
+  const same = byKind.length >= 3 && byKind.length >= 0.6 * listed.length;
+  return [...new Set([...named, ...(same ? byKind : [])])];
+}
+
 // ---------- a new sheet: list its drawings first ----------
 export const DETECT_MODEL = process.env.KRITZEL_DETECT_MODEL || MODEL;
 // → [{ box: [x0, y0, x1, y1] (image fractions), what, de, en, den, the, name_en }], [] for an empty sheet, or
@@ -197,7 +216,7 @@ export function parseList(text) {
     const b = Array.isArray(t?.box) && t.box.length === 4 && t.box.every(v => typeof v === 'number' && isFinite(v)) ? t.box.map(v => Math.min(1, Math.max(0, v))) : null;
     if (!b || b[2] <= b[0] || b[3] <= b[1] || !str(t.de, 60) || !str(t.en, 60) || !str(t.what, 300)) continue;
     if (WORD.test(t.what) || /^(?:ein|das|der)\s+(?:wort|schriftzug|titel|text)\b/i.test(t.de)) continue;   // a word alone is no drawing
-    out.push({ box: b.map(v => +v.toFixed(3)), up: t.face === 'eyes below mouth' && t.hangs !== true ? 'upside down' : 'upright', what: t.what, de: t.de, en: t.en, den: str(t.den, 60) ? t.den : t.de, the: str(t.the, 60) ? t.the : t.en, name_en: str(t.name_en, 40) ? t.name_en : t.en });
+    out.push({ ...(str(t.in_book, 60) && { inBook: t.in_book }), box: b.map(v => +v.toFixed(3)), up: t.face === 'eyes below mouth' && t.hangs !== true ? 'upside down' : 'upright', what: t.what, de: t.de, en: t.en, den: str(t.den, 60) ? t.den : t.de, the: str(t.the, 60) ? t.the : t.en, name_en: str(t.name_en, 40) ? t.name_en : t.en });
   }
   return out;
 }
@@ -386,6 +405,16 @@ Several builders make this sheet at the same time. You build only this one drawi
     const listed = newSheet && PARALLEL ? await detectSheet({ images, existing, calls: report.calls }) : null;
     if (newSheet && PARALLEL) mark('listed');
     let sections = [], r = null;
+    // the same sheet seen again (moved far, so capture says new sheet): what the list says is in the book already
+    // is not built a second time (Sebastian: 6 things doubled at 154727). Only in add mode: switch starts empty.
+    if (listed && newSheet === 'add') {
+      const again = againInBook(listed, existing);
+      if (again.length) {
+        report.alreadyInBook = again.map(e => e.inBook || e.de);
+        log(`${name}: ${again.length} of ${listed.length} drawings are in the book already (${report.alreadyInBook.join(', ')}): not built again`);
+        listed.splice(0, listed.length, ...listed.filter(e => !again.includes(e)));
+      }
+    }
     if (listed) {
       said = { seen: listed, begun: listed.length };
       report.said = listed;
