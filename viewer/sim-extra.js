@@ -215,8 +215,15 @@ function throwTo(a, it, to, { now, say, line }) {
 export function frame(actors, api) {
   const { now, say, line, ground, spots } = api;
   for (const it of spots().filter(s => s.kind === 'portable' && s.carrier)) {
-    if (!actors.includes(it.carrier) || it.carrier.hidden || !/^(carry|give)$/.test(it.carrier.goal?.type ?? '')) it.carrier = null;   // something else took over: let go
-    else { it.x = it.carrier.pos.x; it.z = it.carrier.pos.z; }
+    if (!actors.includes(it.carrier) || it.carrier.hidden) { it.carrier = null; continue; }   // gone or hidden: let go
+    // a brief talk or greeting keeps it; a goal that stays something else for over a second lets it go
+    if (/^(carry|give)$/.test(it.carrier.goal?.type ?? '')) it.letGoAt = null;
+    else if (it.letGoAt == null) it.letGoAt = now();
+    if (it.letGoAt != null && now() - it.letGoAt > 1) { it.carrier = null; it.letGoAt = null; continue; }
+    // held out in front of the carrier, not on its middle: the carrier's radius plus the thing's half-width along its facing
+    const c = it.carrier, off = (c.radius ?? 0.4) + (it.r ?? 0.5), f = c.face ?? 0;
+    it.x = c.pos.x + Math.sin(f) * off; it.z = c.pos.z + Math.cos(f) * off;
+    if (ground) { it.x = Math.max(-ground.w / 2 + 0.5, Math.min(ground.w / 2 - 0.5, it.x)); it.z = Math.max(-ground.d / 2 + 0.5, Math.min(ground.d / 2 - 0.5, it.z)); }   // held on the pages
   }
   flyPortables(spots, actors, { now, say, line, ground });
 }
@@ -235,7 +242,9 @@ function flyPortables(spots, actors, { now, say, line, ground }) {
     it.x = Math.max(-lim.x, Math.min(lim.x, th.x1)); it.z = Math.max(-lim.z, Math.min(lim.z, th.z1));
     it.landed = true;
     const to = th.to;
-    if (actors.includes(to) && !to.hidden && Math.hypot(to.pos.x - th.x1, to.pos.z - th.z1) < 1.2 && !carriedBy(spots, to)) {
+    // (a climber up on a perch can't catch: the thing would ride at its height)
+    const climbing = to.mv && ['up', 'sit'].includes(to.mv.phase);
+    if (actors.includes(to) && !to.hidden && !climbing && Math.hypot(to.pos.x - th.x1, to.pos.z - th.z1) < 1.2 && !carriedBy(spots, to)) {
       it.carrier = to; it.carryUntil = null; to.goal = { type: 'carry', item: it, until: null }; to.goalSince = now();
       say(to, line(to, 'catch'), 1.8);
     } else say(th.from, line(th.from, 'oops'), 1.6);
