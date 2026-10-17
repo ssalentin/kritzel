@@ -204,10 +204,11 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
       }
       return inBook;
     }
-    const covered = (h, file) => [...boxes, ...(inBook || []), ...waiting.map(w => w.box).filter(Boolean)].some(b => b.file !== file && b.max[1] >= h.top - 0.3 &&
+    const covered = (h, file) => [...boxes, ...(inBook || []), ...waiting.map(w => w.box).filter(Boolean)].some(b => b.file !== file &&
+      (b.max[1] >= h.top - 0.3 || Math.abs(b.max[1] - h.bottom) <= 0.3) &&                  // hangs from it, or sits on it
       b.min[0] - 0.3 <= h.x && h.x <= b.max[0] + 0.3 && b.min[2] - 0.3 <= h.z && h.z <= b.max[2] + 0.3);
     const hangingLoose = file => info => (info?.hanging || []).filter(h => !h.supported && !covered(h, file)).map(h =>
-      `actor ${h.id} is built up in the air (its top at y ${h.top}) with nothing above it to hang from: add what it hangs from (a branch on a short trunk) to this module as scenery outside its rig, over its hands, and return holds: [{ actor: '${h.id}', x: ${h.x}, z: ${h.z}, r: 0.4 }]`);
+      `actor ${h.id} is built up in the air (y ${h.bottom} to ${h.top}) with nothing to hang from or sit on: add it to this module as scenery outside its rig (a branch on a short trunk over its hands, or the swing, nest or wall under it, as drawn), and return holds: [{ actor: '${h.id}', x: ${h.x}, z: ${h.z}, r: 0.4 }]`);
     const takenNow = old => [...existing.filter(t => t !== old).flatMap(t => t.ids), ...report.written.flatMap(w => w.ids)];
     const write = (s, last = false) => {
       const job = (async () => {
@@ -310,7 +311,7 @@ Several builders make this sheet at the same time. You build only this one drawi
       halted = true;
       await Promise.allSettled(helpers);
       await Promise.allSettled(pending);
-      for (const { s } of waiting.splice(0)) report.rejected.push({ kind: s.kind, file: s.file, problems: ['not written: the main call failed before the creature it holds was written'] });
+      for (const { s, hangs } of waiting.splice(0)) report.rejected.push({ kind: s.kind, file: s.file, problems: [`not written: the main call failed before ${hangs ? 'what it hangs from or sits on' : 'the creature it holds'} was written`] });
       if (!report.written.length) throw e;
       report.mainError = e.message;
       log(`${name}: the main call failed after ${report.written.length} thing(s) were written; not retrying: ${e.message}`);
