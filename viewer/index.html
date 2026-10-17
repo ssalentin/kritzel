@@ -38,6 +38,12 @@
   @keyframes arrive { 0% { opacity: 0; transform: translate(-50%, 10px) scale(.6); } 12% { opacity: 1; transform: translate(-50%, 0) scale(1.08); }
     20% { transform: translate(-50%, 0) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -12px) scale(1); } }
   #hint { position: fixed; left: 16px; bottom: 12px; opacity: .6; color: var(--ink); font-size: 13px; pointer-events: none; }
+  #ver button { pointer-events: auto; border: 0; background: none; padding: 0 0 0 4px; font: inherit; color: inherit; cursor: pointer; text-decoration: underline dotted; }
+  #log { position: fixed; left: 16px; bottom: 38px; width: min(420px, calc(100vw - 32px)); max-height: 55vh; overflow: auto;
+    background: rgba(255,255,255,.95); color: #1d2a30; border-radius: 14px; box-shadow: 0 8px 28px rgba(0,0,0,.2); padding: 12px 16px; font: 13px/1.4 system-ui, sans-serif; z-index: 20; }
+  #log h3 { margin: 0 0 6px; font-size: 15px; }
+  #log .day { margin: 10px 0 2px; font-weight: 600; color: #557; }
+  #log li { margin: 2px 0; } #log ul { margin: 0; padding-left: 18px; } #log code { color: #889; font-size: 11px; }
   #card { position: fixed; right: 16px; bottom: 12px; max-width: min(280px, calc(100vw - 32px)); display: none;
     background: var(--panel); border-radius: 10px; padding: 8px 12px; }
   #card b { display: block; font-size: 15px; }
@@ -88,6 +94,7 @@
 <div id="veil"><div><span class="pen">✏️</span> Leg los mit dem Malen!</div></div>
 <div id="hint">Tippe eine Figur an, um ihr mit der Kamera zu folgen · Esc beendet <span id="ver"></span></div>
 <div id="card"></div>
+<div id="log" hidden></div>
 <button id="snd" type="button" aria-pressed="false">🔇 Ton an</button>
 <button id="camBtn" type="button">📷 Kamera</button>
 <button id="langBtn" type="button"></button>
@@ -508,7 +515,41 @@ import('./sound.js?v=' + Date.now()).then(m => {
 
 // version in the hint line: which build of Kritzel this page runs
 fetch('/api/version', { cache: 'no-store' }).then(r => r.json())
-  .then(v => { document.getElementById('ver').textContent = `· Kritzel v${v.version}${v.commit ? ' (' + v.commit + ')' : ''}`; }).catch(() => {});
+  .then(v => {
+    const ver = document.getElementById('ver'), btn = document.createElement('button');
+    ver.textContent = `· Kritzel v${v.version}${v.commit ? ' (' + v.commit + ')' : ''}`;
+    btn.type = 'button'; btn.textContent = '📜'; btn.title = t('whatsNew'); btn.setAttribute('aria-label', t('whatsNew'));
+    btn.addEventListener('click', e => { e.stopPropagation(); toggleLog(); });
+    ver.append(btn);
+  }).catch(() => {});
+// "what's new": the latest changes (the running checkout's commits), opened from the button next to the version
+const logEl = document.getElementById('log');
+async function toggleLog() {
+  if (!logEl.hidden) { logEl.hidden = true; return; }
+  let items = [];
+  try { items = await (await fetch('/api/changelog', { cache: 'no-store' })).json(); } catch {}
+  const h = document.createElement('h3'); h.textContent = t('whatsNew');
+  const parts = [h];
+  let day = '', ul = null;
+  for (const c of items) {
+    const d = (c.date || '').slice(0, 10);
+    if (d !== day) {
+      day = d; ul = document.createElement('ul');
+      const dd = document.createElement('div'); dd.className = 'day';
+      dd.textContent = new Date(c.date).toLocaleDateString(lang() === 'de' ? 'de-DE' : 'en-GB', { weekday: 'short', day: 'numeric', month: 'long' });
+      parts.push(dd, ul);
+    }
+    const li = document.createElement('li'), code = document.createElement('code');
+    code.textContent = ' ' + c.commit;
+    li.append(c.subject, code); ul.append(li);
+  }
+  if (!items.length) { const p = document.createElement('div'); p.textContent = '—'; parts.push(p); }
+  logEl.replaceChildren(...parts);
+  logEl.hidden = false;
+}
+logEl.addEventListener('click', e => e.stopPropagation());
+addEventListener('click', () => { logEl.hidden = true; });
+addEventListener('keydown', e => { if (e.key === 'Escape') logEl.hidden = true; });
 
 // camera picker (local or network cameras) with a small live preview
 import('./camera.js?v=' + Date.now())

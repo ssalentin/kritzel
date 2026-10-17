@@ -9,6 +9,7 @@ Camera selection (see scripts/camera_server.py for the remote side):
   GET /api/status               → what capture and generate are doing (frames/status/*.json), for the status pill
   GET /api/status/cutout.png    → the newest drawing as a paper cut-out (written by capture)
   GET/PUT /api/mode             → the world mode, {mode: add | switch}, in viewer/things/mode.json
+  GET  /api/changelog           → the latest commits (newest first), for the viewer's "what's new"
   POST /api/newworld            → runs scripts/newworld.sh: archive this world to worlds/, start an empty one
   GET /api/stamps               → mtime:size of every engine file and every thing, so the viewer's poll is one request
   PUT /api/placement            → {file, d: [dx, dz] | null}: where the viewer moved a new thing (viewer/things/placement.json)
@@ -45,6 +46,14 @@ def version():
     except (OSError, subprocess.SubprocessError):
         c = ""
     return {"version": v, "commit": c}
+def changelog(n=60):
+    """What changed lately, newest first: the commits of the running checkout (merges left out)."""
+    try:
+        out = subprocess.run(["git", "log", "--no-merges", f"-n{n}", "--format=%h%x09%cI%x09%s"], cwd=ROOT,
+                             capture_output=True, text=True, timeout=3).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [dict(zip(("commit", "date", "subject"), l.split("\t", 2))) for l in out.splitlines() if l.count("\t") >= 2]
 CAMERA_PORT = 8766
 STATUS = ROOT / "frames" / "status"
 PLACEMENT_LOCK = threading.Lock()
@@ -144,6 +153,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         path = urllib.parse.urlsplit(self.path).path
         if path == "/api/version":
             return self.json(version())
+        if path == "/api/changelog":
+            return self.json(changelog())
         if path == "/api/cameras":
             hosts = tailnet_hosts()
             with ThreadPoolExecutor(16) as ex:

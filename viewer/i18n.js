@@ -26,6 +26,7 @@ export const pickLines = v => Array.isArray(v) ? v : (v && (v[cur] || v.de)) || 
 
 const S = {
   de: {
+    whatsNew: 'Was ist neu',
     hint: 'Tippe Figuren und Dinge an · lange drücken: mit der Kamera folgen · Esc beendet',
     veil: 'Leg los mit dem Malen!',
     soundOn: '🔇 Ton an', soundOff: '🔊 Ton aus',
@@ -48,6 +49,7 @@ const S = {
     modeNoteAdd: 'Modus: Neues kommt dazu', modeNoteSwitch: 'Modus: Die Welt ist das Blatt', newWorld: '🌍 Neue Welt', sure: 'Sicher? Nochmal tippen',
   },
   en: {
+    whatsNew: "What's new",
     hint: 'Tap figures and things · press and hold: follow with the camera · Esc stops',
     veil: 'Start drawing something!',
     soundOn: '🔇 Sound on', soundOff: '🔊 Sound off',
