@@ -156,9 +156,12 @@ export async function build(api, prevState = null) {
   // the situation the dialogue writer reads: who carries what, what is in the air, the night, the weather. Sent
   // when it changes and at most every 10 s (serve.py keeps the last one in frames/status/situation.json)
   let sentSituation = '', sentAt = 0;
+  // this page's id, kept for the tab: serve.py lets one viewer hold the report (a rebuilt engine keeps it)
+  let REPORT_CLIENT = Math.random().toString(36).slice(2, 12);
+  try { REPORT_CLIENT = sessionStorage.getItem('reportClient') || (sessionStorage.setItem('reportClient', REPORT_CLIENT), REPORT_CLIENT); } catch { /* no storage: a fresh id */ }
   function reportSituation() {
     // only the live viewer, and only while it is on screen: an archived world or a hidden tab runs its own sim
-    if (!location.pathname.startsWith('/viewer/') || document.visibilityState !== 'visible') return;
+    if (!location.pathname.startsWith('/viewer/') || document.visibilityState !== 'visible' || location.search.includes('noreport')) return;
     if (Date.now() - sentAt < 10000) return;
     const carrying = [], thrown = [];
     for (const e of loaded.values()) for (const s of e.spots) if (s.kind === 'portable') {
@@ -166,8 +169,9 @@ export async function build(api, prevState = null) {
       if (s.throw) thrown.push({ who: s.throw.from?.id, what: e.meta?.name || '', to: s.throw.to?.id });
     }
     const weather = Object.entries(api.mood?.weather?.() || {}).filter(([k, v]) => v === true).map(([k]) => k);
-    const body = JSON.stringify({ carrying, thrown, night: Math.round((api.mood?.night ?? 0) * 100) / 100, weather });
-    if (body === sentSituation) return;
+    const body = JSON.stringify({ client: REPORT_CLIENT, carrying, thrown, night: Math.round((api.mood?.night ?? 0) * 100) / 100, weather });
+    // sent when it changes, and as a keep-alive every 30 s even if unchanged (the lease lapses after 60 s silent)
+    if (body === sentSituation && Date.now() - sentAt < 30000) return;
     sentSituation = body; sentAt = Date.now();
     fetch('/api/situation', { method: 'PUT', body, headers: { 'Content-Type': 'application/json' } }).catch(() => {});
   }

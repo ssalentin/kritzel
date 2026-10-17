@@ -69,6 +69,8 @@ def changelog(n=60):
 CAMERA_PORT = int(os.environ.get("CAMERA_PORT", "8766"))   # where camera_server.py (or replay_camera.py) listens
 STATUS = ROOT / "frames" / "status"
 PLACEMENT_LOCK = threading.Lock()
+SITUATION_LEASE = {"client": None, "at": 0.0}
+SITUATION_LEASE_S = 60
 SITUATION = ROOT / "frames" / "status" / "situation.json"   # what the sim reports for the dialogue writer (PUT /api/situation)
 MODE_FILE = ROOT / "viewer" / "things" / "mode.json"     # {"mode": "add" | "switch"}; missing = add (issue #16)
 NEWWORLD_LOCK, NEWWORLD_GAP_S = threading.Lock(), 10
@@ -268,8 +270,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     "weather": [str(k)[:20] for k in body.get("weather", [])[:6]],
                     "at": time.time(),
                 }
+                client = str(body.get("client", ""))[:40]
+                assert client
             except (ValueError, AssertionError, KeyError, TypeError):
-                return self.json({"error": "expected {carrying, thrown, night, weather}"}, 400)
+                return self.json({"error": "expected {client, carrying, thrown, night, weather}"}, 400)
+            # one reporter at a time: the first viewer to report holds the lease, renewed by each report; it lapses
+            # after SITUATION_LEASE_S silent, so a closed or hidden viewer hands over. Reports from others are refused.
+            now = time.time()
+            if SITUATION_LEASE["client"] not in (None, client) and now - SITUATION_LEASE["at"] < SITUATION_LEASE_S:
+                return self.json({"error": "another viewer reports the situation"}, 409)
+            SITUATION_LEASE.update(client=client, at=now)
             SITUATION.parent.mkdir(parents=True, exist_ok=True)
             tmp = SITUATION.with_name(".situation.json.tmp")
             tmp.write_text(json.dumps(situ) + "\n")
