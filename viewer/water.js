@@ -73,27 +73,43 @@ export function makeWater({ THREE, scene }) {
   const clamp = (v, lo, hi, d) => Math.min(hi, Math.max(lo, Number.isFinite(v) ? v : d));
 
   return {
-    // a round pond on the ground: calm water that swirls slowly, a foam rim, rings spreading out
-    pond(x, z, r = 1.2) {
+    // a pond on the ground, an oval rx across x and rz across z (a circle when rz is left out): deep in the
+    // middle and lighter toward the bank, a raised sandy bank round it, a calm surface that ripples slowly,
+    // rings spreading out
+    pond(x, z, r = 1.2, rz = r) {
       if (!allow()) return new THREE.Group();
-      r = clamp(r, 0.2, 4, 1.2);
+      r = clamp(r, 0.2, 4, 1.2); rz = clamp(rz, 0.2, 4, r);
       const g = new THREE.Group(); g.position.set(x, 0, z);
       const tex = streaks('#56aee0'); tex.repeat.set(2, 2);
-      const disc = new THREE.Mesh(new THREE.CircleGeometry(r, 48), waterMat(tex, 0.82));
-      disc.rotation.x = -Math.PI / 2; disc.position.y = 0.04; disc.renderOrder = 2;
-      const rim = new THREE.Mesh(new THREE.TorusGeometry(r, 0.03, 6, 48), foamMat());
-      rim.rotation.x = Math.PI / 2; rim.position.y = 0.045;
+      // the surface: a disc whose colour and height follow the oval; the middle is the deep end
+      const geo = new THREE.CircleGeometry(1, 48); geo.rotateX(-Math.PI / 2); geo.scale(r, 1, rz);
+      const pos = geo.attributes.position, base = pos.array.slice(), col = [];
+      const deep = new THREE.Color(0x0b3a66), shallow = new THREE.Color(0x9fe2f7), c = new THREE.Color();
+      for (let i = 0; i < pos.count; i++) {
+        const d = Math.min(1, Math.hypot(pos.getX(i) / r, pos.getZ(i) / rz));
+        c.copy(deep).lerp(shallow, Math.pow(d, 2.5)); col.push(c.r, c.g, c.b);
+      }
+      geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      const wm = waterMat(tex, 0.82); wm.vertexColors = true;
+      const disc = new THREE.Mesh(geo, wm); disc.renderOrder = 2;
+      // the bank: a soft sand tube round the oval, so the water sits in it and the edge has height
+      const bank = [];
+      for (let i = 0; i < 64; i++) { const a = i / 64 * TAU; bank.push(new THREE.Vector3(Math.cos(a) * r, 0.07, Math.sin(a) * rz)); }
+      const bankMesh = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(bank, true), 64, 0.08, 6, true),
+        new THREE.MeshStandardMaterial({ color: 0xd9c48f, roughness: 0.9 }));
       const rings = [0, 1, 2].map(() => {
         const ring = new THREE.Mesh(new THREE.TorusGeometry(1, 0.012, 4, 40), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true }));
         ring.rotation.x = Math.PI / 2; ring.position.y = 0.05; g.add(ring); return ring;
       });
-      g.add(disc, rim);
-      g.userData.zone = { kind: 'pond', r };       // where swimmers may go (zones())
+      g.add(disc, bankMesh);
+      g.userData.zone = { kind: 'pond', r, rz };   // where swimmers may go (zones())
       return track(g, t => {
         tex.offset.set(Math.sin(t * 0.15) * 0.2, t * 0.04);
+        for (let i = 0; i < pos.count; i++) pos.setY(i, 0.035 + 0.008 * Math.sin(t * 1.3 + base[3 * i] * 1.5 + base[3 * i + 2] * 1.5));
+        pos.needsUpdate = true;
         rings.forEach((ring, i) => {
           const k = (t * 0.25 + i / 3) % 1;
-          ring.scale.setScalar(r * (0.15 + k * 0.8)); ring.material.opacity = 0.5 * (1 - k);
+          ring.scale.set(r * (0.15 + k * 0.8), rz * (0.15 + k * 0.8), 1); ring.material.opacity = 0.5 * (1 - k);
         });
       });
     },
@@ -146,7 +162,7 @@ export function makeWater({ THREE, scene }) {
 
     begin() { used = ignored = 0; },
     // the water on the island now, in world coordinates, for creatures that swim:
-    // { kind: 'pond', x, z, r } or { kind: 'river', points: [{ x, z }], width }
+    // { kind: 'pond', x, z, r, rz } (an oval: r across x, rz across z) or { kind: 'river', points: [{ x, z }], width }
     zones() {
       const out = [], v = new THREE.Vector3();
       for (const { obj } of live) {
@@ -154,7 +170,7 @@ export function makeWater({ THREE, scene }) {
         let o = obj; while (o.parent) o = o.parent;
         if (!z || o !== scene) continue;
         obj.updateMatrixWorld(true);
-        if (z.kind === 'pond') { obj.getWorldPosition(v); out.push({ kind: 'pond', x: v.x, z: v.z, r: z.r }); }
+        if (z.kind === 'pond') { obj.getWorldPosition(v); out.push({ kind: 'pond', x: v.x, z: v.z, r: z.r, rz: z.rz }); }
         else {                             // only stretches on the ground (a river can also run down a rock face)
           const pts = z.points.map(p => obj.localToWorld(v.copy(p)).clone()).filter(p => p.y < 0.3).map(p => ({ x: p.x, z: p.z }));
           if (pts.length) out.push({ kind: 'river', width: z.width, points: pts });
