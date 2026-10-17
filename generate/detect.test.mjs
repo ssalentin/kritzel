@@ -133,6 +133,8 @@ test('the same sheet seen again: what is in the book already is not built twice,
   const birds = [t('Vogel', 0.2, 0.2), t('Vogel', 0.3, 0.25), t('Vogel', 0.4, 0.2), t('Vogel', 0.5, 0.25), t('Strichfigur', 0.3, 0.7), t('Strichfigur', 0.6, 0.7), t('Sonne', 0.8, 0.15)];
   const fresh = [e('ein Vogel', 0.6, 0.3), e('ein Vogel', 0.7, 0.35), e('ein Vogel', 0.8, 0.3), e('ein Haus', 0.4, 0.6)];
   assert.deepEqual(againInBook(fresh, birds), []);
-  // named by the list itself
-  assert.deepEqual(againInBook([{ de: 'ein Ding', box: [0, 0, 1, 1], inBook: 'Haus' }], book).map(x => x.inBook), ['Haus']);
+  // the list's own in_book counts only on the same sheet: alone it builds the drawing
+  assert.deepEqual(againInBook([{ de: 'ein Vogel', box: [0, 0, 0.1, 0.1], inBook: 'Vogel' }], birds), []);
+  const named = list.map((x, i) => i === 7 ? { ...x, inBook: 'Haus' } : x);   // on the same sheet it does
+  assert.ok(againInBook(named, book).some(x => x.inBook === 'Haus'));
 });

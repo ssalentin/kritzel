@@ -232,7 +232,9 @@ export function againInBook(listed, existing) {
     if (got.length > best.length) best = got;
   }
   const same = best.length >= 3 && new Set(best.map(q => q.k)).size >= 2 && best.length >= 0.6 * listed.length;
-  return [...new Set([...named, ...(same ? best.map(q => q.e) : [])])];
+  // the list's in_book counts only when the places agree it is the same sheet: it knows the book's things only by
+  // their descriptions, so a new 'bird with spread wings' can come back as the book's Vogel
+  return same ? [...new Set([...named, ...best.map(q => q.e)])] : [];
 }
 
 // ---------- a new sheet: list its drawings first ----------
