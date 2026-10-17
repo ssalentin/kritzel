@@ -23,9 +23,11 @@ export function createCamFrame(el) {
     // called by status.js after every pill update: v = { tone, text }, st = both stages' status files
     update(v, st) {
       const c = st?.capture || {}, now = st?.now ?? Date.now() / 1000;                 // server clock, as in status.js
-      const hold = !!c.alive && c.state === 'moving';                                   // capture waits for the paper to be still
+      // no picture (no camera chosen, or it is off): no paper hint at all
+      const camOn = [...el.querySelectorAll('.pic video, .pic img')].some(x => !x.hidden);
+      const hold = camOn && !!c.alive && c.state === 'moving';                          // capture waits for the paper to be still
       // capture has settled a picture: the paper can go (generate already has the JPG)
-      const done = !hold && !!c.alive && c.state === 'watching' && !!c.last && now - c.last.at < DONE_S;
+      const done = camOn && !hold && !!c.alive && c.state === 'watching' && !!c.last && now - c.last.at < DONE_S;
       const mode = hold ? 'hold' : done ? 'done' : 'live';
       if (el.dataset.mode !== mode) el.dataset.mode = mode;
       const text = hold ? t('camHold') : done ? t('camDone') : v.text;
