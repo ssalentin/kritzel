@@ -214,7 +214,7 @@ export function portable(a, g, api) {
   // a throw: a friend a few cells off; it flies in an arc and lands, and is caught if they are still there
   const far = actors().find(b => b !== a && !b.hidden && b.kind !== 'squid' && !carriedBy(spots, b) && (b.goal?.type ?? 'idle') !== 'give' &&
     Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y)) >= 3 && Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y)) <= 6);
-  if (far && R() < 0.15) { throwTo(a, it, far, api); return; }
+  if (far && R() < 0.05) { throwTo(a, it, far, api); return; }   // about one throw a minute, not one every half minute
   if (!g.cell || (a.cell.x === g.cell[0] && a.cell.y === g.cell[1])) {
     const c = nearest(a.pos.x + (R() - 0.5) * 4, a.pos.z + (R() - 0.5) * 4, a);
     g.cell = c ? [c.x, c.y] : null;
@@ -240,7 +240,9 @@ export function frame(actors, api) {
     // a brief talk or greeting keeps it; a goal that stays something else for over a second lets it go
     if (/^(carry|give)$/.test(it.carrier.goal?.type ?? '')) it.letGoAt = null;
     else if (it.letGoAt == null) it.letGoAt = now();
-    if (it.letGoAt != null && now() - it.letGoAt > 1) { it.carrier = null; it.letGoAt = null; continue; }
+    // an interaction (chase, approach, follow) may pre-empt a give for a while: the thing is kept through it
+    const grace = /^(chase|approach|follow)$/.test(it.carrier.goal?.type ?? '') ? 8 : 1;
+    if (it.letGoAt != null && now() - it.letGoAt > grace) { it.carrier = null; it.letGoAt = null; continue; }
     // held out in front of the carrier, not on its middle: the carrier's radius plus the thing's half-width along its facing
     const c = it.carrier, off = (c.radius ?? 0.4) + (it.r ?? 0.5), f = c.face ?? 0;
     it.x = c.pos.x + Math.sin(f) * off; it.z = c.pos.z + Math.cos(f) * off;
