@@ -459,8 +459,14 @@ ${draft}`;
             const taken = [...new Set([...others, ...ids, ...report.written.flatMap(w => w.ids), ...diskIds])];
             const g = await finish({ body: x.body, model: MODEL, frame, images: s.images || images, takenIds: taken, keepIds: [], calls: report.calls, fixModels: [MODEL], extra: hangingLoose(null) });
             if (!g.code) { log(`${name}: a part split from ${file} failed its checks: ${g.problems.join('; ').slice(0, 160)}`); continue; }
+            // the check took seconds: what is on disk now decides (ids and names a later frame wrote meanwhile)
+            const nowOnDisk = readdirSync(thingsDir).filter(f => /^[\w.-]+\.js$/.test(f) && f !== file).map(f => { try { return readFileSync(join(thingsDir, f), 'utf8'); } catch { return ''; } });
+            const partIds = [...g.code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(m => m[1]);
+            const idsNow = new Set(nowOnDisk.flatMap(c => [...c.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(m => m[1])));
+            if (partIds.some(i => idsNow.has(i))) { log(`${name}: a part split from ${file} not written: its actor id was taken meanwhile`); continue; }
             let partName = g.code.match(/name:\s*['"]([^'"]+)['"]/)?.[1] || 'Ding', code = g.code;
-            const names = new Set([...existing.map(t => String(t.meta.name).toLowerCase()), ...report.written.map(w => w.name.toLowerCase())]);
+            const names = new Set([...existing.map(t => String(t.meta.name).toLowerCase()), ...report.written.map(w => w.name.toLowerCase()),
+              ...nowOnDisk.map(c => c.match(/\bmeta\s*=\s*\{[^}]*?\bname:\s*['"]([^'"]+)['"]/)?.[1]?.toLowerCase()).filter(Boolean)]);
             if (names.has(partName.toLowerCase())) {
               let n = 2;
               while (names.has(`${partName} ${n}`.toLowerCase())) n++;
