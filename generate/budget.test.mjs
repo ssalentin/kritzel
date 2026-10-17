@@ -28,7 +28,7 @@ test('changes close together make one call, and no more than the hourly cap', as
     const actor = (id, name) => `export const meta = { name: '${name}', drawing: 'x' };\nexport function build() { return { actors: [{ id: '${id}', name: '${name}', rig: {} }] }; }\n`;
     writeFileSync(join(dir, 'affe.js'), actor('affe', 'Affe'));
     writeFileSync(join(dir, 'maus.js'), actor('maus', 'Maus'));
-    const opts = { thingsDir: dir }, wait = ms => new Promise(ok => setTimeout(ok, ms));
+    const opts = { thingsDir: dir, reportsDir: dir }, wait = ms => new Promise(ok => setTimeout(ok, ms));
     wantDialogues(opts, 'new Affe'); wantDialogues(opts, 'night falls'); wantDialogues(opts, 'affe carries Ball');
     await wait(1500);
     wantDialogues(opts, 'new Maus');
