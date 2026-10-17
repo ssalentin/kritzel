@@ -81,6 +81,8 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
     scope?.traverse(o => {
       if (!o.isMesh || o.isInstancedMesh || o.userData.water || o.userData.outline) return;
       if (![].concat(o.material).some(m => m && 'emissive' in m && !m.transparent)) return;
+      // without an object3D the whole thing glows: its dark parts (eyes, mouths, outlines) stay dark, or the face is lost
+      if (!l.object3D?.isObject3D && [].concat(o.material).some(m => m.color && m.color.r * 0.3 + m.color.g * 0.59 + m.color.b * 0.11 < 0.25)) return;
       const orig = o.material, lit = m => ('emissive' in m && !m.transparent) ? m.clone() : m;
       o.material = Array.isArray(orig) ? orig.map(lit) : lit(orig);
       for (const m of [].concat(o.material)) if ('emissive' in m) { m.emissive.copy(color); m.emissiveIntensity = 0; }
