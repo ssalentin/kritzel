@@ -19,6 +19,8 @@ export const POOL_MODEL = process.env.KRITZEL_DIALOGUE_MODEL || 'deepseek/deepse
 export const POOL_FALLBACK = process.env.KRITZEL_DIALOGUE_FALLBACK || 'claude-haiku-5-5';
 // the most dialogues kept in the pool: many pairs meet, and each dialogue plays once per page load
 const POOL_MAX = 36;
+// quests in the book at once (the sim runs one at a time)
+const QUESTS = 2;
 
 const STR = `['"]([^'"]+)['"]`, PLAIN = `(?:\\s*\\w+:\\s*(?:'[^']*'|"[^"]*"|[\\w.-]+)\\s*,)*?`;
 
@@ -55,8 +57,9 @@ export const HOBBIES = ['collect', 'guard', 'nap', 'follow', 'wander'];
 const WEATHER = ['rain', 'snow', 'rainbow', 'lightning'];
 
 const SYSTEM = `You write the characters of Kritzel, a living pop-up book of figures children drew on paper: who each one is, and short dialogues between them.
-Reply with JSON only: { "personas": { <actor id>: { "favourite": <name> or null, "likes": [<name>, ...], "fears": [<name>, ...], "hobby": "collect" | "guard" | "nap" | "follow" | "wander", "lines": { "de": [...], "en": [...] } } }, "dialogues": [ { "between": [nameA, nameB], "when": { ... } (optional), "end": "stroll" | "dance" | "tag" | "look" | null, "turns": [ { "who": nameA or nameB, "de": German line, "en": English line } ] } ] }.
+Reply with JSON only: { "personas": { <actor id>: { "favourite": <name> or null, "likes": [<name>, ...], "fears": [<name>, ...], "hobby": "collect" | "guard" | "nap" | "follow" | "wander", "lines": { "de": [...], "en": [...] } } }, "quests": [ <quest>, ... ], "dialogues": [ { "between": [nameA, nameB], "when": { ... } (optional), "end": "stroll" | "dance" | "tag" | "look" | null, "turns": [ { "who": nameA or nameB, "de": German line, "en": English line } ] } ] }.
 Personas: only for the figures asked for. Build each from what its drawing shows and from the things and figures around it in the book: its favourite place or thing (the centre of its attention), up to 3 it likes, up to 2 it is a little afraid of (gently: a cat and water, a mouse and the cat), a hobby (collect: picks up small things; guard: stays by its favourite; nap: rests at its favourite; follow: walks after one it likes; wander: roams), and 2 or 3 typical lines, the same in German and English. Every <name> is exactly one of the names listed.
+Quests: only as many as asked for. A quest is a little world event a figure or a thing has, and everyone nearby notices, talks about it and helps: { "who": <name or actor id of the figure or thing that has it>, "title": { "de", "en" }, "start": { "de", "en" } (its first line, e.g. "Aua, mein Zahn!"), "solve": { "kind": "help" | "bring" | "visit" | "wait", "what": <name of a thing> (bring only; null for any small thing), "at": <name of a thing> (visit only), "when": "night" | "sun" | "rain" (wait only) }, "helpers": [<name>, ...] (up to 3, who would help first: those who like it), "effect": "dim" (optional, only when the sun or a sky thing is sad and its light should dim until it is cheered up), "lines": { "notice": { "de": [2-3], "en": [2-3] } (what the others say when they notice, e.g. "Was hat der Hai denn?"), "help": { "de": [2-3], "en": [2-3] } (what the helpers say), "solved": { "de", "en" }, "thanks": { "de", "en" } } }. Kind and gentle: a lost thing, a wish, a sad mood that cheering up fixes, nothing scary.
 Dialogues: 3 to 5 turns, the two take turns, every line answers the one before, and together they make a tiny scene that fits these two: their personas, their drawings, and the moment. "when" says when a dialogue fits, only with these keys: "near": <name> (they talk about a thing or figure next to them), "carrying": true (one of them carries something), "night": 0 to 1 (fits from this darkness on), "weather": "rain" | "snow" | "rainbow" | "lightning", "new": <name of a thing> (it just arrived in the book). A "when" names one moment only (one key), so it fits as soon as that moment comes. No "when" means any time; most dialogues have none. Lines are short (at most 60 characters), warm, playful and right for small children: no violence, no insults, nothing scary beyond a friendly "boo". German first, natural for children; "en" is short child-friendly English, not a word-for-word copy. In "between" and "who" use the figures' names (not their actor ids). They all live on the open pages of a big pop-up book: when a line mentions where they are, it is the book or its pages, never an island.`;
 
 // model text → the agreed shape, or left out: unknown refs, hobbies and when keys are dropped, every line passes safeLine
@@ -78,6 +81,31 @@ export function cleanWhen(w, refs, thingNames) {
   if (WEATHER.includes(w.weather)) out.weather = w.weather;
   if (typeof w.new === 'string' && thingNames.has(w.new.toLowerCase())) out.new = w.new;   // things only, not figures
   return Object.keys(out).length ? out : null;
+}
+
+// a quest in the shape agreed with studio.world, or null: refs must be names in the book, kinds and effects are
+// what the sim runs, every line passes safeLine (a line pair needs both languages)
+const KINDS = ['help', 'bring', 'visit', 'wait'], WAITS = ['night', 'sun', 'rain'];
+const SKY = /sonne|sun|mond|moon|stern|star|wolke|cloud|himmel|sky|regenbogen|rainbow/i;
+export function cleanQuest(q, refs, thingNames, describe = () => '') {
+  if (!q || typeof q !== 'object' || typeof q.who !== 'string' || !refs.has(q.who.toLowerCase())) return null;
+  const pair = x => x && safeLine(x.de, 'de') && safeLine(x.en, 'en') ? { de: x.de, en: x.en } : null;
+  const lines = x => {
+    const de = (Array.isArray(x?.de) ? x.de : []).filter(l => safeLine(l, 'de')).slice(0, 3), en = (Array.isArray(x?.en) ? x.en : []).filter(l => safeLine(l, 'en')).slice(0, 3);
+    const n = Math.min(de.length, en.length);
+    return n ? { de: de.slice(0, n), en: en.slice(0, n) } : null;
+  };
+  const thing = x => typeof x === 'string' && thingNames.has(x.toLowerCase()) ? x : null;
+  const title = pair(q.title), start = pair(q.start), s = q.solve || {};
+  if (!title || !start || !KINDS.includes(s.kind)) return null;
+  const solve = { kind: s.kind };
+  if (s.kind === 'bring') solve.what = thing(s.what);                       // null: any small thing
+  if (s.kind === 'visit') { solve.at = thing(s.at); if (!solve.at) return null; }
+  if (s.kind === 'wait') { if (!WAITS.includes(s.when)) return null; solve.when = s.when; }
+  const notice = lines(q.lines?.notice), help = lines(q.lines?.help), solved = pair(q.lines?.solved), thanks = pair(q.lines?.thanks);
+  if (!notice || !help || !solved || !thanks) return null;
+  return { who: q.who, title, start, solve, helpers: (Array.isArray(q.helpers) ? q.helpers : []).filter(h => typeof h === 'string' && refs.has(h.toLowerCase())).slice(0, 3),
+    ...(q.effect === 'dim' && SKY.test(`${q.who} ${describe(q.who)}`) && { effect: 'dim' }), lines: { notice, help, solved, thanks } };
 }
 
 // the moment, in words for the model, from frames/status/situation.json (written by the viewer's sim). That
@@ -109,19 +137,26 @@ export async function makePool({ thingsDir = join(ROOT, 'viewer', 'things'), cou
   const refs = new Set([...cast.flatMap(c => [c.name, c.id]), ...things.map(t => t.name)].map(x => x.toLowerCase()));
   const thingNames = new Set(things.map(t => t.name.toLowerCase()));
   const moment = momentOf(situation, newThings, refs);
+  // a quest stays while its figure or thing is in the book (the sim runs one at a time, with a cooldown); new ones
+  // only to fill up to QUESTS
+  const keptQuests = (Array.isArray(old.quests) ? old.quests : []).filter(q => q && typeof q.who === 'string' && refs.has(q.who.toLowerCase())).slice(0, QUESTS);
+  const wantQuests = QUESTS - keptQuests.length;
   const text = `The figures' names, to use exactly in "between" and "who" (no other names, not their actor ids): ${cast.map(c => c.name).join(', ')}.
 The figures in the book now (actor id, name: drawing):
 ${cast.map(c => `- ${c.id}, ${c.name}: ${c.drawing}${kept[c.id] ? ` (persona: ${JSON.stringify(kept[c.id])})` : ''}`).join('\n')}
 The things in the book (name: drawing):
 ${things.map(t => `- ${t.name}: ${t.drawing}`).join('\n') || '(none)'}
 ${moment ? `Right now: ${moment}.\n` : ''}
-${want.length ? `Write personas for: ${want.map(c => c.id).join(', ')}.` : 'Every figure has its persona: write "personas": {}.'} Write ${count} dialogues, spread over different pairs${moment ? ', at most 4 of them for this moment (with a matching "when"), the rest for any time' : ''}.`;
+${want.length ? `Write personas for: ${want.map(c => c.id).join(', ')}.` : 'Every figure has its persona: write "personas": {}.'} ${wantQuests ? `Write ${wantQuests} quest${wantQuests > 1 ? 's' : ''}${keptQuests.length ? ` (not for ${keptQuests.map(q => q.who).join(', ')}, who have one)` : ''}.` : 'Write "quests": [].'} Write ${count} dialogues, spread over different pairs${moment ? ', at most 4 of them for this moment (with a matching "when"), the rest for any time' : ''}.`;
   const t0 = Date.now();
   const r = await oneShot({ system: SYSTEM, text, images: [], model, fallback: POOL_FALLBACK, effort: 'low' });
   let j = {};
   try { j = JSON.parse(r.text.slice(r.text.indexOf('{'), r.text.lastIndexOf('}') + 1)); } catch { /* unusable reply: keep what we had */ }
   const personas = { ...kept };
   for (const c of want) { const p = cleanPersona(j.personas?.[c.id], refs); if (p) personas[c.id] = p; }
+  const describe = n => [...cast, ...things].find(x => [x.name, x.id].some(y => y && y.toLowerCase() === n.toLowerCase()))?.drawing || '';
+  const quests = [...keptQuests];
+  for (const q of (Array.isArray(j.quests) ? j.quests : []).slice(0, wantQuests)) { const c = cleanQuest(q, refs, thingNames, describe); if (c && !quests.some(x => x.who === c.who)) quests.push(c); }
   const names = new Set(cast.map(c => c.name));
   // the viewer matches figures by name: an actor id written instead is put back to its name
   const nameOf = Object.fromEntries(cast.map(c => [c.id, c.name])), named = n => nameOf[n] && !names.has(n) ? nameOf[n] : n;
@@ -152,9 +187,9 @@ ${want.length ? `Write personas for: ${want.map(c => c.id).join(', ')}.` : 'Ever
   const still = anyTime.filter(d => !seen.has(JSON.stringify(d.turns)));
   const pool = (dialogues.length ? [...dialogues, ...still] : Array.isArray(old.dialogues) ? old.dialogues : []).slice(0, POOL_MAX);
   writeFileSync(out + '.tmp', JSON.stringify({ cast: [...names].sort(), model: r.model, made_at: new Date().toISOString(), reason,
-    personas, dialogues: pool }, null, 1));
+    personas, quests, dialogues: pool }, null, 1));
   renameSync(out + '.tmp', out);
-  return { written: dialogues.length, personas: Object.keys(personas).length - Object.keys(kept).length, offered: offered.length, ...(dropped.length && { dropped: [...new Set(dropped)].slice(0, 5) }),
+  return { written: dialogues.length, personas: Object.keys(personas).length - Object.keys(kept).length, quests: quests.length - keptQuests.length, offered: offered.length, ...(dropped.length && { dropped: [...new Set(dropped)].slice(0, 5) }),
     seconds: (Date.now() - t0) / 1000, cost: r.cost, model: r.model, ...(r.fellBack && { fellBack: r.fellBack }) };
 }
 

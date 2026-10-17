@@ -18,7 +18,7 @@ test('the pool is stale when missing or made for another cast', async () => {
     writeFileSync(join(dir, 'dialogues.json'), JSON.stringify({ cast: ['Affe'], dialogues: [] }));
     assert.equal(await poolIsStale(dir), true);                        // made before the mouse came
     const p = { favourite: null, likes: [], fears: [], hobby: 'wander', lines: { de: [], en: [] } };
-    writeFileSync(join(dir, 'dialogues.json'), JSON.stringify({ cast: ['Affe', 'Maus'], personas: { affe: p, maus: p }, dialogues: [] }));
+    writeFileSync(join(dir, 'dialogues.json'), JSON.stringify({ cast: ['Affe', 'Maus'], personas: { affe: p, maus: p }, quests: [], dialogues: [] }));
     assert.equal(await poolIsStale(dir), false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -98,7 +98,7 @@ test('a pool without a persona for every figure is stale, so the watcher makes o
     assert.equal(await poolIsStale(dir), true);                        // from before personas
     writeFileSync(join(dir, 'dialogues.json'), JSON.stringify({ cast: ['Affe', 'Maus'], personas: { affe: p }, dialogues: [] }));
     assert.equal(await poolIsStale(dir), true);                        // the mouse has none
-    writeFileSync(join(dir, 'dialogues.json'), JSON.stringify({ cast: ['Affe', 'Maus'], personas: { affe: p, maus: p }, dialogues: [] }));
+    writeFileSync(join(dir, 'dialogues.json'), JSON.stringify({ cast: ['Affe', 'Maus'], personas: { affe: p, maus: p }, quests: [], dialogues: [] }));
     assert.equal(await poolIsStale(dir), false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -145,4 +145,42 @@ test('a dialogue the model got slightly wrong is fixed, the rest is dropped with
     assert.equal(d.end, null);
     assert.equal(d.turns.length, 6);
   } finally { process.env.PATH = path; delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a quest keeps only the agreed shape: known names, the four kinds, dim only for the sky, safe lines', async () => {
+  const { cleanQuest } = await import('./dialogues.mjs');
+  const refs = new Set(['hai', 'sonne', 'keks', 'lila']), things = new Set(['keks']);
+  const lines = { notice: { de: ['Was hat der Hai denn?'], en: ['What is up with the shark?'] }, help: { de: ['Ich helfe!'], en: ['I will help!'] },
+    solved: { de: 'Geschafft!', en: 'Done!' }, thanks: { de: 'Danke!', en: 'Thanks!' } };
+  const q = { who: 'Hai', title: { de: 'Der Keks', en: 'The biscuit' }, start: { de: 'Wo ist mein Keks?', en: 'Where is my biscuit?' },
+    solve: { kind: 'bring', what: 'Keks', at: 'Keks' }, helpers: ['Lila', 'Mond', 'Sonne', 'Hai', 'Lila'], effect: 'dim', lines };
+  const c = cleanQuest(q, refs, things);
+  assert.deepEqual(c.solve, { kind: 'bring', what: 'Keks' });                   // at only for visit
+  assert.deepEqual(c.helpers, ['Lila', 'Sonne', 'Hai']);
+  assert.equal(c.effect, undefined);                                           // a shark does not dim the light
+  assert.equal(cleanQuest({ ...q, who: 'Sonne' }, refs, things).effect, 'dim');
+  assert.equal(cleanQuest({ ...q, who: 'Mond' }, refs, things), null);           // not in the book
+  assert.equal(cleanQuest({ ...q, solve: { kind: 'fight' } }, refs, things), null);
+  assert.equal(cleanQuest({ ...q, solve: { kind: 'visit', at: 'Schloss' } }, refs, things), null);
+  assert.equal(cleanQuest({ ...q, solve: { kind: 'wait' } }, refs, things), null);
+  assert.equal(cleanQuest({ ...q, start: { de: 'Du bist dumm!', en: 'Hi' } }, refs, things), null);
+  assert.equal(cleanQuest({ ...q, lines: { ...lines, notice: { de: [], en: [] } } }, refs, things), null);
+});
+
+test('a pool without quests, or with a quest whose figure has left, is stale at start', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kritzel-pool-'));
+  try {
+    writeFileSync(join(dir, 'affe.js'), actor('affe', 'Affe'));
+    writeFileSync(join(dir, 'maus.js'), actor('maus', 'Maus'));
+    const p = { favourite: null, likes: [], fears: [], hobby: 'wander', lines: { de: [], en: [] } };
+    const pool = extra => writeFileSync(join(dir, 'dialogues.json'), JSON.stringify({ cast: ['Affe', 'Maus'], personas: { affe: p, maus: p }, dialogues: [], ...extra }));
+    pool({});
+    assert.equal(await poolIsStale(dir), true);
+    pool({ quests: [{ who: 'Hund' }] });
+    assert.equal(await poolIsStale(dir), true);
+    pool({ quests: [{ who: 'Affe' }] });
+    assert.equal(await poolIsStale(dir), false);
+    pool({ quests: [] });
+    assert.equal(await poolIsStale(dir), false);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

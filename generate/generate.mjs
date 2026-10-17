@@ -504,7 +504,11 @@ export async function poolIsStale(thingsDir) {
   // a pool from before personas (or missing one for a figure) is stale too: else a world whose cast did not
   // change never gets them (live 14:21: no call at all, the 10:31 pool stayed)
   const ids = castOf(thingsDir).map(c => c.id);
-  return JSON.stringify(have?.cast) !== JSON.stringify(want) || ids.some(id => !have?.personas?.[id]);
+  // and one without quests (from before them), or with a quest whose figure or thing has left the book
+  const { thingsOf } = await import('./dialogues.mjs');
+  const here = new Set([...castOf(thingsDir).flatMap(c => [c.id, c.name]), ...thingsOf(thingsDir).map(t => t.name)].map(x => x.toLowerCase()));
+  return JSON.stringify(have?.cast) !== JSON.stringify(want) || ids.some(id => !have?.personas?.[id]) ||
+    !Array.isArray(have?.quests) || have.quests.some(q => !here.has(String(q?.who).toLowerCase()));
 }
 
 // The dialogue pool (and personas) is refreshed in the background, never waited on, within a budget: a change
@@ -542,7 +546,7 @@ function runPool(opts) {
     .then(x => {
       if (x.seconds == null) { pool.calls.pop(); return log(`dialogues: no call (${x.reason})`); }   // fewer than two figures
       pool.fellBack = !!x.fellBack;
-      log(`dialogues: call ${pool.calls.length}/${POOL_PER_HOUR} this hour (${reason}): ${x.written} of ${x.offered} dialogues kept, ${x.personas} new personas, ${x.seconds.toFixed(0)}s, ${x.model}${x.fellBack ? ' (pi failed)' : ''}${x.dropped ? `; dropped: ${x.dropped.join('; ')}` : ''}`);
+      log(`dialogues: call ${pool.calls.length}/${POOL_PER_HOUR} this hour (${reason}): ${x.written} of ${x.offered} dialogues kept, ${x.personas} new personas, ${x.quests} new quests, ${x.seconds.toFixed(0)}s, ${x.model}${x.fellBack ? ' (pi failed)' : ''}${x.dropped ? `; dropped: ${x.dropped.join('; ')}` : ''}`);
     })
     .catch(e => log(`dialogues: ${e.message}`))
     .finally(() => { pool.busy = false; });
