@@ -20,7 +20,7 @@ export const POOL_FALLBACK = process.env.KRITZEL_DIALOGUE_FALLBACK || 'claude-ha
 // the most dialogues kept in the pool: many pairs meet, and each dialogue plays once per page load
 const POOL_MAX = 36;
 // quests in the book at once (the sim runs one at a time)
-const QUESTS = 2;
+const QUESTS = 2, QUEST_HOURS = +process.env.KRITZEL_QUEST_HOURS || 3;
 
 const STR = `['"]([^'"]+)['"]`, PLAIN = `(?:\\s*\\w+:\\s*(?:'[^']*'|"[^"]*"|[\\w.-]+)\\s*,)*?`;
 
@@ -139,7 +139,11 @@ export async function makePool({ thingsDir = join(ROOT, 'viewer', 'things'), cou
   const moment = momentOf(situation, newThings, refs);
   // a quest stays while its figure or thing is in the book (the sim runs one at a time, with a cooldown); new ones
   // only to fill up to QUESTS
-  const keptQuests = (Array.isArray(old.quests) ? old.quests : []).filter(q => q && typeof q.who === 'string' && refs.has(q.who.toLowerCase())).slice(0, QUESTS);
+  // ... for QUEST_HOURS (a book that stays the same would replay the same two quests for days), and not once the
+  // sim reports it solved (situation.solved: the who of each quest solved)
+  const solved = new Set((Array.isArray(situation?.solved) ? situation.solved : []).filter(x => typeof x === 'string').map(x => x.toLowerCase()));
+  const keptQuests = (Array.isArray(old.quests) ? old.quests : []).filter(q => q && typeof q.who === 'string' && refs.has(q.who.toLowerCase()) &&
+    !solved.has(q.who.toLowerCase()) && Date.now() - Date.parse(q.made_at || 0) < QUEST_HOURS * 3600_000).slice(0, QUESTS);
   const wantQuests = QUESTS - keptQuests.length;
   const text = `The figures' names, to use exactly in "between" and "who" (no other names, not their actor ids): ${cast.map(c => c.name).join(', ')}.
 The figures in the book now (actor id, name: drawing):
@@ -156,7 +160,7 @@ ${want.length ? `Write personas for: ${want.map(c => c.id).join(', ')}.` : 'Ever
   for (const c of want) { const p = cleanPersona(j.personas?.[c.id], refs); if (p) personas[c.id] = p; }
   const describe = n => [...cast, ...things].find(x => [x.name, x.id].some(y => y && y.toLowerCase() === n.toLowerCase()))?.drawing || '';
   const quests = [...keptQuests];
-  for (const q of (Array.isArray(j.quests) ? j.quests : []).slice(0, wantQuests)) { const c = cleanQuest(q, refs, thingNames, describe); if (c && !quests.some(x => x.who === c.who)) quests.push(c); }
+  for (const q of (Array.isArray(j.quests) ? j.quests : []).slice(0, wantQuests)) { const c = cleanQuest(q, refs, thingNames, describe); if (c && !quests.some(x => x.who === c.who)) quests.push({ ...c, made_at: new Date().toISOString() }); }
   const names = new Set(cast.map(c => c.name));
   // the viewer matches figures by name: an actor id written instead is put back to its name
   const nameOf = Object.fromEntries(cast.map(c => [c.id, c.name])), named = n => nameOf[n] && !names.has(n) ? nameOf[n] : n;

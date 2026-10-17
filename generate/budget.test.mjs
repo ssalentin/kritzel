@@ -16,6 +16,7 @@ test('the moment changes the pool cares about', () => {
   assert.deepEqual(situationChanges(a, { ...a, thrown: [{ who: 'affe', what: 'Ball', to: 'Maus' }], night: 0.6, weather: ['rain'] }),
     ['affe throws Ball', 'night falls', 'weather: rain']);
   assert.deepEqual(situationChanges({ ...a, weather: ['rain'] }, a), ['the weather clears']);
+  assert.deepEqual(situationChanges(a, { ...a, solved: ['Hai'] }), ['quest solved: Hai']);
 });
 
 test('changes close together make one call, and no more than the hourly cap', async () => {

@@ -561,6 +561,8 @@ export function situationChanges(prev, cur) {
   for (const c of cur.carrying || []) if (!had.has(key(c))) out.push(`${c.who} carries ${c.what}`);
   const flew = new Set((prev?.thrown || []).map(key));
   for (const t of cur.thrown || []) if (!flew.has(key(t))) out.push(`${t.who} throws ${t.what}`);
+  const done = new Set(prev?.solved || []);
+  for (const w of cur.solved || []) if (typeof w === 'string' && !done.has(w)) out.push(`quest solved: ${w.slice(0, 40)}`);
   const dark = x => typeof x?.night === 'number' && x.night >= 0.5;
   if (prev && dark(prev) !== dark(cur)) out.push(dark(cur) ? 'night falls' : 'morning');
   const w = x => [...(x?.weather || [])].sort().join(',');

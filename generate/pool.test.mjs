@@ -184,3 +184,26 @@ test('a pool without quests, or with a quest whose figure has left, is stale at 
     assert.equal(await poolIsStale(dir), false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a quest is replaced when it is old or the sim reports it solved', async () => {
+  const { makePool } = await import('./dialogues.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'kritzel-pool-'));
+  const path = process.env.PATH;
+  process.env.PATH = join(import.meta.dirname, 'test-bin') + ':' + path;
+  try {
+    writeFileSync(join(dir, 'affe.js'), actor('affe', 'Affe'));
+    writeFileSync(join(dir, 'maus.js'), actor('maus', 'Maus'));
+    const p = { favourite: null, likes: [], fears: [], hobby: 'wander', lines: { de: [], en: [] } };
+    const q = (who, made_at) => ({ who, made_at, title: { de: 'x', en: 'x' } });
+    const now = new Date().toISOString(), old = new Date(Date.now() - 4 * 3600_000).toISOString();
+    writeFileSync(join(dir, 'reply.txt'), JSON.stringify({ personas: {}, quests: [], dialogues: [] }));
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const run = async (quests, situation = null) => {
+      writeFileSync(join(dir, 'dialogues.json'), JSON.stringify({ personas: { affe: p, maus: p }, quests, dialogues: [] }));
+      await makePool({ thingsDir: dir, model: 'claude-haiku-5-5', situation });
+      return JSON.parse(readFileSync(join(dir, 'dialogues.json'), 'utf8')).quests.map(x => x.who);
+    };
+    assert.deepEqual(await run([q('Affe', now), q('Maus', old)]), ['Affe']);                 // 4 hours old: replaced
+    assert.deepEqual(await run([q('Affe', now), q('Maus', now)], { solved: ['affe'] }), ['Maus']);
+  } finally { process.env.PATH = path; delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
