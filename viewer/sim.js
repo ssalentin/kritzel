@@ -583,7 +583,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
 
   return {
     addActor, removeActor,
-    actors: () => actors, byId: () => byId, spots: () => spots, weather: () => weatherNow, trace: () => picks.slice(),   // read-only views for the UI and tests
+    actors: () => actors, byId: () => byId, spots: () => spots, weather: () => weatherNow, trace: () => picks.slice(), solved: () => X.solvedQuests?.() ?? [],   // read-only views for the UI and tests
     // obstacles/spots changed (a drawn thing was added, changed or removed)
     setWorld({ trees: tr, spots: sp, feet: ft = feet }) {
       feet = ft;
