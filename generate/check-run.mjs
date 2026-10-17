@@ -116,7 +116,7 @@ async function buildCheck(file, takenIds) {
           const b = new THREE.Box3().setFromObject(o), size = b.getSize(new THREE.Vector3()).toArray(), c = b.getCenter(new THREE.Vector3());
           const long = Math.max(...size), axis = size.indexOf(long), mid = [...size].sort((p, q) => q - p)[1];
           if (long < 1.3 || long < 8 * mid) return;               // a long straight body (a pencil, a snake) is fine
-          const bar = axis !== 1 && c.y - at.y > 0.8;              // lying high up: a branch or perch to hang or sit on
+          const bar = axis !== 1 && c.y - at.y > 0.8 && a.move !== 'fly';   // lying high up: a branch or perch to hang or sit on (a flier's wing is not)
           const post = axis === 1 && b.min.y - at.y < 0.15 && Math.hypot(c.x - at.x, c.z - at.z) > 0.6;   // down to the ground, away from its feet
           if (bar || post) pole.push(long.toFixed(1));
         });

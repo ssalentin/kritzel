@@ -206,4 +206,6 @@ test('a branch or pole in a rig is flagged, a long body is not', async () => {
   const pencil = `const p = new ctx.THREE.Mesh(new ctx.THREE.CylinderGeometry(0.11, 0.11, 1.8), ctx.mat(2)); p.position.y = 0.9; g.add(p);`;
   for (const m of [bar, post]) assert.ok((await buildCheck(rig(m))).problems.some(p => p.includes('pole or branch')), m);
   assert.ok(!(await buildCheck(rig(pencil))).problems.some(p => p.includes('pole or branch')));
+  const wing = rig(bar).replace("move: 'climb'", "move: 'fly'");          // a plane's wing high up is no branch
+  assert.ok(!(await buildCheck(wing)).problems.some(p => p.includes('pole or branch')));
 });
