@@ -294,7 +294,7 @@ export async function build(api, prevState = null) {
   // footprints characters must not stand in (a jail holds its prisoner inside, so it isn't one)
   const blockingFeet = () => [...loaded.values()].filter(e => e.foot && !e.heldBy && !e.holds.length).map(e => e.foot);
   function refreshWorld() {
-    for (const e of loaded.values()) onPage(e);      // the page's curve moved with the book's size
+    for (const e of loaded.values()) if (!e.portable?.carrier) onPage(e);      // the page's curve moved with the book's size (a carried thing is in a hand)
     places();
     trees.length = 0;
     const spots = [];
