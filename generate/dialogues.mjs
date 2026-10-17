@@ -109,7 +109,8 @@ export async function makePool({ thingsDir = join(ROOT, 'viewer', 'things'), cou
   const refs = new Set([...cast.flatMap(c => [c.name, c.id]), ...things.map(t => t.name)].map(x => x.toLowerCase()));
   const thingNames = new Set(things.map(t => t.name.toLowerCase()));
   const moment = momentOf(situation, newThings, refs);
-  const text = `The figures in the book now (actor id, name: drawing):
+  const text = `The figures' names, to use exactly in "between" and "who" (no other names, not their actor ids): ${cast.map(c => c.name).join(', ')}.
+The figures in the book now (actor id, name: drawing):
 ${cast.map(c => `- ${c.id}, ${c.name}: ${c.drawing}${kept[c.id] ? ` (persona: ${JSON.stringify(kept[c.id])})` : ''}`).join('\n')}
 The things in the book (name: drawing):
 ${things.map(t => `- ${t.name}: ${t.drawing}`).join('\n') || '(none)'}
@@ -124,9 +125,21 @@ ${want.length ? `Write personas for: ${want.map(c => c.id).join(', ')}.` : 'Ever
   const names = new Set(cast.map(c => c.name));
   // the viewer matches figures by name: an actor id written instead is put back to its name
   const nameOf = Object.fromEntries(cast.map(c => [c.id, c.name])), named = n => nameOf[n] && !names.has(n) ? nameOf[n] : n;
+  // what is safely fixable is fixed (an unknown end becomes none, more than 6 turns are cut to 6); the rest is
+  // dropped with its reason, so the log says what DeepSeek gets wrong
+  const ENDS = ['stroll', 'dance', 'tag', 'look'];
   const offered = (Array.isArray(j.dialogues) ? j.dialogues : []).map(d => d && Array.isArray(d.between) && Array.isArray(d.turns)
-    ? { ...d, between: d.between.map(named), turns: d.turns.map(t => ({ ...t, who: named(t?.who) })) } : d);
-  const why = d => !safeDialogue(d) ? 'shape or line' : !d.between.every(n => names.has(n)) ? `unknown name (${d.between.join(', ')})` : null;
+    ? { ...d, end: ENDS.includes(d.end) ? d.end : null, between: d.between.map(named), turns: d.turns.slice(0, 6).map(t => ({ ...t, who: named(t?.who) })) } : d);
+  const why = d => {
+    if (!d || !Array.isArray(d.between) || d.between.length !== 2 || !Array.isArray(d.turns)) return 'not a dialogue between two';
+    const unknown = d.between.filter(n => !names.has(n));
+    if (unknown.length) return `unknown name (${unknown.join(', ').slice(0, 40)})`;
+    if (d.turns.length < 2) return 'fewer than 2 turns';
+    if (d.turns.some(t => !d.between.includes(t?.who))) return 'a turn by someone else';
+    const bad = d.turns.flatMap(t => [['de', t.de], ['en', t.en]]).find(([l, x]) => !safeLine(x, l));
+    if (bad) return `line not allowed (${bad[0]}: ${String(bad[1] ?? '(none)').slice(0, 30)})`;
+    return safeDialogue(d) ? null : 'shape';
+  };
   const dropped = offered.map(why).filter(Boolean);
   const dialogues = offered.filter(d => !why(d))
     .map(d => { const when = cleanWhen(d.when, refs, thingNames); const { when: _, ...rest } = d; return when ? { ...rest, when } : rest; });

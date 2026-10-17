@@ -121,3 +121,28 @@ test('a new pool keeps the old dialogues for any time and replaces the old ones 
     assert.deepEqual(j.dialogues.map(x => x.turns[0].de), ['Neu Regen', 'Neu immer', 'Alt immer']);   // not the old moment one, not the one with a figure gone
   } finally { process.env.PATH = path; delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a dialogue the model got slightly wrong is fixed, the rest is dropped with its reason', async () => {
+  const { makePool } = await import('./dialogues.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'kritzel-pool-'));
+  const path = process.env.PATH;
+  process.env.PATH = join(import.meta.dirname, 'test-bin') + ':' + path;
+  try {
+    writeFileSync(join(dir, 'affe.js'), actor('affe', 'Affe'));
+    writeFileSync(join(dir, 'maus.js'), actor('maus', 'Maus'));
+    const t = (who, de) => ({ who, de, en: 'Hi!' });
+    const turns = [t('Affe', 'Hallo!'), t('Maus', 'Hallo!')];
+    writeFileSync(join(dir, 'reply.txt'), JSON.stringify({ personas: {}, dialogues: [
+      { between: ['Affe', 'Maus'], end: 'party', turns: [...turns, ...turns, ...turns, t('Affe', 'Tschüss!')] },   // fixed: end, 7 turns
+      { between: ['Schatz', 'Maus'], turns },
+      { between: ['Affe', 'Maus'], turns: [t('Affe', 'Du bist dumm!'), t('Maus', 'Nein!')] }] }));
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const r = await makePool({ thingsDir: dir, model: 'claude-haiku-5-5' });
+    assert.equal(r.written, 1);
+    assert.equal(r.offered, 3);
+    assert.deepEqual(r.dropped, ['unknown name (Schatz)', 'line not allowed (de: Du bist dumm!)']);
+    const d = JSON.parse(readFileSync(join(dir, 'dialogues.json'), 'utf8')).dialogues[0];
+    assert.equal(d.end, null);
+    assert.equal(d.turns.length, 6);
+  } finally { process.env.PATH = path; delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});

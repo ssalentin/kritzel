@@ -533,7 +533,7 @@ function runPool(opts) {
     .then(x => {
       if (x.seconds == null) { pool.calls.pop(); return log(`dialogues: no call (${x.reason})`); }   // fewer than two figures
       pool.fellBack = !!x.fellBack;
-      log(`dialogues: call ${pool.calls.length}/${POOL_PER_HOUR} this hour (${reason}): ${x.written} dialogues, ${x.personas} new personas, ${x.seconds.toFixed(0)}s, ${x.model}${x.fellBack ? ' (pi failed)' : ''}${x.dropped ? `; dropped: ${x.dropped.join('; ')}` : ''}`);
+      log(`dialogues: call ${pool.calls.length}/${POOL_PER_HOUR} this hour (${reason}): ${x.written} of ${x.offered} dialogues kept, ${x.personas} new personas, ${x.seconds.toFixed(0)}s, ${x.model}${x.fellBack ? ' (pi failed)' : ''}${x.dropped ? `; dropped: ${x.dropped.join('; ')}` : ''}`);
     })
     .catch(e => log(`dialogues: ${e.message}`))
     .finally(() => { pool.busy = false; });
