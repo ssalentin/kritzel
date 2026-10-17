@@ -45,7 +45,7 @@ def version():
     except (OSError, subprocess.SubprocessError):
         c = ""
     return {"version": v, "commit": c}
-CAMERA_PORT = 8766
+CAMERA_PORT = int(os.environ.get("CAMERA_PORT", "8766"))   # where camera_server.py (or replay_camera.py) listens
 STATUS = ROOT / "frames" / "status"
 PLACEMENT_LOCK = threading.Lock()
 MODE_FILE = ROOT / "viewer" / "things" / "mode.json"     # {"mode": "add" | "switch"}; missing = add (issue #16)
