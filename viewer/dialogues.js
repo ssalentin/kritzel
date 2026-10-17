@@ -115,21 +115,48 @@ export function safeDialogue(d) {
 
 // ---------- the generated pool (things/dialogues.json next to placement.json, written by generate/dialogues.mjs) ----------
 // { cast: [names], dialogues: [{ between: [nameA, nameB], end, turns: [{ who: name, de, en }] }] }
-let pool = [], poolAt = 0;
+let pool = [], poolAt = 0, personas = {};
 const played = new Set();
+// the figures' personalities (dialogues.json personas, keyed by actor id); refs are names or ids, resolved by the sim
+export const HOBBIES = ['collect', 'guard', 'nap', 'follow', 'wander'];
+export function safePersona(p) {
+  return p && typeof p === 'object' && HOBBIES.includes(p.hobby) &&
+    (p.favourite === null || typeof p.favourite === 'string') &&
+    Array.isArray(p.likes) && Array.isArray(p.fears) ? {
+      favourite: p.favourite ?? null,
+      likes: p.likes.filter(x => typeof x === 'string').slice(0, 3),
+      fears: p.fears.filter(x => typeof x === 'string').slice(0, 2),
+      hobby: p.hobby,
+    } : null;
+}
+export const personaOf = id => personas[id] || null;
 async function refreshPool() {
   if (Date.now() - poolAt < 60_000) return;
   poolAt = Date.now();
   try {
     const r = await fetch('things/dialogues.json', { cache: 'no-store' });
-    if (r.ok) pool = ((await r.json()).dialogues || []).filter(safeDialogue);
+    if (r.ok) {
+      const j = await r.json();
+      pool = (j.dialogues || []).filter(safeDialogue);
+      personas = Object.fromEntries(Object.entries(j.personas || {}).map(([id, p]) => [id, safePersona(p)]).filter(([, p]) => p));
+    }
   } catch { /* no pool yet: templates only */ }
+}
+// a dialogue's optional when: { near, carrying, night (0-1, from this level on), weather, new }; no when fits any time
+export function fitsWhen(when, c) {
+  if (!when) return true;
+  if (when.near !== undefined && !(c.near?.(when.near))) return false;
+  if (when.carrying && !c.carrying) return false;
+  if (when.night !== undefined && !(c.nightLevel >= when.night)) return false;
+  if (when.weather !== undefined && !(c.weather || []).includes(when.weather)) return false;
+  if (when.new !== undefined && !(c.isNew?.(when.new))) return false;
+  return true;
 }
 // an unplayed generated dialogue for exactly these two, as { turns: [{ speaker, de, en }], end }; else null
 export function fromPool(c) {
   refreshPool();
   const na = c.a.name || c.a.id, nb = c.b.name || c.b.id;
-  const i = pool.findIndex((d, k) => !played.has(k) && d.between.includes(na) && d.between.includes(nb) && na !== nb);
+  const i = pool.findIndex((d, k) => !played.has(k) && d.between.includes(na) && d.between.includes(nb) && na !== nb && fitsWhen(d.when, c));
   if (i < 0) return null;
   played.add(i);
   const d = pool[i];

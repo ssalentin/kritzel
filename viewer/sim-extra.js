@@ -3,7 +3,7 @@
 // choose(a, b, r, api) picks the interaction for a pair that just met (r = their lower relationship).
 
 import { sound } from './sound.js';
-import { pickDialogue, fromPool, readTime } from './dialogues.js';
+import { pickDialogue, fromPool, readTime, personaOf } from './dialogues.js';
 import { lang } from './i18n.js';
 
 export const LINES = {
@@ -132,12 +132,13 @@ const remember = (a, who, kind) => { a.memo = [...(a.memo || []), { who: who.id,
 const CARRY_MAX = 3, CARRY_FOR = 25;
 const carriedBy = (spots, a) => spots().find(s => s.kind === 'portable' && s.carrier === a);
 
-export function options(a, add, { spots, cover, spotCell }) {
+export function options(a, add, { spots, cover, spotCell, things, nearest, actors, now }) {
+  const p = personaOf(a.id);             // a personality (dialogues.json personas): steers where it goes and what it does
   for (const sp of spots()) {
     if (sp.kind === 'portable' && sp.carrier === a) add(5, { type: 'carry', item: sp, until: null });
     if (sp.kind === 'portable' && !sp.carrier && a.traits.curiosity > 0.3 && !carriedBy(spots, a) &&
         spots().filter(s => s.kind === 'portable' && s.carrier).length < CARRY_MAX)
-      add(0.3 + a.traits.curiosity * 0.4, { type: 'pick', spot: sp });
+      add(0.3 + a.traits.curiosity * 0.4 + (p?.hobby === 'collect' ? 0.8 : 0), { type: 'pick', spot: sp });
     if (sp.kind === 'door' && spotCell(sp, a)) add(0.2 + (1 - a.energy) * 0.8 + (cover() > 0.5 ? 0.6 : cover() > 0.3 ? 0.25 : 0), { type: 'visit', spot: sp, cell: spotCell(sp, a), phase: 'walk' });
     if (sp.kind === 'item' && sp.carrier === a) {       // carrying a key: keep bringing it to the lock
       const lock = spots().find(l => l.kind === 'lock' && l.needs === sp.item && !l.opened);
@@ -145,6 +146,22 @@ export function options(a, add, { spots, cover, spotCell }) {
     }
     if (sp.kind === 'item' && !sp.carrier && a.traits.curiosity > 0.3 && spots().some(l => l.kind === 'lock' && l.needs === sp.item && !l.opened))
       add(0.4 + a.traits.curiosity * 0.5, { type: 'fetch', spot: sp });
+  }
+  if (p && things && nearest) {
+    // the favourite thing (a drawn thing by its name or file): guards and naps stay near it, others drop by now and then
+    const fav = p.favourite && things().find(t => t.file === p.favourite || t.name === p.favourite);
+    if (fav) {
+      const c = nearest(fav.x, fav.z, a);
+      if (c) {
+        add(p.hobby === 'guard' ? 1.2 : 0.4, { type: 'wander', cell: [c.x, c.y] });
+        if (p.hobby === 'nap' && Math.hypot(a.pos.x - fav.x, a.pos.z - fav.z) < 2.5) add(0.9, { type: 'rest', until: now() + 20 });
+      }
+    }
+  }
+  if (p && actors) {
+    // a liked figure: a follower walks after it for a while
+    const liked = actors().find(b => b !== a && !b.hidden && p.likes.some(l => l === b.name || l === b.id));
+    if (liked && p.hobby === 'follow') add(0.7, { type: 'follow', target: liked });
   }
 }
 
@@ -347,8 +364,23 @@ function context(a, b, api) {
   const jail = things.find(t => t.holds.length && byId[t.holds[0]]);
   const held = things.find(t => t.heldBy && byId[t.heldBy]);
   const named = x => x.name || x.id;
+  // where a named thing or figure is, for a dialogue's when (near, new); null when it isn't in the book
+  const where = ref => {
+    const t = things.find(t => t.file === ref || t.name === ref);
+    if (t) return { x: t.x, z: t.z, at: t.at || 0 };
+    const f = api.actors().find(x => !x.hidden && (x.name === ref || x.id === ref));
+    return f ? { x: f.pos.x, z: f.pos.z, at: 0 } : null;
+  };
+  const near = ref => {
+    const w = where(ref);
+    return !!w && [a, b].some(p => Math.hypot(p.pos.x - w.x, p.pos.z - w.z) <= 3);
+  };
+  const carried = carriedBy(api.spots, a) || carriedBy(api.spots, b);
+  const w = api.weather() || {};
   return {
     a, b, r: Math.min(api.rel(a, b), api.rel(b, a)),
+    near, carrying: !!carried, nightLevel: api.night(), weather: Object.keys(w).filter(k => w[k] === true),
+    isNew: ref => { const t = where(ref); return !!t && t.at > 0 && Date.now() - t.at < 60_000; },
     night: api.night() > 0.5, cloudy: api.cover() > 0.5, lamp: api.lamps().length > 0,
     newest: fresh[0] || null,
     jail: jail ? { prisoner: named(byId[jail.holds[0]]), x: jail.x, z: jail.z } : null,

@@ -52,7 +52,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   ROT.RNG.setSeed(seed);
   const R = () => ROT.RNG.getUniform();
   const MV = moves?.makeMoves({ THREE, ground, R: () => ROT.RNG.getUniform() });
-  let envNow = { perches: [], water: [] };
+  let envNow = { perches: [], water: [] }, weatherNow = {};
   const pick = a => ROT.RNG.getItem(a);
   const toWorld = (x, y) => [(x - C) * CELL, (y - C) * CELL];
   const key = (x, y) => x + ',' + y;
@@ -375,7 +375,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   // what extra interactions get: the sim's helpers, so they stay generic
   const stageFor = (a, b, until) => { stage = { a, b, until }; };
   const talking = () => (stage && now < stage.until + DIALOGUE_GAP ? stage : null);   // one dialogue at a time, with a pause between
-  const api = { ground, stage: stageFor, talking, things: () => thingsNow, night: () => nightNow, lamps: () => lampsNow, byId: () => byId, busy, say, line, bond, now: () => now, R, pick, rel, actors: () => actors, nearest: nearestCell, step: stepToward, pass: passable, spots: () => spots, spotCell, cover: () => coverNow, seen: (x, y) => { const c = new Set(); fov.compute(x, y, 12, (cx, cy) => c.add(cx + ',' + cy)); return c; } };
+  const api = { ground, weather: () => weatherNow, stage: stageFor, talking, things: () => thingsNow, night: () => nightNow, lamps: () => lampsNow, byId: () => byId, busy, say, line, bond, now: () => now, R, pick, rel, actors: () => actors, nearest: nearestCell, step: stepToward, pass: passable, spots: () => spots, spotCell, cover: () => coverNow, seen: (x, y) => { const c = new Set(); fov.compute(x, y, 12, (cx, cy) => c.add(cx + ',' + cy)); return c; } };
   const INT = Object.fromEntries(Object.entries(X.INTERACTIONS || {}).map(([k, f]) => [k, (a, b) => f(a, b, api)]));
 
   function interact(a, b) {
@@ -579,7 +579,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
 
   return {
     addActor, removeActor,
-    actors: () => actors, byId: () => byId, spots: () => spots,   // read-only views for the UI and tests
+    actors: () => actors, byId: () => byId, spots: () => spots, weather: () => weatherNow,   // read-only views for the UI and tests
     // obstacles/spots changed (a drawn thing was added, changed or removed)
     setWorld({ trees: tr, spots: sp, feet: ft = feet }) {
       feet = ft;
@@ -622,7 +622,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     snapshot() { return Object.fromEntries(actors.map(a => [a.id, snapshotOf(a)])); },
     failures: () => [...failed].map(([a, message]) => ({ id: a.id, file: a.file, message })),
     update(t, dt, { cover = 0, birdsLow = false, night = 0, lamps = [], weather = {}, perches = [], water = [] } = {}) {
-      envNow = { perches, water, feet, actors };     // climbers keep off things and figures (moves.js)
+      envNow = { perches, water, feet, actors }; weatherNow = weather;     // climbers keep off things and figures (moves.js)
       now = t; nightNow = night; lampsNow = lamps;
       // a storm sends everyone in through a door; rain only now and then (they'd rather splash)
       coverNow = Math.max(cover, weather.lightning ? 1 : weather.rain ? 0.4 : 0);
