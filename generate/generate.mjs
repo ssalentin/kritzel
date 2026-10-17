@@ -268,7 +268,7 @@ export function unlit(code, info) {
 
 // drawn water built by hand (grey ribbons, a blue box) instead of the engine's ctx.water, which is always real moving
 // blue water (orch: the rock's waterfall came out pale grey in 2 of 3 runs): asked once to use ctx.water
-const WATER = /\b(?:water|waterfall|river|stream|brook|pond|lake|wasser|wasserfall|fluss|bach|teich|see)\b/i;
+const WATER = /\b(?:water|waterfall|river|stream|brook|pond|lake|wasser|wasserfall|fluss|bach|teich)\b/i;   // not "see" (lake): it is also English
 export function plainWater(code, info) {
   const parts = (code.match(/^\/\/ parts:.*$/gm) || []).join(' ');
   if (!WATER.test(parts) || (info?.waterCalls ?? 1) > 0) return [];
