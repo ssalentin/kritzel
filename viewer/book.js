@@ -2,16 +2,26 @@
 // into the spine, on page stacks and a cloth cover. Things stand on the pages (y = 0); the
 // ground every part of the engine uses is the pages' rectangle, GROUND.
 
-export const GROUND = { shape: 'rect', w: 18, d: 13 };          // x −9…9 (spine at x = 0), z −6.5…6.5
+// the pages' rectangle now: starts at BASE and grows with the number of things and figures (sizeFor),
+// up to GROUND_MAX. x −w/2…w/2 (spine at x = 0), z −d/2…d/2. Mutated in place, so every module sees it.
+export const BASE = { w: 18, d: 13 };
+export const GROUND_MAX = { w: 30, d: 22 };
+export const GROUND = { shape: 'rect', w: BASE.w, d: BASE.d };
+// the book for `count` things and figures: its area grows with the count (a cosy book when it's
+// nearly empty), keeps its proportions, and stops at GROUND_MAX
+export function sizeFor(count) {
+  const s = Math.min(Math.sqrt(GROUND_MAX.w * GROUND_MAX.d / (BASE.w * BASE.d)), Math.sqrt(1 + Math.max(0, count) / 20));
+  return { w: BASE.w * s, d: BASE.d * s };
+}
 // the pages' height across the book: rising gently toward the spine, dipping into the gutter at
 // x = 0, and lifting a little at the outer edges, like an open book lying on a table. Things and
 // characters stand at groundY(x).
 export function groundY(x) {
-  const u = Math.min(1, Math.abs(x) / (GROUND.w / 2));          // 0 at the spine, 1 at the outer edge
-  return 0.18 * (1 - u) ** 1.5 + 0.08 * Math.exp(-((((1 - u) * GROUND.w / 2) / 0.5) ** 2)) - 0.45 * Math.exp(-((x / 0.55) ** 2));
+  const u = Math.min(1, Math.abs(x) / (BASE.w / 2));          // 0 at the spine, 1 at the outer edge (the curve keeps its shape as the book grows)
+  return 0.18 * (1 - u) ** 1.5 + 0.08 * Math.exp(-((((1 - u) * BASE.w / 2) / 0.5) ** 2)) - 0.45 * Math.exp(-((x / 0.55) ** 2));
 }
 // the circle that fits on the pages, for things written for the old round island (ctx.islandR)
-export const FIT_R = Math.min(GROUND.w, GROUND.d) / 2;
+export const FIT_R = Math.min(BASE.w, BASE.d) / 2;
 
 // inside the pages, with `margin` to spare (a point, or a circle of radius r)
 export const onGround = (x, z, r = 0, margin = 0) =>
@@ -24,7 +34,7 @@ export const clampToGround = (p, margin = 0.3) => {
 };
 
 export function buildBook({ THREE, world }) {
-  const W = GROUND.w, D = GROUND.d, half = W / 2;
+  const W = BASE.w, D = BASE.d, half = W / 2;      // built at its base size; world.js scales the group as it grows
   const g = new THREE.Group();
 
   // paper: warm white with fibres and a few faint ruled lines, drawn once

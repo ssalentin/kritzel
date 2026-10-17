@@ -10,7 +10,7 @@ import * as ROT from 'rot-js';
 import { sound } from './sound.js';
 import { lang, pickLines } from './i18n.js';
 
-const N = 41, C = 20, CELL = 0.45, TICK = 0.13;   // the grid reaches ±9: the whole book's pages
+const N = 71, C = 35, CELL = 0.45, TICK = 0.13;   // the grid reaches ±15.75: the book at its largest (book.js GROUND_MAX)
 
 const LINES = {
   sun: { sqichy: ['He! Wer hat die Sonne geklaut?'], person: ['Brrr…', 'Nur eine Wolke!', 'Huch, dunkel!'] },
