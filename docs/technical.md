@@ -103,7 +103,8 @@ python3 scripts/capture.py
 
 Watches the camera chosen in `camera.json` (network cameras for now) through the viewer's
 server, reading its video stream eight times a second, and waits until the picture holds
-still for 1.2 s (8 s for a big change such as a new sheet or a hand resting on the paper). When the sheet shows something new, it
+still for 1.2 s (8 s for a big change such as a new sheet or a hand resting on the paper). For a
+drawing, it fetches the full-size snapshot while those 1.2 s run. When the sheet shows something new, it
 writes `frames/settled/<YYYYmmdd-HHMMSS>.json` and then the camera's frame as
 `<same>.jpg`. The JSON gives `previous` (the last frame handed on), `reason` (`drawn`, or
 `big-change` for a new or moved sheet), and `changed_box` (where the change is, in

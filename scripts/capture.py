@@ -13,7 +13,8 @@ When the settled sheet differs from the last one handed on, it writes
 
 No frame while something moves (a drawing hand), none when nothing changed. A small change
 counts once still for STILL_S ("drawn"); a large one (new sheet, moved paper, a resting hand)
-must stay still for BIG_S ("big-change").
+must stay still for BIG_S ("big-change"). For a drawing, the snapshot is fetched and checked
+while the still time runs (from EARLY_S on), so it's handed on as soon as STILL_S is up.
 
 For the viewer's status pill it keeps frames/status/capture.json up to date (state, since, beat,
 detail, last) and writes frames/status/cutout.png for each drawing handed on: the new ink on
@@ -46,6 +47,7 @@ SHEET_INK = 600            # NEW inky thumb px that make a big change a new shee
 EDGE = 10                # thumb px at the frame's edge that never count (the table shows there when the paper slides)
 BIG = 0.04               # share changed that is a big change, not drawing
 STILL_S, BIG_S, FPS = 1.2, 8.0, 8
+EARLY_S = 0.3            # into a still spell: look what's new, and fetch the snapshot of a drawing already
 SHRINK = f"format=gray,scale=960:540:flags=area,erosion,erosion,scale={W}:{H}:flags=area"   # keeps thin lines
 MAX_BYTES = 20 << 20
 
@@ -200,14 +202,16 @@ class Detector:
         self.base = baseline
         self.baseline = baseline and envelope(baseline)
         self.anchor = self.still_since = self.shift = self.moved_at = self.diff = self.measured = None
+        self.spell = 0                       # counts still spells
 
     def feed(self, thumb, t):
         if self.anchor is None or len(new_marks(thumb, self.anchor)) >= NEW_PX:
             if self.anchor is not None:
                 self.moved_at = t
             self.anchor, self.still_since, self.shift, self.diff = envelope(thumb, 1), t, None, None
+            self.spell += 1
             return None
-        if t - self.still_since < STILL_S:
+        if t - self.still_since < EARLY_S:
             return None
         if self.diff is None:                # once per still spell: what is new since the last sheet?
             if self.baseline is None:
@@ -219,8 +223,7 @@ class Detector:
         diff = self.diff
         if len(diff) < NEW_PX:
             return None
-        # a large change, or a sheet that slid further than we can line up: a big change
-        big = len(diff) > BIG * W * H or (self.baseline is not None and max(map(abs, self.shift)) >= SLIDE)
+        big = self.big()
         if t - self.still_since < (BIG_S if big else STILL_S):
             return None
         dx, dy = self.shift                  # report where the change is in the new picture
@@ -232,6 +235,15 @@ class Detector:
         self.base, self.baseline, self.still_since, self.shift, self.diff = thumb, envelope(thumb), t, (0, 0), []
         diff = [min(max(i // W + dy, 0), H - 1) * W + min(max(i % W + dx, 0), W - 1) for i in diff]
         return ("big-change" if big else "drawn"), diff
+
+    def big(self):
+        """A large change, or a sheet that slid further than we can line up."""
+        return len(self.diff) > BIG * W * H or (self.baseline is not None and max(map(abs, self.shift)) >= SLIDE)
+
+    def drawing(self):
+        """Still for EARLY_S with a small change in it: a drawing that will be handed on at STILL_S
+        unless something moves first (this still spell's number), else None."""
+        return self.spell if self.diff and len(self.diff) >= NEW_PX and not self.big() else None
 
     def undo(self, t):
         """The last emit didn't happen after all: back to the sheet before it, wait for stillness again."""
@@ -279,6 +291,32 @@ def camera():
         return None
     return (f"{VIEWER}/api/camera-stream/{ip}/{cam}.jpg",
             {"host": str(c.get("host", ""))[:100], "id": cam, "name": str(c.get("name", ""))[:200]})
+
+
+class Snapshot:
+    """The full-size picture, fetched (and shrunk for the check) in the background."""
+
+    def __init__(self, url, spell):
+        self.spell, self.result = spell, None
+        self.thread = threading.Thread(target=self.fetch, args=(url,), daemon=True)
+        self.thread.start()
+
+    def fetch(self, url):
+        try:
+            with urllib.request.urlopen(url, timeout=10) as r:
+                data = r.read(MAX_BYTES + 1)
+        except OSError as e:
+            self.result = e
+            return
+        size = jpeg_size(data)
+        self.result = data, size, size and small(data)
+
+    def get(self):
+        """(data, size, thumbnail or None), or raises the fetch's OSError."""
+        self.thread.join()
+        if isinstance(self.result, OSError):
+            raise self.result
+        return self.result
 
 
 def hand_on(data, size, reason, diff, info, previous, moved_by=None):
@@ -389,7 +427,7 @@ def main():
     done = sorted(OUT.glob("*.jpg"))
     previous = done[-1].name if done else None
     det = Detector(small(done[-1].read_bytes()) if done else None)
-    status, stream, url, seq, checked, cam = Status(), None, None, 0, 0, None
+    status, stream, url, seq, checked, cam, early = Status(), None, None, 0, 0, None, None
     while True:
         if time.monotonic() - checked > 1:   # the picker may switch cameras at any time
             checked, cam = time.monotonic(), camera()
@@ -420,18 +458,22 @@ def main():
             continue
         t = time.monotonic()
         got = det.feed(centred(px), t)
+        spell = det.drawing()
+        if spell and (early is None or early.spell != spell):
+            early = Snapshot(url, spell)      # a drawing, still for EARLY_S: fetch it while the still time runs
         if not got:
             status.set("moving" if det.moved_at and t - det.moved_at < STILL_S + 1 else "watching")
             continue
-        try:                                  # hand on the full-size picture, not the thumbnail
-            with urllib.request.urlopen(url, timeout=10) as r:
-                data = r.read(MAX_BYTES + 1)
+        # hand on the full-size picture, not the thumbnail: the one fetched early in this still
+        # spell, or (a big change, or the stream moved on) one fetched now
+        shot = early if early and early.spell == det.spell and got[0] == "drawn" else Snapshot(url, None)
+        early = None
+        try:
+            data, size, snap = shot.get()
         except OSError as e:
             print(f"camera snapshot: {e}", file=sys.stderr, flush=True)
             det.undo(t)                       # don't lose the drawing: let it settle and try again
             continue
-        size = jpeg_size(data)
-        snap = size and small(data)
         if not snap or len(new_marks(snap, det.anchor)) >= NEW_PX:
             # the snapshot isn't the picture that settled (a hand came back): let it settle again
             print("snapshot differs from the settled picture; waiting again", file=sys.stderr, flush=True)
