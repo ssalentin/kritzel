@@ -224,3 +224,15 @@ test('a rig that throws in the book\'s sim is caught (live 2026-10-17: person ri
   const person = thing(`const r = ctx.makePerson({ shirtColor: 0x3366cc }); return { actors: [{ id: 'paul', name: 'Paul', rig: r }] };`);
   assert.deepEqual((await buildCheck(person)).problems, []);
 });
+
+test('a creature built up in the air is supported by what is above it or under it', async () => {
+  const up = (scenery) => thing(`const g = new ctx.THREE.Group(), b = new ctx.THREE.Mesh(new ctx.THREE.SphereGeometry(0.3), ctx.mat(1)); b.position.y = 1.5; g.add(b); ctx.world.add(g);
+    ${scenery}
+    return { actors: [{ id: 'vogel', name: 'Vogel', move: 'climb', rig: { kind: 'vogel', g, say() {}, animate() {} } }] };`);
+  const hanging = async code => (await buildCheck(code)).info.hanging?.[0];
+  const seat = 'const s = new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(0.8, 0.1, 0.4), ctx.mat(2)); s.position.y = 1.15; ctx.world.add(s);';      // a swing seat under it
+  const branch = 'const s = new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(1.2, 0.1, 0.1), ctx.mat(2)); s.position.y = 1.85; ctx.world.add(s);';  // a branch over it
+  assert.equal((await hanging(up(''))).supported, false);
+  assert.equal((await hanging(up(seat))).supported, true);
+  assert.equal((await hanging(up(branch))).supported, true);
+});
