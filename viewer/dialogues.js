@@ -135,3 +135,6 @@ export function fromPool(c) {
   const d = pool[i];
   return { end: d.end ?? null, generated: true, turns: d.turns.map(t => ({ speaker: t.who === na ? c.a : c.b, de: t.de, en: t.en })) };
 }
+
+// how long a speech bubble stays: long enough to read slowly (1.5 s plus ~6 letters a second), never shorter than asked
+export const readTime = (text, dur = 2.4) => Math.max(dur, 1.5 + String(text || '').length / 6);

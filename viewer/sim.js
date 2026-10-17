@@ -7,8 +7,10 @@
 //    and picks its next goal by utility; meeting someone triggers an interaction
 //    whose outcome changes the relationship.
 import * as ROT from 'rot-js';
+const DIALOGUE_GAP = 8;                  // seconds of quiet between two staged dialogues
 import { sound } from './sound.js';
 import { lang, pickLines } from './i18n.js';
+import { readTime } from './dialogues.js';
 
 const N = 71, C = 35, CELL = 0.45, TICK = 0.13;   // the grid reaches ±15.75: the book at its largest (book.js GROUND_MAX)
 
@@ -231,7 +233,9 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   let stage = null;                      // two characters in a dialogue { a, b, until }: others nearby keep quiet
   let thingsNow = [];                    // the drawn things (world.js): { name, file, x, z, at, actors, holds, heldBy }
 
-  const say = (a, text, dur = 2.4, delay = 0) => pending.push({ a, text, at: now + delay, dur });
+  // a bubble stays long enough for a 7-year-old to read it (Sebastian, 2026-10-17): ~6 letters a second
+  const say = (a, text, dur = 2.4, delay = 0) => pending.push({ a, text, at: now + delay, dur: readTime(text, dur) });
+  const BUBBLES_MAX = 2;                 // at most this many speech bubbles at once (a dialogue's two always get through)
   const line = (a, group) => {
     const own = pickLines(a.lines?.[group]);     // a drawn character's own lines: array (German) or { de, en }
     if (own?.length) return pick(own);
@@ -367,7 +371,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   Object.assign(LINES_EN, X.LINES_EN);
   // what extra interactions get: the sim's helpers, so they stay generic
   const stageFor = (a, b, until) => { stage = { a, b, until }; };
-  const talking = () => (stage && now < stage.until ? stage : null);
+  const talking = () => (stage && now < stage.until + DIALOGUE_GAP ? stage : null);   // one dialogue at a time, with a pause between
   const api = { ground, stage: stageFor, talking, things: () => thingsNow, night: () => nightNow, lamps: () => lampsNow, byId: () => byId, busy, say, line, bond, now: () => now, R, pick, rel, actors: () => actors, nearest: nearestCell, step: stepToward, pass: passable, spots: () => spots, spotCell, cover: () => coverNow, seen: (x, y) => { const c = new Set(); fov.compute(x, y, 12, (cx, cy) => c.add(cx + ',' + cy)); return c; } };
   const INT = Object.fromEntries(Object.entries(X.INTERACTIONS || {}).map(([k, f]) => [k, (a, b) => f(a, b, api)]));
 
@@ -681,6 +685,12 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         // a dialogue is on: nobody next to the two talks over them
         if (stage && now < stage.until && p.a !== stage.a && p.a !== stage.b &&
           Math.hypot(p.a.pos.x - (stage.a.pos.x + stage.b.pos.x) / 2, p.a.pos.z - (stage.a.pos.z + stage.b.pos.z) / 2) < 3.5) continue;
+        // few bubbles at once, so each can be read: a spontaneous line waits for a free one (or is dropped when stale)
+        const onStage = stage && now < stage.until && (p.a === stage.a || p.a === stage.b);
+        if (!onStage && actors.filter(o => o !== p.a && o.sayUntil > now).length >= BUBBLES_MAX) {
+          if (now - p.at < 4) { p.at = now + 0.5; pending.push(p); }
+          continue;
+        }
         guarded(p.a, () => { p.a.rig.say(p.text); p.a.sayUntil = now + p.dur; });
       }
 

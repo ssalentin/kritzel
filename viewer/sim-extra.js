@@ -3,7 +3,7 @@
 // choose(a, b, r, api) picks the interaction for a pair that just met (r = their lower relationship).
 
 import { sound } from './sound.js';
-import { pickDialogue, fromPool } from './dialogues.js';
+import { pickDialogue, fromPool, readTime } from './dialogues.js';
 import { lang } from './i18n.js';
 
 export const LINES = {
@@ -364,10 +364,12 @@ export const INTERACTIONS = {
     const { busy, say, bond, now, R, talking } = api;
     if (talking()) return INTERACTIONS.greet(a, b, api);       // one dialogue at a time
     const c = context(a, b, api), d = fromPool(c) || pickDialogue(c, R), en = lang() === 'en';
-    const STEP = 2.6, total = d.turns.length * STEP + 0.4;
+    // each turn waits until the one before could be read (readTime), so a child can follow the whole dialogue
+    let at = 0;
+    const starts = d.turns.map(t => { const s0 = at; at += readTime(en ? t.en : t.de) + 0.4; return s0; }), total = at + 0.4;
     busy(a, b, 'talk', total); busy(b, a, 'talk', total);
     api.stage(a, b, now() + total);
-    d.turns.forEach((t, i) => say(t.speaker, en ? t.en : t.de, 2.4, i * STEP));
+    d.turns.forEach((t, i) => say(t.speaker, en ? t.en : t.de, 2.4, starts[i]));
     a.after = { at: now() + total, end: d.end, with: b, place: d.end === 'look' ? (c.newest || c.jail) : null };
     bond(a, b, 0.12); a.social -= 0.4; b.social -= 0.4;
     if (globalThis.location?.search.includes('log=dialog'))
