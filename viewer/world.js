@@ -128,8 +128,9 @@ export async function build(api, prevState = null) {
   }
   // meta.paper { x, y } (0-1 of the frame) → island, the way generate places things
   const fromPaper = p => {
-    // the whole frame onto the whole pages (with a margin): a fresh page fills where things were drawn
-    return { x: Math.max(-BASE.w / 2 + 0.7, Math.min(BASE.w / 2 - 0.7, (p.x - 0.5) * (BASE.w - 1.4))), z: Math.max(-BASE.d / 2 + 0.7, Math.min(BASE.d / 2 - 0.7, (p.y - 0.5) * (BASE.d - 1.4))) };
+    // the whole frame across both pages of the book as it is now (the spine at paper x 0.5, with a margin), so a
+    // grown book spreads a sheet's things out instead of keeping them by the spine
+    return { x: Math.max(-GROUND.w / 2 + 0.7, Math.min(GROUND.w / 2 - 0.7, (p.x - 0.5) * (GROUND.w - 1.4))), z: Math.max(-GROUND.d / 2 + 0.7, Math.min(GROUND.d / 2 - 0.7, (p.y - 0.5) * (GROUND.d - 1.4))) };
   };
   // stand a thing on the page's curve: at the highest the page gets under all of it (flat ponds and
   // rivers included), so no part sinks under the paper. Sky things (above 1.5) and held things stay.
