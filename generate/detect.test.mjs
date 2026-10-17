@@ -138,3 +138,11 @@ test('the same sheet seen again: what is in the book already is not built twice,
   const named = list.map((x, i) => i === 7 ? { ...x, inBook: 'Haus' } : x);   // on the same sheet it does
   assert.ok(againInBook(named, book).some(x => x.inBook === 'Haus'));
 });
+
+test('a drawing of several parts built from spheres and boxes is sent back for real silhouettes', async () => {
+  const { blobs } = await import('./generate.mjs');
+  const parts = '// parts: a\n// parts: b\n// parts: c\n// parts: d\n';
+  assert.equal(blobs(parts, { geoms: { SphereGeometry: 6, BoxGeometry: 4 } }).length, 1);
+  assert.deepEqual(blobs(parts, { geoms: { SphereGeometry: 4, TubeGeometry: 3, ExtrudeGeometry: 2 } }), []);
+  assert.deepEqual(blobs('// parts: ball\n', { geoms: { SphereGeometry: 5 } }), []);          // a ball may be a sphere
+});

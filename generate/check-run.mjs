@@ -103,8 +103,10 @@ async function buildCheck(file, takenIds) {
 
     const box = new THREE.Box3().setFromObject(ctx.world);
     let meshes = 0;
-    ctx.world.traverse(o => { if (o.isMesh) meshes++; });
+    const geoms = {};                                    // geometry types, for the blob check (all spheres and boxes?)
+    ctx.world.traverse(o => { if (o.isMesh) { meshes++; const t = o.geometry?.type || '?'; geoms[t] = (geoms[t] || 0) + 1; } });
     info.meshes = meshes;
+    info.geoms = geoms;
     if (!meshes) problems.push('build() added nothing visible to ctx.world');
     else {
       info.box = { min: box.min.toArray().map(v => +v.toFixed(2)), max: box.max.toArray().map(v => +v.toFixed(2)) };
