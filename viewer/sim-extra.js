@@ -216,6 +216,7 @@ export function frame(actors, api) {
     // held out in front of the carrier, not on its middle: the carrier's radius plus the thing's half-width along its facing
     const c = it.carrier, off = (c.radius ?? 0.4) + (it.r ?? 0.5), f = c.face ?? 0;
     it.x = c.pos.x + Math.sin(f) * off; it.z = c.pos.z + Math.cos(f) * off;
+    if (ground) { it.x = Math.max(-ground.w / 2 + 0.5, Math.min(ground.w / 2 - 0.5, it.x)); it.z = Math.max(-ground.d / 2 + 0.5, Math.min(ground.d / 2 - 0.5, it.z)); }   // held on the pages
   }
   flyPortables(spots, actors, { now, say, line, ground });
 }
