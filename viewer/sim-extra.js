@@ -186,7 +186,8 @@ export function portable(a, g, api) {
   // carry: wander about with it; now and then a friend close by is offered it
   // the carry lasts CARRY_FOR from the pick-up or hand-over, kept on the thing (goals are re-decided meanwhile)
   if (now() > (it.carryUntil ??= now() + CARRY_FOR)) return drop();
-  const friend = actors().find(b => b !== a && !b.hidden && b.kind !== 'squid' && !carriedBy(spots, b) &&
+  // (a friend who carries something too can swap: the give hands theirs back)
+  const friend = actors().find(b => b !== a && !b.hidden && b.kind !== 'squid' &&
     Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y)) <= 2 && (b.goal?.type ?? 'idle') !== 'give');
   if (friend && R() < 0.4) { a.goal = { type: 'give', item: it, to: friend, until: now() + 8 }; a.goalSince = now(); return; }
   // a throw: a friend a few cells off; it flies in an arc and lands, and is caught if they are still there
