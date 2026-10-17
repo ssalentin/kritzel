@@ -320,6 +320,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
   const settledAt = statSync(frame).mtimeMs;
   // timing: where the time goes, in seconds since this frame's start (waited: from settling to the start)
   const t0 = Date.now(), T = () => +((Date.now() - t0) / 1000).toFixed(1);
+  let endThings = null;
   const report = { frame, box, previous, started: new Date(t0).toISOString(), timing: { waited: +((t0 - settledAt) / 1000).toFixed(1) }, calls: [], written: [], removed: [], rejected: [], unclear: [] };
   const mark = k => { report.timing[k] ??= T(); };
   const save = () => {
@@ -339,6 +340,12 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
     // the build list for the viewer's queue (Sebastian: show what is being built, often several at once):
     // [{ name: { de, en }, state: listed | building | draft | done | failed, file? }], at most 16
     const things = [];
+    // at every end of the frame (also a failed main call or an error): rows still listed or building were not built;
+    // then the list goes, 10 s after the finals, unless a newer frame owns it
+    endThings = () => {
+      things.forEach((t, k) => { if (t && (t.state === 'listed' || t.state === 'building')) thingState(k, 'failed'); });
+      Promise.allSettled(finals).then(() => setTimeout(() => { if (thingsOwner === name) { thingsOwner = null; try { onProgress({ things: [] }); } catch { /* */ } } }, THINGS_LINGER_MS).unref?.());
+    };
     const showThings = () => { thingsOwner = name; try { onProgress({ things: things.filter(Boolean).slice(0, 16) }); } catch { /* never breaks a frame */ } };
     const listThings = () => {
       let added = false;
@@ -705,15 +712,13 @@ Several builders make this sheet at the same time. You build only this one drawi
       })();
     }
     Object.defineProperty(report, 'finalsDone', { value: Promise.allSettled(finals), enumerable: false });
-    // rows still listed or building when the frame ends were not built; then the list goes, 10 s after the finals
-    things.forEach((t, k) => { if (t && (t.state === 'listed' || t.state === 'building')) thingState(k, 'failed'); });
-    report.finalsDone.then(() => setTimeout(() => { if (thingsOwner === name) { thingsOwner = null; try { onProgress({ things: [] }); } catch { /* */ } } }, THINGS_LINGER_MS).unref?.());
     return report;
   } catch (e) {
     report.error = e.message;
     log(`${name}: ERROR ${e.message}`);
     return report;
   } finally {
+    try { endThings?.(); } catch { /* the list must not break a frame */ }
     report.finished = new Date().toISOString();
     report.timing.done = T();
     save();

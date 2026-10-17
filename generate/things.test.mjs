@@ -34,3 +34,20 @@ export function build() { return { actors: [] }; }`);
     assert.deepEqual(seen.at(-1), []);                                       // gone after the linger
   } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a frame that ends in an error still marks its rows failed and clears the list', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kritzel-things-'));
+  try {
+    for (const d of ['things', 'reports']) mkdirSync(join(dir, d));
+    const frame = join(dir, '20261017-120001.jpg');
+    execFileSync('convert', ['-size', '640x480', 'xc:white', frame]);
+    writeFileSync(join(dir, 'reply.txt'), `SEEN: [{"de": "eine Maus", "en": "a mouse", "den": "die Maus", "the": "the mouse", "name_en": "Mouse"}, {"de": "ein Hund", "en": "a dog", "den": "den Hund", "the": "the dog", "name_en": "Dog"}]\nno sections here`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const seen = [];
+    const r = await processFrame(frame, { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports'), box: [100, 100, 200, 200], onProgress: p => { if (p.things) seen.push(JSON.parse(JSON.stringify(p.things))); } });
+    assert.ok(r.error);
+    assert.deepEqual(seen.at(-1).map(t => t.state), ['failed', 'failed']);
+    await new Promise(ok => setTimeout(ok, 400));
+    assert.deepEqual(seen.at(-1), []);
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
