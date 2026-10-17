@@ -157,6 +157,8 @@ export async function build(api, prevState = null) {
   // when it changes and at most every 10 s (serve.py keeps the last one in frames/status/situation.json)
   let sentSituation = '', sentAt = 0;
   function reportSituation() {
+    // only the live viewer, and only while it is on screen: an archived world or a hidden tab runs its own sim
+    if (!location.pathname.startsWith('/viewer/') || document.visibilityState !== 'visible') return;
     if (Date.now() - sentAt < 10000) return;
     const carrying = [], thrown = [];
     for (const e of loaded.values()) for (const s of e.spots) if (s.kind === 'portable') {
