@@ -224,3 +224,20 @@ test("quests are only what the sim runs today: a figure's, of kind help or wait"
   assert.equal(cleanQuest({ ...q, solve: { kind: 'bring', what: 'Keks' } }, refs, things, () => '', figures), null);
   assert.ok(cleanQuest({ ...q, solve: { kind: 'wait', when: 'rain' } }, refs, things, () => '', figures));
 });
+
+test("a persona keyed by the figure's name instead of its id is kept", async () => {
+  const { makePool } = await import('./dialogues.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'kritzel-pool-'));
+  const path = process.env.PATH;
+  process.env.PATH = join(import.meta.dirname, 'test-bin') + ':' + path;
+  try {
+    writeFileSync(join(dir, 'turm.js'), actor('turmwesen', 'Turmwesen'));
+    writeFileSync(join(dir, 'maus.js'), actor('maus', 'Maus'));
+    writeFileSync(join(dir, 'reply.txt'), JSON.stringify({ personas: { Turmwesen: { hobby: 'guard' }, MAUS: { hobby: 'nap' } }, quests: [], dialogues: [] }));
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    await makePool({ thingsDir: dir, model: 'claude-haiku-5-5' });
+    const j = JSON.parse(readFileSync(join(dir, 'dialogues.json'), 'utf8'));
+    assert.equal(j.personas.turmwesen?.hobby, 'guard');
+    assert.equal(j.personas.maus?.hobby, 'nap');
+  } finally { process.env.PATH = path; delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
