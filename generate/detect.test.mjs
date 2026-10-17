@@ -185,3 +185,23 @@ test('switch mode: the old world is archived only when the new sheet yields a th
   assert.deepEqual(Object.keys(one.paper).sort(), ['_through', 'stein-2.js', 'stein.js']);   // the old world's places stay archived
   assert.equal(one.paper._through, '20261017-120000.jpg');
 });
+
+test('paper taken away and put back: the places are kept, and the same sheet is not built again', async () => {
+  const { againInBook, keepPlacesIfNothing } = await import('./generate.mjs');
+  // the guard uses stale places too (an empty table marked them all stale)
+  const t = (name, x, y) => ({ meta: { name, paper: { x, y, stale: true } } });
+  const book = [t('Haus', 0.66, 0.33), t('Strichfigur', 0.325, 0.545), t('Maus', 0.28, 0.6), t('Sonne', 0.48, 0.22), t('Wolke', 0.52, 0.22)];
+  const e = (de, x, y) => ({ de, box: [x - 0.02, y - 0.02, x + 0.02, y + 0.02] });
+  const back = [e('ein Haus', 0.66, 0.33), e('ein Mann', 0.325, 0.545), e('eine Maus', 0.28, 0.6), e('eine Sonne', 0.48, 0.22), e('eine Wolke', 0.52, 0.22)];
+  assert.equal(againInBook(back, book).length, 5);
+  // a big change that built nothing puts the places back as they were
+  const dir = mkdtempSync(join(tmpdir(), 'kritzel-paper-'));
+  try {
+    const before = { _through: '20261017-154656.jpg', 'haus.js': { x: 0.66, y: 0.33 } };
+    writeFileSync(join(dir, 'paper.json'), JSON.stringify({ _through: '20261017-154700.jpg', 'haus.js': { x: 0.66, y: 0.33, stale: true } }));
+    assert.equal(keepPlacesIfNothing(dir, before, { written: [], removed: [] }), true);
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, 'paper.json'), 'utf8')), { _through: '20261017-154700.jpg', 'haus.js': { x: 0.66, y: 0.33 } });
+    writeFileSync(join(dir, 'paper.json'), JSON.stringify({ _through: 'x', 'haus.js': { x: 0.1, y: 0.1, stale: true } }));
+    assert.equal(keepPlacesIfNothing(dir, before, { written: [{}], removed: [] }), false);   // something built: a new sheet
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
