@@ -102,3 +102,22 @@ test('a pool without a persona for every figure is stale, so the watcher makes o
     assert.equal(await poolIsStale(dir), false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a new pool keeps the old dialogues for any time and replaces the old ones for a moment', async () => {
+  const { makePool } = await import('./dialogues.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'kritzel-pool-'));
+  const path = process.env.PATH;
+  process.env.PATH = join(import.meta.dirname, 'test-bin') + ':' + path;
+  try {
+    writeFileSync(join(dir, 'affe.js'), actor('affe', 'Affe'));
+    writeFileSync(join(dir, 'maus.js'), actor('maus', 'Maus'));
+    const d = (de, when) => ({ between: ['Affe', 'Maus'], end: null, ...(when && { when }), turns: [{ who: 'Affe', de, en: 'Hi!' }, { who: 'Maus', de: 'Ja!', en: 'Yes!' }] });
+    const p = { favourite: null, likes: [], fears: [], hobby: 'wander', lines: { de: [], en: [] } };
+    writeFileSync(join(dir, 'dialogues.json'), JSON.stringify({ personas: { affe: p, maus: p }, dialogues: [d('Alt immer'), d('Alt Nacht', { night: 0.5 }), { ...d('Weg'), between: ['Affe', 'Hund'] }] }));
+    writeFileSync(join(dir, 'reply.txt'), JSON.stringify({ personas: {}, dialogues: [d('Neu Regen', { weather: 'rain' }), d('Neu immer')] }));
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    await makePool({ thingsDir: dir, model: 'claude-haiku-5-5' });
+    const j = JSON.parse(readFileSync(join(dir, 'dialogues.json'), 'utf8'));
+    assert.deepEqual(j.dialogues.map(x => x.turns[0].de), ['Neu Regen', 'Neu immer', 'Alt immer']);   // not the old moment one, not the one with a figure gone
+  } finally { process.env.PATH = path; delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});

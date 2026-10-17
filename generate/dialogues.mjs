@@ -17,6 +17,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // the cheap fast model through pi (as live generation), Haiku when pi fails
 export const POOL_MODEL = process.env.KRITZEL_DIALOGUE_MODEL || 'deepseek/deepseek-v4-flash';
 export const POOL_FALLBACK = process.env.KRITZEL_DIALOGUE_FALLBACK || 'claude-haiku-5-5';
+// the most dialogues kept in the pool: many pairs meet, and each dialogue plays once per page load
+const POOL_MAX = 36;
 
 const STR = `['"]([^'"]+)['"]`, PLAIN = `(?:\\s*\\w+:\\s*(?:'[^']*'|"[^"]*"|[\\w.-]+)\\s*,)*?`;
 
@@ -112,7 +114,7 @@ ${cast.map(c => `- ${c.id}, ${c.name}: ${c.drawing}${kept[c.id] ? ` (persona: ${
 The things in the book (name: drawing):
 ${things.map(t => `- ${t.name}: ${t.drawing}`).join('\n') || '(none)'}
 ${moment ? `Right now: ${moment}.\n` : ''}
-${want.length ? `Write personas for: ${want.map(c => c.id).join(', ')}.` : 'Every figure has its persona: write "personas": {}.'} Write ${count} dialogues, spread over different pairs${moment ? ', a few of them for this moment (with a matching "when")' : ''}.`;
+${want.length ? `Write personas for: ${want.map(c => c.id).join(', ')}.` : 'Every figure has its persona: write "personas": {}.'} Write ${count} dialogues, spread over different pairs${moment ? ', at most 4 of them for this moment (with a matching "when"), the rest for any time' : ''}.`;
   const t0 = Date.now();
   const r = await oneShot({ system: SYSTEM, text, images: [], model, fallback: POOL_FALLBACK, effort: 'low' });
   let j = {};
@@ -128,10 +130,16 @@ ${want.length ? `Write personas for: ${want.map(c => c.id).join(', ')}.` : 'Ever
   const dropped = offered.map(why).filter(Boolean);
   const dialogues = offered.filter(d => !why(d))
     .map(d => { const when = cleanWhen(d.when, refs, thingNames); const { when: _, ...rest } = d; return when ? { ...rest, when } : rest; });
-  // an unusable reply keeps the old dialogues rather than leaving the book with none
-  const keepOld = !dialogues.length && Array.isArray(old.dialogues);
+  // The pool grows instead of being replaced: the old dialogues for any time (no when) between figures still in
+  // the book stay, the new ones come first, up to POOL_MAX. A moment's dialogues (with a when) are replaced by
+  // the next call's: else every moment call would shrink what fits once the moment passes (QA: 12 -> 10 -> 8,
+  // 7 of 8 with a when). An unusable reply keeps the old dialogues.
+  const anyTime = (Array.isArray(old.dialogues) ? old.dialogues : []).filter(d => !d.when && safeDialogue(d) && d.between.every(n => names.has(n)));
+  const seen = new Set(dialogues.map(d => JSON.stringify(d.turns)));
+  const still = anyTime.filter(d => !seen.has(JSON.stringify(d.turns)));
+  const pool = (dialogues.length ? [...dialogues, ...still] : Array.isArray(old.dialogues) ? old.dialogues : []).slice(0, POOL_MAX);
   writeFileSync(out + '.tmp', JSON.stringify({ cast: [...names].sort(), model: r.model, made_at: new Date().toISOString(), reason,
-    personas, dialogues: keepOld ? old.dialogues : dialogues }, null, 1));
+    personas, dialogues: pool }, null, 1));
   renameSync(out + '.tmp', out);
   return { written: dialogues.length, personas: Object.keys(personas).length - Object.keys(kept).length, offered: offered.length, ...(dropped.length && { dropped: [...new Set(dropped)].slice(0, 5) }),
     seconds: (Date.now() - t0) / 1000, cost: r.cost, model: r.model, ...(r.fellBack && { fellBack: r.fellBack }) };
