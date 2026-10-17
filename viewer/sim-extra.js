@@ -41,6 +41,9 @@ export const LINES = {
   clear: { person: ['Die Sonne kommt wieder!', 'Endlich wieder hell!'], sqichy: ['Die Sonne! Blubb!'] },
   showEgg: { person: ['Schau mal, mein Ei!', 'Guck, ein Ei!'], sqichy: ['Schau, mein Ei!'] },
   found: { person: ['Oh, ein Schlüssel!', 'Hihi, ein Schlüssel!'] },
+  throw: { person: ['Fang!', 'Hier, für dich!'] },
+  catch: { person: ['Juhu, gefangen!', 'Hab ich!'] },
+  oops: { person: ['Oje, daneben!', 'Hoppla!'] },
   pick: { person: ['Oh, das nehme ich mit!', 'Das ist jetzt meins!'] },
   give: { person: ['Magst du meins?', 'Hier, für dich!', 'Tauschen?'] },
   thanks: { person: ['Danke!', 'Oh, toll!'] },
@@ -97,6 +100,9 @@ export const LINES_EN = {
   clear: { person: ['The sun is back!', 'Bright again at last!'], sqichy: ['The sun! Blub!'] },
   showEgg: { person: ['Look, my egg!', 'See, an egg!'], sqichy: ['Look, my egg!'] },
   found: { person: ['Oh, a key!', 'Hehe, a key!'] },
+  throw: { person: ['Catch!', 'Here you go!'] },
+  catch: { person: ['Yay, caught it!', 'Got it!'] },
+  oops: { person: ['Oops, missed!', 'Whoops!'] },
   pick: { person: ['Oh, I\'ll take that!', 'That\'s mine now!'] },
   give: { person: ['Want mine?', 'Here, for you!', 'Swap?'] },
   thanks: { person: ['Thanks!', 'Oh, nice!'] },
@@ -177,11 +183,55 @@ export function portable(a, g, api) {
   const friend = actors().find(b => b !== a && !b.hidden && b.kind !== 'squid' && !carriedBy(spots, b) &&
     Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y)) <= 2 && (b.goal?.type ?? 'idle') !== 'give');
   if (friend && R() < 0.4) { a.goal = { type: 'give', item: it, to: friend, until: now() + 8 }; a.goalSince = now(); return; }
+  // a throw: a friend a few cells off; it flies in an arc and lands, and is caught if they are still there
+  const far = actors().find(b => b !== a && !b.hidden && b.kind !== 'squid' && !carriedBy(spots, b) && (b.goal?.type ?? 'idle') !== 'give' &&
+    Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y)) >= 3 && Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y)) <= 6);
+  if (far && R() < 0.15) { throwTo(a, it, far, api); return; }
   if (!g.cell || (a.cell.x === g.cell[0] && a.cell.y === g.cell[1])) {
     const c = nearest(a.pos.x + (R() - 0.5) * 4, a.pos.z + (R() - 0.5) * 4, a);
     g.cell = c ? [c.x, c.y] : null;
   }
   if (!g.cell || !step(a, g.cell[0], g.cell[1])) g.cell = null;
+}
+
+// the throw starts: the thing leaves the hand and flies in an arc (tick() moves it, and lands it)
+const THROW_S = 1.1;
+function throwTo(a, it, to, { now, say, line }) {
+  it.carrier = null;
+  it.throw = { x0: it.x, z0: it.z, x1: to.pos.x, z1: to.pos.z, t0: now(), to, from: a };
+  say(a, line(a, 'throw'), 1.6);
+  a.goal = null;
+}
+// every frame (not the slow tick): portable things. A carried one is where its carrier is, and a carrier who left
+// or hid lets it go; a thing in the air moves along its arc and lands, and a friend still near catches it
+export function frame(actors, api) {
+  const { now, say, line, ground, spots } = api;
+  for (const it of spots().filter(s => s.kind === 'portable' && s.carrier)) {
+    if (!actors.includes(it.carrier) || it.carrier.hidden || !/^(carry|give)$/.test(it.carrier.goal?.type ?? '')) it.carrier = null;   // something else took over: let go
+    else { it.x = it.carrier.pos.x; it.z = it.carrier.pos.z; }
+  }
+  flyPortables(spots, actors, { now, say, line, ground });
+}
+// a thing in the air: where it is along the arc, and where it lands; a friend who is still near catches it
+function flyPortables(spots, actors, { now, say, line, ground }) {
+  for (const it of spots().filter(s => s.kind === 'portable' && s.throw)) {
+    const th = it.throw, u = (now() - th.t0) / THROW_S;
+    if (u < 1) {
+      it.x = th.x0 + (th.x1 - th.x0) * u; it.z = th.z0 + (th.z1 - th.z0) * u;
+      it.alt = Math.sin(Math.PI * u) * 1.2;
+      continue;
+    }
+    // landed: clamped to the pages; a friend standing close by catches it, otherwise it lies where it fell
+    it.throw = null; it.alt = 0;
+    const lim = ground ? { x: ground.w / 2 - 0.5, z: ground.d / 2 - 0.5 } : { x: 6, z: 6 };
+    it.x = Math.max(-lim.x, Math.min(lim.x, th.x1)); it.z = Math.max(-lim.z, Math.min(lim.z, th.z1));
+    it.landed = true;
+    const to = th.to;
+    if (actors.includes(to) && !to.hidden && Math.hypot(to.pos.x - th.x1, to.pos.z - th.z1) < 1.2 && !carriedBy(spots, to)) {
+      it.carrier = to; to.goal = { type: 'carry', item: it, until: null }; to.goalSince = now();
+      say(to, line(to, 'catch'), 1.8);
+    } else say(th.from, line(th.from, 'oops'), 1.6);
+  }
 }
 
 // items and locks: a curious character picks up a free item and carries it to the matching lock
@@ -427,13 +477,8 @@ function endDialogue(a, api) {
   else if (f.end === 'stroll') go(a.pos.x + (R() - 0.5) * 6, a.pos.z + (R() - 0.5) * 6);
 }
 
-export function tick(actors, { now, R, pick, line, say, rel, spots, nearest }, cover) {
+export function tick(actors, { now, R, pick, line, say, rel, spots, nearest, ground }, cover) {
   for (const a of actors) if (a.after && now() >= a.after.at) endDialogue(a, arguments[1]);
-  // portable things: a carried one is where its carrier is; a carrier who left or hid lets it go
-  for (const it of spots().filter(s => s.kind === 'portable' && s.carrier)) {
-    if (!actors.includes(it.carrier) || it.carrier.hidden || !/^(carry|give)$/.test(it.carrier.goal?.type ?? '')) it.carrier = null;   // something else took over: let go
-    else { it.x = it.carrier.pos.x; it.z = it.carrier.pos.z; }
-  }
   // items: a carried item follows its carrier; a carrier who left or hid drops it; opened locks close again
   for (const it of spots().filter(s => s.kind === 'item')) {
     it.home ??= { x: it.x, z: it.z };

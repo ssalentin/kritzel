@@ -368,7 +368,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   // what extra interactions get: the sim's helpers, so they stay generic
   const stageFor = (a, b, until) => { stage = { a, b, until }; };
   const talking = () => (stage && now < stage.until ? stage : null);
-  const api = { stage: stageFor, talking, things: () => thingsNow, night: () => nightNow, lamps: () => lampsNow, byId: () => byId, busy, say, line, bond, now: () => now, R, pick, rel, actors: () => actors, nearest: nearestCell, step: stepToward, pass: passable, spots: () => spots, spotCell, cover: () => coverNow, seen: (x, y) => { const c = new Set(); fov.compute(x, y, 12, (cx, cy) => c.add(cx + ',' + cy)); return c; } };
+  const api = { ground, stage: stageFor, talking, things: () => thingsNow, night: () => nightNow, lamps: () => lampsNow, byId: () => byId, busy, say, line, bond, now: () => now, R, pick, rel, actors: () => actors, nearest: nearestCell, step: stepToward, pass: passable, spots: () => spots, spotCell, cover: () => coverNow, seen: (x, y) => { const c = new Set(); fov.compute(x, y, 12, (cx, cy) => c.add(cx + ',' + cy)); return c; } };
   const INT = Object.fromEntries(Object.entries(X.INTERACTIONS || {}).map(([k, f]) => [k, (a, b) => f(a, b, api)]));
 
   function interact(a, b) {
@@ -624,6 +624,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
       }
       acc += dt;
       while (acc >= TICK) { acc -= TICK; const a = scheduler.next(); if (a) guarded(a, () => act(a)); }   // empty world: nobody to act
+      X.frame?.(actors, api);                  // portable things move every frame (sim-extra.js frame)
       if (X.tick && now >= (nextTick ?? 0)) { nextTick = now + 4; X.tick(actors, api, coverNow); }
 
       // the cloud just covered the sun: everyone reacts
