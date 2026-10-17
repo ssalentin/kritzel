@@ -106,18 +106,24 @@ export async function build(api, prevState = null) {
   // the free spot nearest to (x, z) for `shape` (a radius, or a footprint to move): on the island,
   // off other things, their obstacles, the characters and spots promised to drawings still being
   // built. If nothing is entirely free, the spot where it overlaps least.
+  // a free spot for a shape near (x, z), the sheet's place for it: close to there, clear of everything,
+  // and away from its neighbours where the book has room. Things spread over the pages instead of piling up
+  // where the sheet's drawings happened to be.
   function freeSpot(x, z, shape, except = null) {
     const busy = [...(api.reserved?.() || [])];
     for (const [f, e] of loaded) if (f !== except && !e.heldBy) { if (e.foot) busy.push(e.foot); busy.push(...e.obstacles); }   // held: in a hand
     for (const a of brain?.actors?.() || []) busy.push({ x: a.pos.x, z: a.pos.z, r: 0.45 });
     const at = (cx, cz) => typeof shape === 'number' ? { x: cx, z: cz, r: shape } : { ...shape, x: cx, z: cz };
     let best = null, bestCost = Infinity;
-    for (let ring = 0; ring <= 30; ring++) {
+    for (let ring = 0; ring <= 14; ring++) {
       const d = ring * 0.35, n = Math.max(1, Math.round(2 * Math.PI * d / 0.35));
       for (let i = 0; i < n; i++) {
         const a = i / n * Math.PI * 2 + ring, s = at(x + Math.cos(a) * d, z + Math.sin(a) * d);
-        const cost = offGround(s) * 4 + busy.reduce((c, o) => c + depth(s, o, 0.15), 0);
-        if (cost === 0) return { x: s.x, z: s.z };
+        const off = offGround(s) * 4;
+        // overlaps are forbidden; neighbours within about a step cost a little, so free room is taken first
+        let hard = 0, near = 0;
+        for (const o of busy) { hard += depth(s, o, 0.15); near += depth(s, o, 1.2); }
+        const cost = off + hard * 4 + near * 0.5 + Math.hypot(s.x - x, s.z - z) * 0.3;
         if (cost < bestCost - 1e-6) { bestCost = cost; best = { x: s.x, z: s.z }; }
       }
     }
