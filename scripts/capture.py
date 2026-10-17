@@ -50,6 +50,8 @@ EDGE = 10                # thumb px at the frame's edge that never count (the ta
 BIG = 0.04               # share changed that is a big change, not drawing
 STILL_S, BIG_S, FPS = 1.2, 8.0, 8
 TURN, REACH = 6, 40      # a sheet turned up to TURN degrees and slid up to REACH thumb px (×6 at 1080p) is still the same sheet
+OVERLAP, MATCH = 0.15, 0.6   # ...and one slid further, partly out of view: OVERLAP of the picture still shows where it
+                             # was, and its lines and the new picture's match there (MATCH: shared / either)
 SHEET_S, SCATTER, SPAN = 3.0, 0.6, 0.5   # a big change whose biggest patch is under SCATTER of it, spanning over
                                         # SPAN of the picture: a new sheet, handed on after SHEET_S
 EARLY_S = 0.3            # into a still spell: look what's new, and fetch the snapshot of a drawing already
@@ -234,17 +236,151 @@ def fit(thumb, base):
     return a, dx, dy
 
 
-def warp(thumb, a, d):
+def otsu(img):
+    """The brightness that best splits the picture in two (paper above it, table below)."""
+    hist = [0] * 511
+    for v in img:
+        hist[min(max(round(v) + 255, 0), 510)] += 1
+    n, total, below, below_sum, best = len(img), sum(i * k for i, k in enumerate(hist)), 0, 0, (0, 0)
+    for t, k in enumerate(hist):
+        below, below_sum = below + k, below_sum + t * k
+        if 0 < below < n:
+            spread = below * (n - below) * ((total - below_sum) / (n - below) - below_sum / below) ** 2
+            if spread > best[0]:
+                best = (spread, t - 255)
+    return best[1]
+
+
+def lines(img):
+    """The drawing on the paper, on quarter-size blocks (True where a block holds some): sharp dark
+    lines with paper-bright, mostly smooth surroundings. Not the table's grain, a sheet's edge against
+    the table, or a dark device beside the paper."""
+    lo, hi = envelope(img, 2)
+    paper = otsu(img)                                  # paper is brighter than this, the table darker
+    flat = [int(h - l < 6) for l, h in zip(lo, hi)]
+    acc = [0] * ((W + 1) * (H + 1))                    # summed-area table of the smooth pixels
+    for y in range(H):
+        run = 0
+        for x in range(W):
+            run += flat[y * W + x]
+            acc[(y + 1) * (W + 1) + x + 1] = acc[y * (W + 1) + x + 1] + run
+    def smooth(x, y, r=4):
+        x0, x1, y0, y1 = max(x - r, 0), min(x + r + 1, W), max(y - r, 0), min(y + r + 1, H)
+        n = acc[y1 * (W + 1) + x1] - acc[y0 * (W + 1) + x1] - acc[y1 * (W + 1) + x0] + acc[y0 * (W + 1) + x0]
+        return n >= 0.4 * (x1 - x0) * (y1 - y0)
+    ink = [hi[i] - lo[i] >= INK_EDGE and hi[i] > paper and smooth(i % W, i // W) for i in range(W * H)]
+    w, h = W // 4, H // 4
+    return [any(ink[(4 * y + j) * W + 4 * x + i] for j in range(4) for i in range(4)) for y in range(h) for x in range(w)]
+
+
+def far(thumb, base):
+    """The same sheet slid far, partly out of view (pulled away, pushed aside): the slide (dx, dy) in
+    thumb px that lays `base`'s drawing onto `thumb`'s, where both show, and the brightness offset between
+    the pictures there (each thumbnail is centred on its own median, which moves when the table fills the
+    view); None when no slide matches (MATCH) on at least OVERLAP of the picture."""
+    def score(old, new, w, h, offsets):
+        """Best (shared / either, dx, dy) over the offsets: old's line cells landing on new's lines
+        (one cell of slack), where the slid pictures overlap on at least OVERLAP of the picture."""
+        near = [any(new[(y + j) * w + x + i] for j in (-1, 0, 1) for i in (-1, 0, 1) if 0 <= x + i < w and 0 <= y + j < h)
+                for y in range(h) for x in range(w)]
+        acc = [0] * ((w + 1) * (h + 1))                # summed-area table of new's lines
+        for y in range(h):
+            run = 0
+            for x in range(w):
+                run += new[y * w + x]
+                acc[(y + 1) * (w + 1) + x + 1] = acc[y * (w + 1) + x + 1] + run
+        cells = [(x, y) for y in range(h) for x in range(w) if old[y * w + x]]
+        enough, best = max(30 * w // (W // 4), 0.2 * len(cells)), None
+        for dx, dy in offsets:
+            x0, x1, y0, y1 = max(0, -dx), min(w, w - dx), max(0, -dy), min(h, h - dy)
+            if (x1 - x0) * (y1 - y0) < OVERLAP * w * h:
+                continue
+            was = both = 0
+            for x, y in cells:
+                if x0 <= x < x1 and y0 <= y < y1:
+                    was += 1
+                    both += near[(y + dy) * w + x + dx]
+            X0, X1, Y0, Y1 = x0 + dx, x1 + dx, y0 + dy, y1 + dy
+            now = acc[Y1 * (w + 1) + X1] - acc[Y0 * (w + 1) + X1] - acc[Y1 * (w + 1) + X0] + acc[Y0 * (w + 1) + X0]
+            if was >= enough and (best is None or both / (was + now - min(both, now)) > best[0]):
+                best = (both / (was + now - min(both, now)), dx, dy)
+        return best
+    w, h = W // 4, H // 4
+    old, new = lines(base), lines(thumb)
+    half = lambda m: [any(m[(2 * y + j) * w + 2 * x + i] for j in (0, 1) for i in (0, 1)) for y in range(h // 2) for x in range(w // 2)]
+    rx, ry = int(w / 2 * (1 - OVERLAP)), int(h / 2 * (1 - OVERLAP))
+    best = score(half(old), half(new), w // 2, h // 2, [(x, y) for y in range(-ry, ry + 1) for x in range(-rx, rx + 1)])
+    if not best or best[0] < MATCH * 0.8:
+        return None
+    best = score(old, new, w, h, [(2 * best[1] + x, 2 * best[2] + y) for y in range(-2, 3) for x in range(-2, 3)])
+    if not best or best[0] < MATCH:
+        return None
+    return turned(thumb, base, 4 * best[1], 4 * best[2])
+
+
+def turned(thumb, base, dx0, dy0):
+    """Around the slide (dx0, dy0): the turn (up to TURN°) and slide that fit best where both pictures
+    show, ignoring a brightness offset between them; (degrees, dx, dy, offset). Coarse, then fine."""
+    cx, cy = (W - 1) / 2, (H - 1) / 2
+    def search(angles, offsets, step):
+        pts = [(x, y, base[y * W + x]) for y in range(0, H, step) for x in range(0, W, step)]
+        best = None
+        for a in angles:
+            ca, sa = math.cos(math.radians(a)), math.sin(math.radians(a))
+            rot = [(ca * (x - cx) - sa * (y - cy) + cx, sa * (x - cx) + ca * (y - cy) + cy, v) for x, y, v in pts]
+            for dx, dy in offsets:
+                d = []
+                for X, Y, v in rot:
+                    X, Y = round(X + dx), round(Y + dy)
+                    if 0 <= X < W and 0 <= Y < H:
+                        d.append(thumb[Y * W + X] - v)
+                if len(d) > 0.5 * OVERLAP * len(pts):
+                    m = sum(d) / len(d)
+                    cost = sum(abs(v - m) for v in d) / len(d)
+                    if best is None or cost < best[0]:
+                        best = (cost, a, dx, dy, m)
+        return best
+    b = search(range(-TURN, TURN + 1, 2), [(dx0 + x, dy0 + y) for y in range(-4, 5, 2) for x in range(-4, 5, 2)], 8)
+    b = search([b[1] + k / 2 for k in range(-2, 3)], [(b[2] + x, b[3] + y) for y in range(-2, 3) for x in range(-2, 3)], 5)
+    return b[1], b[2], b[3], b[4]
+
+
+def warp(thumb, a, d, fill=None, offset=0):
     """`thumb` lined up with the picture it was compared with, after the sheet turned by a degrees
-    and slid by d (as fit() measured it): every pixel p takes thumb's value at R(p - centre) + centre + d."""
+    and slid by d (as fit() or far() measured it): every pixel p takes thumb's value at
+    R(p - centre) + centre + d, minus `offset`. Where that is outside the picture: `fill`'s value (the
+    sheet went out of view there: nothing to compare), or else the nearest edge pixel's."""
     ca, sa = math.cos(math.radians(a)), math.sin(math.radians(a))
     cx, cy, out = (W - 1) / 2, (H - 1) / 2, []
     for y in range(H):
         for x in range(W):
-            X = min(max(round(ca * (x - cx) - sa * (y - cy) + cx + d[0]), 0), W - 1)
-            Y = min(max(round(sa * (x - cx) + ca * (y - cy) + cy + d[1]), 0), H - 1)
-            out.append(thumb[Y * W + X])
+            X = round(ca * (x - cx) - sa * (y - cy) + cx + d[0])
+            Y = round(sa * (x - cx) + ca * (y - cy) + cy + d[1])
+            if fill is not None and not (0 <= X < W and 0 <= Y < H):
+                out.append(fill[y * W + x])
+            else:
+                out.append(thumb[min(max(Y, 0), H - 1) * W + min(max(X, 0), W - 1)] - offset)
     return out
+
+
+def line_up(thumb, base, baseline):
+    """The sheet in `thumb` is the one in `base`, turned (fit) or slid far, partly out of view (far):
+    (degrees, dx, dy, what is new after lining up, far?) when the change after lining up is not big,
+    else None (a new sheet)."""
+    a, dx, dy = fit(thumb, base)
+    aligned = warp(thumb, a, (dx, dy))
+    diff = inky(new_marks(aligned, baseline), aligned, baseline)
+    if len(diff) <= BIG * W * H:
+        return a, dx, dy, diff, False
+    # slid further, partly out of view (live 2026-10-17 15:47: a sheet pulled half off the picture was
+    # taken for a new one, and everything on it was built twice): compare where it still shows
+    pulled = far(thumb, base)
+    if not pulled:
+        return None
+    a, dx, dy, offset = pulled
+    aligned = warp(thumb, a, (dx, dy), fill=base, offset=offset)
+    diff = inky(new_marks(aligned, baseline), aligned, baseline)
+    return (a, dx, dy, diff, True) if len(diff) <= BIG * W * H else None
 
 
 class Detector:
@@ -254,12 +390,15 @@ class Detector:
     not the previous sample, so slow drawing or a creeping shadow also restarts the wait.
     Before comparing with the last sheet handed on, the picture is lined up with it, so paper
     that slid a little isn't news."""
+    THREADED = True                          # tests that replay faster than real time line up inline
 
     def __init__(self, baseline=None):
         self.base = baseline
         self.baseline = baseline and envelope(baseline)
         self.anchor = self.still_since = self.shift = self.moved_at = self.diff = self.measured = None
         self.turn, self.fitted = 0, False    # degrees the sheet turned, and whether fit() lined it up
+        self.lining, self.lined = None, {}   # the still spell being lined up in a thread, and results by spell
+        self.far = False                     # ...and whether far() did: the sheet slid partly out of view
         self.fit_due = False                 # a big change in this still spell that fit() should try
         self.spell = 0                       # counts still spells
         self.patchy = None                   # (diff, scattered?) for the diff it was worked out for
@@ -269,7 +408,7 @@ class Detector:
             if self.anchor is not None:
                 self.moved_at = t
             self.anchor, self.still_since, self.shift, self.diff, self.turn = envelope(thumb, 1), t, None, None, 0
-            self.fitted = False
+            self.fitted = self.far = False
             self.spell += 1
             return None
         if t - self.still_since < EARLY_S:
@@ -282,14 +421,26 @@ class Detector:
                 aligned = moved(thumb, self.shift)
                 self.diff = inky(new_marks(aligned, self.baseline), aligned, self.baseline)
                 self.fit_due = self.big()     # doesn't line up by sliding: the same sheet turned, or slid further?
-        # (fit() takes a second or two: only once the big change has been still for STILL_S, so a hand
-        # pausing on the paper doesn't hold up the loop; a sheet waits SHEET_S anyway)
+        # lining up a sheet that turned or slid far takes seconds of pure Python: in a thread, started once
+        # the big change has been still for STILL_S (a hand pausing on the paper never starts it); the
+        # frame waits for its verdict, a sheet waits SHEET_S anyway
         if self.fit_due and t - self.still_since >= STILL_S:
             self.fit_due = False
-            a, dx, dy = fit(thumb, self.base)
-            aligned = warp(thumb, a, (dx, dy))
-            diff = inky(new_marks(aligned, self.baseline), aligned, self.baseline)
-            if len(diff) <= BIG * W * H:
+            spell, base, baseline = self.spell, self.base, self.baseline
+            def work():
+                self.lined[spell] = line_up(thumb, base, baseline)
+            self.lining = spell
+            if self.THREADED:
+                threading.Thread(target=work, daemon=True).start()
+            else:
+                work()
+        if self.lining == self.spell:
+            if self.spell not in self.lined:
+                return None                   # still lining up: no verdict yet
+            self.lining, found = None, self.lined.pop(self.spell)
+            self.lined.clear()                # (older spells' results are of no use any more)
+            if found:
+                a, dx, dy, diff, self.far = found
                 self.turn, self.shift, self.diff, self.fitted = a, (dx, dy), diff, True
         diff = self.diff
         if len(diff) < NEW_PX:
@@ -309,7 +460,7 @@ class Detector:
                 + min(max(round(ca * (i % W - cx) - sa * (i // W - cy) + cx + dx), 0), W - 1) for i in diff]
         self.prev = (self.base, self.baseline)
         self.base, self.baseline, self.still_since, self.shift, self.diff, self.turn = thumb, envelope(thumb), t, (0, 0), [], 0
-        self.fitted = False
+        self.fitted = self.far = False
         return ("big-change" if big else "drawn"), diff
 
     def scattered(self):
@@ -337,7 +488,8 @@ class Detector:
 
     def big(self):
         """A large change, or a sheet that slid further than we can line up."""
-        return len(self.diff) > BIG * W * H or (self.baseline is not None and not self.fitted and max(map(abs, self.shift)) >= SLIDE)
+        return (len(self.diff) > BIG * W * H or self.far
+                or (self.baseline is not None and not self.fitted and max(map(abs, self.shift)) >= SLIDE))
 
     def drawing(self):
         """Still for EARLY_S with a small change in it: a drawing that will be handed on at STILL_S
@@ -348,6 +500,7 @@ class Detector:
         """The last emit didn't happen after all: back to the sheet before it, wait for stillness again."""
         self.base, self.baseline = self.prev
         self.anchor, self.still_since, self.shift, self.diff, self.turn, self.fitted = None, t, None, None, 0, False
+        self.far = False
 
 
 def box(diff, size):
