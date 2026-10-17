@@ -108,3 +108,12 @@ test('a word written alone is not a thing: not listed, and a module that only sh
   const l = parseList(JSON.stringify({ things: [{ ...entry('ein Wort', [0, 0, 0.2, 0.1]), what: 'the handwritten word Sqichy at the top' }, entry('ein Stein', [0, 0, 1, 1])] }));
   assert.deepEqual(l.map(x => x.de), ['ein Stein']);
 });
+
+test('a building or object without a drawn face is not a figure', async () => {
+  const { notAlive } = await import('./generate.mjs');
+  const m = (name, drawing, parts = '') => `${parts}\nexport const meta = { name: '${name}', drawing: '${drawing}' };`;
+  assert.equal(notAlive(m('Haus', 'a pointed house with a door, a window and smoke', '// parts: walls = a box\n// parts: door = a rectangle')), true);
+  assert.equal(notAlive(m('Haus', 'a house with eyes and a smiling mouth')), false);         // drawn alive
+  assert.equal(notAlive(m('Maus', 'a mouse')), false);
+  assert.equal(notAlive(m('Flugzeug', 'a plane')), false);                                  // flies: an actor on purpose
+});
