@@ -1,8 +1,12 @@
 #!/bin/sh
 # A stand-in for `claude -p` in tests: one successful result, the text of $FAKE_CLAUDE_REPLY (a file) or "from
-# claude"; a call with the drawing-list system prompt gets $FAKE_CLAUDE_LIST instead, when set.
+# claude"; a call with the drawing-list system prompt gets $FAKE_CLAUDE_LIST instead, when set; $FAKE_CLAUDE_BY_MODEL
+# ({ model: file } as JSON) answers by --model; $FAKE_CLAUDE_SLOW ("model:ms") makes that model wait first.
 # $FAKE_CLAUDE_LOG, when set, gets each prompt appended (one JSON line per call).
 if [ -n "$FAKE_CLAUDE_LOG" ]; then cat >> "$FAKE_CLAUDE_LOG"; else cat >/dev/null; fi
-FAKE_ARGS="$*" node -e 'const fs = require("fs"), list = process.env.FAKE_ARGS.includes("Reply with JSON only") && process.env.FAKE_CLAUDE_LIST;
-const f = list || process.env.FAKE_CLAUDE_REPLY;
-console.log(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: f ? fs.readFileSync(f, "utf8") : "from claude", total_cost_usd: 0.01 }))'
+FAKE_ARGS="$*" node -e 'const fs = require("fs"), a = process.env.FAKE_ARGS, model = (a.match(/--model (\S+)/) || [])[1];
+const list = a.includes("Reply with JSON only") && process.env.FAKE_CLAUDE_LIST;
+const by = process.env.FAKE_CLAUDE_BY_MODEL ? JSON.parse(process.env.FAKE_CLAUDE_BY_MODEL)[model] : null;
+const f = list || by || process.env.FAKE_CLAUDE_REPLY;
+const [slow, ms] = (process.env.FAKE_CLAUDE_SLOW || ":").split(":");
+setTimeout(() => console.log(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: f ? fs.readFileSync(f, "utf8") : "from claude", total_cost_usd: 0.01 })), slow === model ? +ms : 0);'

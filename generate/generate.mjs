@@ -132,15 +132,22 @@ export function slots(n) {
 const FIX_SLOTS = 2, fixSlot = slots(FIX_SLOTS);
 // builds of a listed sheet: through pi (DeepSeek) all at once is the point; on the Claude plan as many as the
 // old main call + helpers (4)
-const BUILD_SLOTS = +process.env.KRITZEL_BUILD_SLOTS || (isPiModel(MODEL) ? 8 : 4), buildSlot = slots(BUILD_SLOTS);
+// Two stages (Sebastian, 15:55: DeepSeek is fast but its models look much worse): with KRITZEL_DRAFT_MODEL set, a
+// fast draft by that model is written first, as one stage did; then the final model (KRITZEL_MODEL, Sonnet) builds
+// the same drawing from the same image and replaces the draft in its file (same name, actor ids, paper place), at
+// most FINAL_SLOTS at once, in the background. Unset: one stage, as before.
+export const DRAFT_MODEL = process.env.KRITZEL_DRAFT_MODEL || null;
+const BUILD = DRAFT_MODEL || MODEL;                    // what lists and builds first
+const FINAL_SLOTS = +process.env.KRITZEL_FINAL_SLOTS || 4, finalSlot = slots(FINAL_SLOTS);
+const BUILD_SLOTS = +process.env.KRITZEL_BUILD_SLOTS || (isPiModel(BUILD) ? 8 : 4), buildSlot = slots(BUILD_SLOTS);
 const onlyHolds = problems => problems.length > 0 && problems.every(p => /^(holds|heldBy) names actor/.test(p));
 
 // deferHolds: when the only problem is a held creature not written yet, say so at once instead of
 // asking for a fix (which would just drop the hold)
 // extra(info) → more problems, from what the check measured (a creature hanging with nothing above it)
-async function finish({ body, model, frame, images, takenIds, keepIds, oldName = null, calls, deferHolds = false, extra = null }) {
+async function finish({ body, model, frame, images, takenIds, keepIds, oldName = null, calls, deferHolds = false, extra = null, fixModels = [BUILD, FALLBACK_MODEL] }) {
   let code = body.split('\n').filter(l => !l.startsWith(MARK)).join('\n').trim(), problems, simSkipped = null, info = {};
-  for (const fixModel of [null, MODEL, FALLBACK_MODEL]) {
+  for (const fixModel of [null, ...fixModels]) {
     if (fixModel) {
       if (deferHolds && onlyHolds(problems)) return { problems, held: true, info };
       const r = await fixSlot(() => oneShot({ system: SYSTEM, text: fixText({ problems, code }), images: images.slice(-1), model: fixModel }));   // the area now
@@ -193,7 +200,7 @@ export function notAlive(code) {
 }
 
 // ---------- a new sheet: list its drawings first ----------
-export const DETECT_MODEL = process.env.KRITZEL_DETECT_MODEL || MODEL;
+export const DETECT_MODEL = process.env.KRITZEL_DETECT_MODEL || BUILD;
 // → [{ box: [x0, y0, x1, y1] (image fractions), what, de, en, den, the, name_en }], [] for an empty sheet, or
 // null when the list is unusable (the caller then asks the one main call). Model text goes to the child only
 // through seenOf/nowOf (the child-safe filter) and to the builders as a description, never run.
@@ -288,7 +295,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
         if (s.kind === 'UPDATE' && !old) { report.rejected.push({ kind: s.kind, file: s.file, problems: ['no such thing to update'] }); log(`${name}: UPDATE of unknown ${s.file} ignored`); return; }
         if (s.kind === 'NEW' && wordOnly(s.body)) { report.rejected.push({ kind: s.kind, problems: ['a written word alone is not a thing'] }); log(`${name}: a word alone, not built`); return; }   // no fix call: nothing to fix
         tell({ seen: seenOf(said.seen), now: nowOf(said.seen[s.n]) });
-        const check = (takenIds, extra = null) => finish({ body: s.body, model: MODEL, frame, images: s.images || images, takenIds, keepIds: old?.ids || [], oldName: old?.meta.name || null, calls: report.calls, deferHolds: !last, extra });
+        const check = (takenIds, extra = null) => finish({ body: s.body, model: BUILD, frame, images: s.images || images, takenIds, keepIds: old?.ids || [], oldName: old?.meta.name || null, calls: report.calls, deferHolds: !last, extra });
         const f = await check(takenNow(old));
         const run = lock.then(() => commit(s, old, f, last, check));
         lock = run.catch(() => {});                             // one failed write must not block the next ones
@@ -339,6 +346,46 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
       report.written.push({ kind: s.kind, file, name: thingName, model: f.model, latency, at: T(), ids, ...(made && { made }), ...(f.warnings.length && { warnings: f.warnings }) });
       log(`${name}: ${s.kind === 'UPDATE' ? 'UPDATED' : 'WROTE'} ${file} (${thingName}) by ${f.model}, ${latency}s after the frame settled`);
       renders.push({ base, file, code: f.code });
+      if (DRAFT_MODEL && f.model !== MODEL) finals.push(finalOf({ s, file, draft: f.code, thingName, ids }));
+    }
+    // the final build of one drafted drawing: the final model, the same image and question, told what the book already
+    // knows about it (name, actor ids, start, paper place), checked like any module, fixed only by the final model.
+    // It replaces the draft in its file unless the file changed meanwhile (a later frame updated or removed it); if it
+    // fails, the draft stays.
+    const finals = [];
+    if (DRAFT_MODEL) report.finals = [];
+    function finalOf({ s, file, draft, thingName, ids }) {
+      return finalSlot(async () => {
+        const path = join(thingsDir, file);
+        const base = s.prompt || `${ask}\n\nYou build only this one drawing: ${said.seen[s.n]?.de || thingName}. Reply with just its one ### NEW section.`;
+        const start = draft.match(/start:\s*\[[^\]]*\]/)?.[0], paperAt = draft.match(/paper:\s*\{[^}]*\}/)?.[0];
+        const text = `${base}
+
+A quick draft of this drawing is in the book now (below). Build the drawing properly yourself, from the image, not from the draft's shapes: one complete module. Keep what the book already knows about it: name '${thingName}'${ids.length ? `, actor id${ids.length > 1 ? 's' : ''} ${ids.map(i => `'${i}'`).join(', ')}${start ? ` (${start})` : ''}` : ''}${paperAt ? `, meta ${paperAt}` : ''}. Reply with only the module: plain JavaScript, no section header, no fences.
+
+${draft}`;
+        const done = (x) => { report.finals.push({ file, at: T(), ...x }); mark('finalsDone'); report.timing.finalsDone = T(); save(); };
+        try {
+          const r = await oneShot({ system: SYSTEM, text, images: s.images || images, model: MODEL });
+          report.calls.push(callOf(r, { final: file }));
+          const others = [...existing.flatMap(t => t.ids), ...report.written.flatMap(w => w.ids)].filter(i => !ids.includes(i));
+          let f = await finish({ body: stripFences(r.text).replace(/^###.*\n/, ''), model: MODEL, frame, images: s.images || images, takenIds: others,
+            keepIds: ids, oldName: thingName, calls: report.calls, fixModels: [MODEL] });
+          if (!f.code) { log(`${name}: final of ${file} failed its checks, the draft stays: ${f.problems.join('; ').slice(0, 200)}`); return done({ kept: 'draft', problems: f.problems }); }
+          // the book knows it by its name (personas, quests, dialogues): the final keeps the draft's
+          const finalName = f.code.match(/name:\s*['"]([^'"]+)['"]/)?.[1];
+          if (finalName && finalName !== thingName) {
+            const q = finalName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            f = { ...f, code: f.code.replace(new RegExp(`(name:\\s*)(['"])${q}\\2`, 'g'), (_, a, b) => `${a}${b}${thingName}${b}`) };
+          }
+          let now = null;
+          try { now = readFileSync(path, 'utf8'); } catch { /* removed meanwhile */ }
+          if (now !== draft) { log(`${name}: final of ${file} dropped: the thing changed or was removed meanwhile`); return done({ dropped: 'changed meanwhile' }); }
+          atomicWrite(path, f.code);
+          log(`${name}: FINAL ${file} (${thingName}) by ${MODEL}, ${((Date.now() - settledAt) / 1000).toFixed(1)}s after the frame settled`);
+          done({ model: MODEL, seconds: +r.seconds.toFixed(1) });
+        } catch (e) { log(`${name}: final of ${file} failed, the draft stays: ${e.message.slice(0, 200)}`); done({ kept: 'draft', problems: [e.message.slice(0, 200)] }); }
+      });
     }
     // sections of the main reply: only those it owns (not given to a helper), and no UPDATE on a new sheet
     const take = secs => {
@@ -387,11 +434,11 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
 
 Several builders make this sheet at the same time. You build only this one drawing: ${e.de} (${e.en}). The others (${others.join(', ')}) are built by someone else: leave them out, but keep this one's actor id different from theirs. Reply with just its one ### NEW section, no SEEN line.`;
       try {
-        const h = await buildSlot(() => oneShot({ system: SYSTEM, images: seen, text }));
+        const h = await buildSlot(() => oneShot({ system: SYSTEM, images: seen, text, model: BUILD }));
         report.calls.push(callOf(h, { helper: e.de }));
         const sec = parseReply(h.text).find(x => x.kind === 'NEW');
         if (!sec) { report.rejected.push({ kind: 'NEW', name: e.de, problems: ['the helper wrote no NEW section'] }); return; }
-        sec.n = k; sec.images = seen; sent.add(k);
+        sec.n = k; sec.images = seen; sec.prompt = text; sent.add(k);
         write(sec);                                  // checked while this helper takes the next one
       } catch (err) { report.rejected.push({ kind: 'NEW', name: e.de, problems: [`helper call failed: ${err.message.slice(0, 200)}`] }); }
     }
@@ -421,7 +468,7 @@ Several builders make this sheet at the same time. You build only this one drawi
       const ids = listed.map(e => { const id = freeName(slug(e.de.replace(/^(ein|eine|einen)\s+/i, '')), taken); taken.add(id); return id; });
       listed.forEach((e, k) => helpers.push(buildOne(k, e, { id: ids[k], area: e.box, others: listed.map((x, i) => i === k ? null : `${x.den} (actor id "${ids[i]}" if alive)`).filter(Boolean) })));
     } else {
-      try { r = await oneShot({ system: SYSTEM, text: ask, images, onText, signal: stop.signal, timeoutMs: 6 * 60_000 }); }
+      try { r = await oneShot({ system: SYSTEM, text: ask, images, onText, signal: stop.signal, timeoutMs: 6 * 60_000, model: BUILD }); }
       catch (e) {
         // the main call failed (timeout, limit, login): let what is already being written finish, start nothing
         // new. If something got written, the frame counts as done (a retry would write it twice).
@@ -490,6 +537,7 @@ Several builders make this sheet at the same time. You build only this one drawi
         }
       })();
     }
+    Object.defineProperty(report, 'finalsDone', { value: Promise.allSettled(finals), enumerable: false });
     return report;
   } catch (e) {
     report.error = e.message;
@@ -644,8 +692,8 @@ async function watch(dir, opts) {
   const frames = list();
   let last = frames.findLast(done) || null;
   if (!last && !readdirSync(opts.reportsDir).some(f => f.endsWith('.json'))) last = frames.at(-1) || null;
-  log(`watching ${dir} → ${opts.thingsDir} (model ${MODEL}${isPiModel(MODEL) ? ` via pi, ${PI_FALLBACK} when pi fails` : ''}, fallback ${FALLBACK_MODEL}); handled up to ${last || '(nothing)'}`);
-  if (isPiModel(MODEL)) prewarm(MODEL, SYSTEM, 6);            // warm for the first frame: a cold pi costs ~1.3 s, ~140 MB each
+  log(`watching ${dir} → ${opts.thingsDir} (${DRAFT_MODEL ? `draft ${DRAFT_MODEL}, final ` : 'model '}${MODEL}${isPiModel(BUILD) ? ` (${BUILD} via pi, ${PI_FALLBACK} when pi fails)` : ''}, fallback ${FALLBACK_MODEL}); handled up to ${last || '(nothing)'}`);
+  if (isPiModel(BUILD)) prewarm(BUILD, SYSTEM, 6);            // warm for the first frame: a cold pi costs ~1.3 s, ~140 MB each
   if (isPiModel(DETECT_MODEL)) prewarm(DETECT_MODEL, DETECT_SYSTEM, 1);
   const stale = await staleReason(opts.thingsDir).catch(() => null);
   if (stale) { log(`dialogues: ${stale}: making it again`); wantDialogues(opts, `start: ${stale}`); }
@@ -771,6 +819,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     await watch(resolve(args[1] || join(ROOT, 'frames', 'settled')), { thingsDir, reportsDir, render });
   } else if (args[0]) {
     const r = await processFrame(resolve(args[0]), { thingsDir, reportsDir, box, previous: previous && resolve(previous), render });
+    await r.finalsDone;                                         // two stages: the finals too
     console.log(JSON.stringify({ written: r.written, removed: r.removed, rejected: r.rejected, unclear: r.unclear, calls: r.calls, error: r.error }, null, 1));
     if (!render) process.exit(r.error ? 1 : 0);
   } else {
