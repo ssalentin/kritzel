@@ -464,6 +464,16 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     }
   }
 
+  // one figure's error must not freeze the others: skip that figure (it stands still), report it once
+  const failed = new Set();
+  function guarded(a, fn) {
+    try { fn(); } catch (e) {
+      if (failed.has(a)) return;
+      failed.add(a);
+      console.error(`${a.file ?? a.id}: ${a.id} skipped: ${e.message}`);
+    }
+  }
+
   // ---------- per-frame animation ----------
   const lerpAngle = (a, b, k) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
 
@@ -596,7 +606,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         if (R() < 0.4) say(a, line(a, 'splash'), 1.4);
       }
       acc += dt;
-      while (acc >= TICK) { acc -= TICK; const a = scheduler.next(); if (a) act(a); }   // empty world: nobody to act
+      while (acc >= TICK) { acc -= TICK; const a = scheduler.next(); if (a) guarded(a, () => act(a)); }   // empty world: nobody to act
       if (X.tick && now >= (nextTick ?? 0)) { nextTick = now + 4; X.tick(actors, api, coverNow); }
 
       // the cloud just covered the sun: everyone reacts
@@ -657,7 +667,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
       }
 
       separate(dt);
-      for (const a of actors) {
+      for (const a of actors) guarded(a, () => {
         if (a.sayUntil && now > a.sayUntil) { a.rig.say(''); a.sayUntil = 0; }
         let moving;
         // in a dialogue (or another moment with a partner): stay put and keep facing them until it ends
@@ -701,7 +711,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         const state = now < a.animUntil ? a.anim : moving ? 'walk' : /rest|warm/.test(a.goal?.type) ? 'sit' : 'idle';
         if (a.rig.animate) a.rig.animate(state, t, moving, a);
         else if (a.kind === 'squid') animSquid(a, state, t, moving); else animPerson(a, state, t, moving);
-      }
+      });
     },
   };
 }
