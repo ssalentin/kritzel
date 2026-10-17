@@ -84,18 +84,18 @@ export function makeWater({ THREE, scene }) {
       // the surface: a disc whose colour and height follow the oval; the middle is the deep end
       const geo = new THREE.CircleGeometry(1, 48); geo.rotateX(-Math.PI / 2); geo.scale(r, 1, rz);
       const pos = geo.attributes.position, base = pos.array.slice(), col = [];
-      const deep = new THREE.Color(0x0b3a66), shallow = new THREE.Color(0x9fe2f7), c = new THREE.Color();
+      const deep = new THREE.Color(0x06284f), shallow = new THREE.Color(0xa6e6fa), c = new THREE.Color();
       for (let i = 0; i < pos.count; i++) {
         const d = Math.min(1, Math.hypot(pos.getX(i) / r, pos.getZ(i) / rz));
-        c.copy(deep).lerp(shallow, Math.pow(d, 2.5)); col.push(c.r, c.g, c.b);
+        c.copy(deep).lerp(shallow, Math.pow(d, 1.6)); col.push(c.r, c.g, c.b);
       }
       geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
       const wm = waterMat(tex, 0.82); wm.vertexColors = true;
       const disc = new THREE.Mesh(geo, wm); disc.renderOrder = 2;
       // the bank: a soft sand tube round the oval, so the water sits in it and the edge has height
       const bank = [];
-      for (let i = 0; i < 64; i++) { const a = i / 64 * TAU; bank.push(new THREE.Vector3(Math.cos(a) * r, 0.07, Math.sin(a) * rz)); }
-      const bankMesh = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(bank, true), 64, 0.08, 6, true),
+      for (let i = 0; i < 64; i++) { const a = i / 64 * TAU; bank.push(new THREE.Vector3(Math.cos(a) * r, 0.1, Math.sin(a) * rz)); }
+      const bankMesh = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(bank, true), 64, 0.1, 6, true),
         new THREE.MeshStandardMaterial({ color: 0xd9c48f, roughness: 0.9 }));
       const rings = [0, 1, 2].map(() => {
         const ring = new THREE.Mesh(new THREE.TorusGeometry(1, 0.012, 4, 40), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true }));

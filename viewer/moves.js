@@ -95,7 +95,7 @@ export function makeMoves({ THREE, R, ground = null }) {
         if (!m.phase) { const p = waterPoint(zone); a.pos.x = p.x; a.pos.z = p.z; m.phase = 'swim'; m.until = 0; }   // into the water
         if (!m.tx || now > m.until) { const p = waterPoint(zone); Object.assign(m, { tx: p.x, tz: p.z, until: now + 6 + R() * 4 }); }
         const there = toward(a, m.tx, m.tz, sp * 0.8, dt);
-        a.alt = -0.08 + Math.sin(now * 2.4 + a.pos.x) * 0.03;      // in the water, bobbing
+        a.alt = -0.6 * (a.radius ?? 0.3) + Math.sin(now * 2.4 + a.pos.x) * 0.03;   // in the water: about a third under the surface, bobbing
         if (there) m.until = Math.min(m.until, now + 1 + R() * 2);
         return !there;
       }
