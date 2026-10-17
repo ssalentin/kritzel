@@ -491,8 +491,11 @@ export async function poolIsStale(thingsDir) {
   const want = [...new Set(castOf(thingsDir).map(c => c.name))].sort();
   if (want.length < 2) return false;                            // no pool is made for fewer than two
   let have = null;
-  try { have = JSON.parse(readFileSync(join(thingsDir, 'dialogues.json'), 'utf8')).cast; } catch { /* missing */ }
-  return JSON.stringify(have) !== JSON.stringify(want);
+  try { have = JSON.parse(readFileSync(join(thingsDir, 'dialogues.json'), 'utf8')); } catch { /* missing */ }
+  // a pool from before personas (or missing one for a figure) is stale too: else a world whose cast did not
+  // change never gets them (live 14:21: no call at all, the 10:31 pool stayed)
+  const ids = castOf(thingsDir).map(c => c.id);
+  return JSON.stringify(have?.cast) !== JSON.stringify(want) || ids.some(id => !have?.personas?.[id]);
 }
 
 // The dialogue pool (and personas) is refreshed in the background, never waited on, within a budget: a change
