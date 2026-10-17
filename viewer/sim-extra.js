@@ -192,7 +192,9 @@ export function portable(a, g, api) {
   if (g.type === 'give') {                           // walk to the friend, then hand over (or swap)
     const b = g.to;
     if (b.hidden || b.goal?.type === 'give') { a.goal = { type: 'carry', item: it, until: now() + CARRY_FOR }; return; }
-    if (Math.hypot(a.cell.x - b.cell.x, a.cell.y - b.cell.y) > 1.5) { if (!step(a, b.cell.x, b.cell.y)) a.goal = { type: 'carry', item: it, until: now() + CARRY_FOR }; return; }
+    // hand over once they are close in the book (their bodies, not their cells: a friend rarely stands in the cell next to the carrier)
+    // reach: big bodies are kept apart by their radii, so the reach grows with both
+    if (Math.hypot(a.pos.x - b.pos.x, a.pos.z - b.pos.z) > (a.radius ?? 0.4) + (b.radius ?? 0.4) + 0.4) { if (!step(a, b.cell.x, b.cell.y)) a.goal = { type: 'carry', item: it, until: now() + CARRY_FOR }; return; }
     const theirs = carriedBy(spots, b);
     it.carrier = b; if (theirs) theirs.carrier = a;      // the swap: each takes the other's
     busy(a, b, 'talk', 2);
