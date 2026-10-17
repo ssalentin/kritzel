@@ -157,3 +157,28 @@ test('a drawing that gives light must mark its glowing part; a detail that is a 
   assert.deepEqual(unlit(m('Feuerwehrboot', 'a fire rescue boat'), {}), []);
   assert.deepEqual(unlit(m('Seestern', 'a starfish'), {}), []);
 });
+
+test('switch mode: the old world is archived only when the new sheet yields a thing, right before it is written', async () => {
+  const run = async list => {
+    const dir = mkdtempSync(join(tmpdir(), 'kritzel-switch-'));
+    for (const d of ['things', 'reports']) mkdirSync(join(dir, d));
+    writeFileSync(join(dir, 'things', 'alt.js'), `export const meta = { name: 'Alt', drawing: 'x' };\nexport function build() { return { actors: [] }; }`);
+    const frame = join(dir, '20261017-120000.jpg');
+    execFileSync('convert', ['-size', '640x480', 'xc:white', frame]);
+    writeFileSync(join(dir, 'list.txt'), list);
+    writeFileSync(join(dir, 'reply.txt'), `### NEW\n${stone}`);
+    Object.assign(process.env, { FAKE_CLAUDE_LIST: join(dir, 'list.txt'), FAKE_CLAUDE_REPLY: join(dir, 'reply.txt') });
+    const calls = [];
+    try {
+      const r = await processFrame(frame, { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports'), newSheet: 'switch',
+        beforeFirstWrite: () => { calls.push(readdirSync(join(dir, 'things')).filter(f => f.endsWith('.js'))); rmSync(join(dir, 'things', 'alt.js')); } });
+      return { r, calls, files: readdirSync(join(dir, 'things')).filter(f => f.endsWith('.js')) };
+    } finally { delete process.env.FAKE_CLAUDE_LIST; delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+  };
+  const empty = await run('{"things": []}');
+  assert.deepEqual(empty.calls, []);                                     // nothing to build: the old world stays
+  assert.deepEqual(empty.files, ['alt.js']);
+  const one = await run(JSON.stringify({ things: [entry('ein Stein', [0.1, 0.4, 0.3, 0.6]), entry('ein grauer Stein', [0.6, 0.4, 0.8, 0.6])] }));
+  assert.deepEqual(one.calls, [['alt.js']]);                             // once, before the first thing was written
+  assert.deepEqual(one.files.sort(), ['stein.js', 'stein-2.js'].sort());  // names are unique in the new world, not against the old
+});
