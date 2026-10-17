@@ -202,6 +202,16 @@ function throwTo(a, it, to, { now, say, line }) {
   say(a, line(a, 'throw'), 1.6);
   a.goal = null;
 }
+// every frame (not the slow tick): portable things. A carried one is where its carrier is, and a carrier who left
+// or hid lets it go; a thing in the air moves along its arc and lands, and a friend still near catches it
+export function frame(actors, api) {
+  const { now, say, line, ground, spots } = api;
+  for (const it of spots().filter(s => s.kind === 'portable' && s.carrier)) {
+    if (!actors.includes(it.carrier) || it.carrier.hidden || !/^(carry|give)$/.test(it.carrier.goal?.type ?? '')) it.carrier = null;   // something else took over: let go
+    else { it.x = it.carrier.pos.x; it.z = it.carrier.pos.z; }
+  }
+  flyPortables(spots, actors, { now, say, line, ground });
+}
 // a thing in the air: where it is along the arc, and where it lands; a friend who is still near catches it
 function flyPortables(spots, actors, { now, say, line, ground }) {
   for (const it of spots().filter(s => s.kind === 'portable' && s.throw)) {
@@ -469,12 +479,6 @@ function endDialogue(a, api) {
 
 export function tick(actors, { now, R, pick, line, say, rel, spots, nearest, ground }, cover) {
   for (const a of actors) if (a.after && now() >= a.after.at) endDialogue(a, arguments[1]);
-  // portable things: a carried one is where its carrier is; a carrier who left or hid lets it go
-  flyPortables(spots, actors, { now, say, line, ground });
-  for (const it of spots().filter(s => s.kind === 'portable' && s.carrier)) {
-    if (!actors.includes(it.carrier) || it.carrier.hidden || !/^(carry|give)$/.test(it.carrier.goal?.type ?? '')) it.carrier = null;   // something else took over: let go
-    else { it.x = it.carrier.pos.x; it.z = it.carrier.pos.z; }
-  }
   // items: a carried item follows its carrier; a carrier who left or hid drops it; opened locks close again
   for (const it of spots().filter(s => s.kind === 'item')) {
     it.home ??= { x: it.x, z: it.z };

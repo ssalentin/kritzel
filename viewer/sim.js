@@ -610,6 +610,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
       }
       acc += dt;
       while (acc >= TICK) { acc -= TICK; const a = scheduler.next(); if (a) guarded(a, () => act(a)); }   // empty world: nobody to act
+      X.frame?.(actors, api);                  // portable things move every frame (sim-extra.js frame)
       if (X.tick && now >= (nextTick ?? 0)) { nextTick = now + 4; X.tick(actors, api, coverNow); }
 
       // the cloud just covered the sun: everyone reacts
