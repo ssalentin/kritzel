@@ -323,7 +323,7 @@ export async function build(api, prevState = null) {
     places();
     trees.length = 0;
     const spots = [];
-    for (const e of loaded.values()) { ensurePortable(e); trees.push(...e.obstacles); spots.push(...e.spots); }
+    for (const e of loaded.values()) { ensurePortable(e); if (!e.portable?.carrier) trees.push(...e.obstacles); spots.push(...e.spots); }
     brain.setWorld({ trees, spots, feet: blockingFeet() });
     brain.setHolds([...loaded.values()].flatMap(e => e.holds));
     attachHeld();
@@ -359,7 +359,7 @@ export async function build(api, prevState = null) {
   for (const [file, entry, meta] of later) try { place(file, entry, meta, false); } catch (e) { report(`things/${file}: placing: ${e.message}`); }
   untangle();
   const actors = [...loaded.values()].flatMap(e => e.actors);
-  for (const e of loaded.values()) { ensurePortable(e); trees.push(...e.obstacles); }
+  for (const e of loaded.values()) { ensurePortable(e); if (!e.portable?.carrier) trees.push(...e.obstacles); }
   const spots = [...loaded.values()].flatMap(e => e.spots);
   places();
   brain = sim.create({ THREE, actors, trees, pond, spots, feet: blockingFeet(), islandR: FIT_R, ground: GROUND, groundY, states: prevState, extra, moves });
