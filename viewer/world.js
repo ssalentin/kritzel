@@ -156,9 +156,10 @@ export async function build(api, prevState = null) {
   // the situation the dialogue writer reads: who carries what, what is in the air, the night, the weather. Sent
   // when it changes and at most every 10 s (serve.py keeps the last one in frames/status/situation.json)
   let sentSituation = '', sentAt = 0;
+  const REPORT_CLIENT = Math.random().toString(36).slice(2, 12);      // this page's id: serve.py lets one viewer hold the report
   function reportSituation() {
     // only the live viewer, and only while it is on screen: an archived world or a hidden tab runs its own sim
-    if (!location.pathname.startsWith('/viewer/') || document.visibilityState !== 'visible') return;
+    if (!location.pathname.startsWith('/viewer/') || document.visibilityState !== 'visible' || location.search.includes('noreport')) return;
     if (Date.now() - sentAt < 10000) return;
     const carrying = [], thrown = [];
     for (const e of loaded.values()) for (const s of e.spots) if (s.kind === 'portable') {
@@ -166,7 +167,7 @@ export async function build(api, prevState = null) {
       if (s.throw) thrown.push({ who: s.throw.from?.id, what: e.meta?.name || '', to: s.throw.to?.id });
     }
     const weather = Object.entries(api.mood?.weather?.() || {}).filter(([k, v]) => v === true).map(([k]) => k);
-    const body = JSON.stringify({ carrying, thrown, night: Math.round((api.mood?.night ?? 0) * 100) / 100, weather });
+    const body = JSON.stringify({ client: REPORT_CLIENT, carrying, thrown, night: Math.round((api.mood?.night ?? 0) * 100) / 100, weather });
     if (body === sentSituation) return;
     sentSituation = body; sentAt = Date.now();
     fetch('/api/situation', { method: 'PUT', body, headers: { 'Content-Type': 'application/json' } }).catch(() => {});
