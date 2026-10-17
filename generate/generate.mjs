@@ -615,10 +615,18 @@ const POOL_PER_HOUR = +process.env.KRITZEL_POOL_PER_HOUR || 20;
 const SITUATION = join(ROOT, 'frames', 'status', 'situation.json');   // written by the viewer's sim (PUT /api/situation)
 const pool = { calls: [], reasons: new Set(), newThings: new Set(), timer: null, busy: false, fellBack: false };
 export function wantDialogues(opts, reason, newThings = []) {
+  if (!pool.loaded) { pool.loaded = true; loadPoolCalls(opts); }
   pool.reasons.add(reason);
   for (const n of newThings) pool.newThings.add(n);
   if (!pool.timer) { pool.timer = setTimeout(() => runPool(opts), POOL_DEBOUNCE_MS); pool.timer.unref?.(); }
 }
+// the call times of the last hour, kept in <reports>/pool-calls.json: the cap holds across watcher restarts (live saw
+// 49 calls in an hour with restarts in between)
+const callsFile = opts => join(opts.reportsDir || join(ROOT, 'frames', 'generated'), 'pool-calls.json');
+function loadPoolCalls(opts) {
+  try { const a = JSON.parse(readFileSync(callsFile(opts), 'utf8')); if (Array.isArray(a)) pool.calls = a.filter(t => typeof t === 'number' && Date.now() - t < 3600_000).sort(); } catch { /* none yet */ }
+}
+function savePoolCalls(opts) { try { atomicWrite(callsFile(opts), JSON.stringify(pool.calls)); } catch { /* the cap still holds in this run */ } }
 function runPool(opts) {
   pool.timer = null;
   const later = ms => { pool.timer = setTimeout(() => runPool(opts), ms); pool.timer.unref?.(); };
@@ -636,10 +644,10 @@ function runPool(opts) {
   pool.reasons.clear(); pool.newThings.clear();
   let situation = null;
   try { situation = JSON.parse(readFileSync(SITUATION, 'utf8')); } catch { /* no feed yet: the cast alone */ }
-  pool.busy = true; pool.calls.push(now);
+  pool.busy = true; pool.calls.push(now); savePoolCalls(opts);
   import('./dialogues.mjs').then(m => m.makePool({ thingsDir: opts.thingsDir, reason, situation, newThings }))
     .then(x => {
-      if (x.seconds == null) { pool.calls.pop(); return log(`dialogues: no call (${x.reason})`); }   // fewer than two figures
+      if (x.seconds == null) { pool.calls.pop(); savePoolCalls(opts); return log(`dialogues: no call (${x.reason})`); }   // fewer than two figures
       pool.fellBack = !!x.fellBack;
       log(`dialogues: call ${pool.calls.length}/${POOL_PER_HOUR} this hour (${reason}): ${x.written} of ${x.offered} dialogues kept, ${x.personas} new personas, ${x.quests} new quests, ${x.seconds.toFixed(0)}s, ${x.model}${x.fellBack ? ' (pi failed)' : ''}${x.dropped ? `; dropped: ${x.dropped.join('; ')}` : ''}`);
     })
@@ -702,6 +710,8 @@ async function watch(dir, opts) {
   log(`watching ${dir} → ${opts.thingsDir} (model ${MODEL}${isPiModel(MODEL) ? ` via pi, ${PI_FALLBACK} when pi fails` : ''}, fallback ${FALLBACK_MODEL}); handled up to ${last || '(nothing)'}`);
   if (isPiModel(MODEL)) prewarm(MODEL, SYSTEM, 6);            // warm for the first frame: a cold pi costs ~1.3 s, ~140 MB each
   if (isPiModel(DETECT_MODEL)) prewarm(DETECT_MODEL, DETECT_SYSTEM, 1);
+  loadPoolCalls(opts);
+  if (pool.calls.length) log(`dialogues: ${pool.calls.length} calls in the last hour before this start`);
   const stale = await staleReason(opts.thingsDir).catch(() => null);
   if (stale) { log(`dialogues: ${stale}: making it again`); wantDialogues(opts, `start: ${stale}`); }
   // the sim's moment: read when the file changes (the sim writes it at most every 10 s)
