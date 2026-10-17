@@ -24,12 +24,12 @@ export function makeMoves({ THREE, R, ground = null }) {
   const pick = list => list[Math.floor(R() * list.length)];
 
   // the body of water nearest to (x, z): a fish keeps to one, it doesn't cross land
-  const zoneDist = (q, x, z) => q.kind === 'pond' ? Math.max(0, Math.hypot(x - q.x, z - q.z) - q.r)
+  const zoneDist = (q, x, z) => q.kind === 'pond' ? Math.max(0, Math.hypot((x - q.x) / q.r, (z - q.z) / (q.rz || q.r)) - 1) * Math.min(q.r, q.rz || q.r)
     : Math.min(...q.points.map(p => Math.hypot(x - p.x, z - p.z)));
   const nearestZone = (zones, x, z) => zones.reduce((b, q) => zoneDist(q, x, z) < zoneDist(b, x, z) ? q : b);
   // a point in that water: random in a pond, or along a river
   function waterPoint(z) {
-    if (z.kind === 'pond') { const a = R() * Math.PI * 2, r = Math.sqrt(R()) * z.r * 0.7; return { x: z.x + Math.cos(a) * r, z: z.z + Math.sin(a) * r }; }
+    if (z.kind === 'pond') { const a = R() * Math.PI * 2, r = Math.sqrt(R()) * 0.7; return { x: z.x + Math.cos(a) * r * z.r, z: z.z + Math.sin(a) * r * (z.rz || z.r) }; }
     const p = pick(z.points);
     return { x: p.x + (R() - 0.5) * z.width * 0.5, z: p.z + (R() - 0.5) * z.width * 0.5 };
   }
