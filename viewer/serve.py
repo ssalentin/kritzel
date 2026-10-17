@@ -268,6 +268,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     "thrown": [{"who": str(x["who"])[:80], "what": str(x["what"])[:80], "to": str(x["to"])[:80]} for x in body.get("thrown", [])[:8]],
                     "night": min(1.0, max(0.0, float(body.get("night", 0)))),
                     "weather": [str(k)[:20] for k in body.get("weather", [])[:6]],
+                    "solved": [{"who": str(x["who"])[:80], "at": float(x["at"])} for x in body.get("solved", [])[:8]],
                     "at": time.time(),
                 }
                 client = str(body.get("client", ""))[:40]

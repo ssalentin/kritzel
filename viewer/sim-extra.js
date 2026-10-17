@@ -3,7 +3,7 @@
 // choose(a, b, r, api) picks the interaction for a pair that just met (r = their lower relationship).
 
 import { sound } from './sound.js';
-import { pickDialogue, fromPool, readTime, personaOf, refreshPool } from './dialogues.js';
+import { pickDialogue, fromPool, readTime, personaOf, refreshPool, questPool } from './dialogues.js';
 import { lang } from './i18n.js';
 
 export const LINES = {
@@ -155,15 +155,15 @@ export function options(a, add, { spots, cover, spotCell, things, nearest, actor
       const c = nearest(fav.x, fav.z, a);
       if (c) {
         // a guard always goes back to its favourite; a napper does when it is tired (so it reaches the rest there)
-        add(p.hobby === 'guard' || (p.hobby === 'nap' && a.energy < 0.5) ? 1.2 : 0.4, { type: 'wander', cell: [c.x, c.y] });
-        if (p.hobby === 'nap' && Math.hypot(a.pos.x - fav.x, a.pos.z - fav.z) < 2.5) add(0.9, { type: 'rest', until: now() + 20 });
+        add(p.hobby === 'guard' || (p.hobby === 'nap' && a.energy < 0.5) ? 1.2 : 0.4, { type: 'wander', cell: [c.x, c.y], target: fav, why: 'favourite' });
+        if (p.hobby === 'nap' && Math.hypot(a.pos.x - fav.x, a.pos.z - fav.z) < 2.5) add(0.9, { type: 'rest', until: now() + 20, why: 'nap' });
       }
     }
   }
   if (p && actors) {
     // a liked figure: a follower walks after it for a while
     const liked = actors().find(b => b !== a && !b.hidden && p.likes.some(l => l === b.name || l === b.id));
-    if (liked && p.hobby === 'follow') add(0.7, { type: 'follow', target: liked });
+    if (liked && p.hobby === 'follow') add(0.7, { type: 'follow', target: liked, why: 'liked' });
   }
 }
 
@@ -532,8 +532,65 @@ function endDialogue(a, api) {
   else if (f.end === 'stroll') go(a.pos.x + (R() - 0.5) * 6, a.pos.z + (R() - 0.5) * 6);
 }
 
+// ---------- quests (dialogues.json quests): at most one at a time in the world ----------
+// A quest starts at random after a cooldown: its giver says the start line, figures nearby notice and say a notice
+// line, and two helpers come to the giver. It is solved when two helpers stand at the giver (help), or when the
+// weather is right (wait: rain, or sun with no rain at night's low); then the giver and helpers say the solved and
+// thanks lines. A quest nobody solves ends gently after a time limit. Other kinds (bring, visit) end on the limit in v1.
+const QUEST_LIMIT_S = 90, QUEST_COOLDOWN = [120, 240];
+let activeQuest = null, nextQuestAt = 0;
+const questCooldown = now => now + QUEST_COOLDOWN[0] + Math.random() * (QUEST_COOLDOWN[1] - QUEST_COOLDOWN[0]);
+const questLine = text => (lang() === 'en' ? text?.en : text?.de) ?? '';
+// the quests solved lately (their who strings): the dialogue writer replaces a quest when one is solved
+const solvedLog = [];
+export function solvedQuests() {
+  const nowS = Date.now() / 1000;
+  return solvedLog.filter(e => nowS - e.at < 600).slice(-8).map(e => ({ who: String(e.who).slice(0, 80), at: e.at }));
+}
+export function tickQuests(actors, api) {
+  const { now, R, say, busy, weather, night } = api;
+  const t = now();
+  if (!activeQuest) {
+    const list = questPool();
+    if (!list.length || t < nextQuestAt || R() > 0.4) return;
+    const q = list[Math.floor(R() * list.length)];
+    const giver = actors.find(b => !b.hidden && (b.name === q.who || b.id === q.who));
+    if (!giver || giver.goal?.type === 'chase' || giver.goal?.type === 'flee') { nextQuestAt = t + 10; return; }
+    activeQuest = { q, giver, since: t, helpers: [] };
+    say(giver, questLine(q.start), 3.2);
+    busy(giver, null, 'talk', 3);
+    const near = actors.filter(b => b !== giver && !b.hidden && b.kind !== 'squid' && Math.hypot(b.pos.x - giver.pos.x, b.pos.z - giver.pos.z) < 8);
+    near.slice(0, 4).forEach((b, i) => {
+      const n = q.lines?.notice;
+      if (!n) return;
+      const k = R() < 0.5 ? 0 : 1;
+      say(b, questLine({ de: n.de?.[k] ?? n.de?.[0], en: n.en?.[k] ?? n.en?.[0] }), 2.4, 0.6 + i * 0.5);
+    });
+    // helpers: the ones who like the giver come first, then the nearest
+    const liked = near.filter(b => personaOf(b.id)?.likes?.includes(giver.name) || personaOf(b.id)?.likes?.includes(giver.id));
+    const helpers = [...liked, ...near.filter(b => !liked.includes(b))].slice(0, 3);
+    activeQuest.helpers = helpers;
+    helpers.forEach(h => { h.goal = { type: 'approach', target: giver }; h.goalSince = t; });
+    return;
+  }
+  const aq = activeQuest, { q, giver } = aq;
+  const endQuest = solved => { if (solved) solvedLog.push({ who: q.who, at: Date.now() / 1000 }); activeQuest = null; nextQuestAt = questCooldown(t); return solved; };
+  if (giver.hidden || !actors.includes(giver)) return endQuest(false);
+  if (t - aq.since > QUEST_LIMIT_S) return endQuest(false);
+  const w = weather() || {};
+  const here = aq.helpers.filter(h => !h.hidden && Math.hypot(h.pos.x - giver.pos.x, h.pos.z - giver.pos.z) < 2.5);
+  let solved = false;
+  if (q.solve.kind === 'help' && here.length >= 2) solved = true;
+  if (q.solve.kind === 'wait' && (q.solve.when === 'rain' ? w.rain === true : q.solve.when === 'night' ? night() > 0.5 : q.solve.when === 'sun' ? !w.rain && night() < 0.2 : false)) solved = true;
+  if (!solved) return;
+  say(giver, questLine(q.lines?.solved), 3.2);
+  here.forEach((h, i) => say(h, questLine(q.lines?.thanks), 2.4, 0.8 + i * 0.4));
+  endQuest(true);
+}
+
 export function tick(actors, { now, R, pick, line, say, rel, spots, nearest, ground }, cover) {
   for (const a of actors) if (a.after && now() >= a.after.at) endDialogue(a, arguments[1]);
+  tickQuests(actors, arguments[1]);
   // items: a carried item follows its carrier; a carrier who left or hid drops it; opened locks close again
   for (const it of spots().filter(s => s.kind === 'item')) {
     it.home ??= { x: it.x, z: it.z };

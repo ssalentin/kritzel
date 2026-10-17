@@ -115,7 +115,7 @@ export function safeDialogue(d) {
 
 // ---------- the generated pool (things/dialogues.json next to placement.json, written by generate/dialogues.mjs) ----------
 // { cast: [names], dialogues: [{ between: [nameA, nameB], end, turns: [{ who: name, de, en }] }] }
-let pool = [], poolAt = 0, personas = {};
+let pool = [], poolAt = 0, personas = {}, quests = [];
 const played = new Set();                  // played dialogues, by content (the pool grows and is re-read: an index would shift)
 const contentKey = d => JSON.stringify(d.turns);
 // the figures' personalities (dialogues.json personas, keyed by actor id); refs are names or ids, resolved by the sim
@@ -131,6 +131,13 @@ export function safePersona(p) {
     } : null;
 }
 export const personaOf = id => personas[id] || null;
+// quests (dialogues.json quests): who, title, start, solve { kind: help|bring|visit|wait, when }, lines; kinds checked here
+const QUEST_KINDS = ['help', 'bring', 'visit', 'wait'];
+export function safeQuest(q) {
+  return q && typeof q.who === 'string' && q.start && typeof q.start.de === 'string' && typeof q.start.en === 'string' &&
+    q.solve && QUEST_KINDS.includes(q.solve.kind);
+}
+export const questPool = () => quests;
 // the pool and the personas are read from dialogues.json (at most once a minute); called by the sim, not only when a dialogue is picked
 export async function refreshPool() {
   if (Date.now() - poolAt < 60_000) return;
@@ -140,6 +147,7 @@ export async function refreshPool() {
     if (r.ok) {
       const j = await r.json();
       pool = (j.dialogues || []).filter(safeDialogue);
+      quests = (j.quests || []).filter(safeQuest);
       personas = Object.fromEntries(Object.entries(j.personas || {}).map(([id, p]) => [id, safePersona(p)]).filter(([, p]) => p));
     }
   } catch { /* no pool yet: templates only */ }

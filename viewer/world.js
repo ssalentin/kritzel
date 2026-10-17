@@ -169,7 +169,8 @@ export async function build(api, prevState = null) {
       if (s.throw) thrown.push({ who: s.throw.from?.id, what: e.meta?.name || '', to: s.throw.to?.id });
     }
     const weather = Object.entries(api.mood?.weather?.() || {}).filter(([k, v]) => v === true).map(([k]) => k);
-    const body = JSON.stringify({ client: REPORT_CLIENT, carrying, thrown, night: Math.round((api.mood?.night ?? 0) * 100) / 100, weather });
+    const solved = brain?.solved?.() ?? [];      // quests solved lately: { who, at } in Unix seconds (the dialogue writer replaces that quest)
+    const body = JSON.stringify({ client: REPORT_CLIENT, carrying, thrown, night: Math.round((api.mood?.night ?? 0) * 100) / 100, weather, solved });
     // sent when it changes, and as a keep-alive every 30 s even if unchanged (the lease lapses after 60 s silent)
     if (body === sentSituation && Date.now() - sentAt < 30000) return;
     sentSituation = body; sentAt = Date.now();
