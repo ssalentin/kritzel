@@ -113,11 +113,25 @@ export const nowOf = x => (x && kid(x.den, x.the)) || null;
 export const whyOf = body => { try { const j = JSON.parse(body.match(/^KIDS:\s*(\{.*\})\s*$/m)?.[1]); return kid(j.de, j.en); } catch { return null; } };
 
 // one module: check it; on failure ask for a fix (same model, then the fallback). → { code, model } | { problems }
-async function finish({ body, model, frame, images, takenIds, keepIds, oldName = null, calls }) {
+// fix calls run alongside each other on a busy sheet: at most FIX_SLOTS at once (the plan is shared)
+const FIX_SLOTS = 2;
+let fixesRunning = 0;
+const fixQueue = [];
+async function fixSlot(fn) {
+  if (fixesRunning >= FIX_SLOTS) await new Promise(ok => fixQueue.push(ok));
+  fixesRunning++;
+  try { return await fn(); } finally { fixesRunning--; fixQueue.shift()?.(); }
+}
+const onlyHolds = problems => problems.length > 0 && problems.every(p => /^(holds|heldBy) names actor/.test(p));
+
+// deferHolds: when the only problem is a held creature not written yet, say so at once instead of
+// asking for a fix (which would just drop the hold)
+async function finish({ body, model, frame, images, takenIds, keepIds, oldName = null, calls, deferHolds = false }) {
   let code = body.split('\n').filter(l => !l.startsWith(MARK)).join('\n').trim(), problems;
   for (const fixModel of [null, MODEL, FALLBACK_MODEL]) {
     if (fixModel) {
-      const r = await oneShot({ system: SYSTEM, text: fixText({ problems, code }), images: images.slice(-1), model: fixModel });   // the area now
+      if (deferHolds && onlyHolds(problems)) return { problems, held: true };
+      const r = await fixSlot(() => oneShot({ system: SYSTEM, text: fixText({ problems, code }), images: images.slice(-1), model: fixModel }));   // the area now
       calls.push({ model: fixModel, seconds: +r.seconds.toFixed(1), cost: r.cost, fix: true, fixing: problems });
       code = stripFences(r.text).replace(/^###.*\n/, '');
       model = fixModel;
@@ -164,17 +178,20 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
     // names stay collision-free. A thing that holds a creature written later (a branch and its sloth) waits
     // until the end.
     const renders = [], waiting = [], pending = [], sent = new Set();
-    let lock = Promise.resolve();
+    let lock = Promise.resolve(), halted = false;
     const takenNow = old => [...existing.filter(t => t !== old).flatMap(t => t.ids), ...report.written.flatMap(w => w.ids)];
     const write = (s, last = false) => {
       const job = (async () => {
         const old = s.kind === 'UPDATE' ? existing.find(t => t.file === s.file) : null;
         if (s.kind === 'UPDATE' && !old) { report.rejected.push({ kind: s.kind, file: s.file, problems: ['no such thing to update'] }); log(`${name}: UPDATE of unknown ${s.file} ignored`); return; }
         tell({ seen: seenOf(said.seen), now: nowOf(said.seen[s.n]) });
-        const check = takenIds => finish({ body: s.body, model: MODEL, frame, images, takenIds, keepIds: old?.ids || [], oldName: old?.meta.name || null, calls: report.calls });
+        const check = takenIds => finish({ body: s.body, model: MODEL, frame, images, takenIds, keepIds: old?.ids || [], oldName: old?.meta.name || null, calls: report.calls, deferHolds: !last });
         const f = await check(takenNow(old));
-        await (lock = lock.then(() => commit(s, old, f, last, check)).catch(e => log(`${name}: writing failed: ${e.message}`)));
-      })();
+        await (lock = lock.then(() => commit(s, old, f, last, check)));
+      })().catch(e => {                                         // a failed fix call (timeout, limit) costs this one thing, not the watcher
+        report.rejected.push({ kind: s.kind, file: s.file, problems: [`not written: ${e.message.slice(0, 200)}`] });
+        log(`${name}: ${s.kind} ${s.file || ''} not written: ${e.message}`);
+      });
       pending.push(job);
       return job;
     };
@@ -182,7 +199,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
       // written meanwhile by a parallel section with the same actor id: check again against what is there now
       if (f.code && [...f.code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].some(x => takenNow(old).includes(x[1]))) f = await check(takenNow(old));
       const thingName = (f.code || s.body).match(/name:\s*['"]([^'"]+)['"]/)?.[1] || 'Ding';
-      if (!f.code && !last && f.problems.length && f.problems.every(p => /^(holds|heldBy) names actor/.test(p))) { waiting.push(s); return; }
+      if (!f.code && !last && onlyHolds(f.problems)) { waiting.push(s); return; }
       if (!f.code) { report.rejected.push({ kind: s.kind, file: s.file, name: thingName, problems: f.problems }); log(`${name}: REJECTED ${s.kind} ${s.file || thingName}: ${f.problems.join('; ')}`); return; }
       const base = old ? old.file.replace(/\.js$/, '') : freeName(slug(thingName), files);
       files.add(base);
@@ -206,14 +223,20 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
         write(s);
       }
     };
-    const completeSections = text => { const end = text.lastIndexOf('\n###'); if (end < 0) return []; try { return numbered(parseReply(text.slice(0, end))); } catch { return []; } };
+    const completeSections = text => {                        // everything before the last section header
+      const heads = [...text.matchAll(/^###\s*(NEW|UPDATE|REMOVE|UNCLEAR)\b/gm)];
+      if (heads.length < 2) return [];
+      try { return numbered(parseReply(text.slice(0, heads.at(-1).index))); } catch { return []; }
+    };
 
     // A new sheet with many drawings: helpers write some of them in parallel calls, from the end of the
     // SEEN list, while the main call writes from the start. When the main call begins one a helper has
-    // taken, everything after it is taken too: the main call stops there. At most HELPERS + 1 calls at once.
+    // taken, everything after it is taken too: the main call stops there. At most HELPERS + 1 writing
+    // calls at once, plus up to FIX_SLOTS fix calls.
     const claimed = new Map(), stop = new AbortController(), helpers = [];
     const helper = async () => {
       for (;;) {
+        if (halted) return;
         let k = -1;
         for (let i = said.seen.length - 1; i >= said.begun; i--) if (!claimed.has(i)) { k = i; break; }
         if (k < 0) return;
@@ -240,7 +263,19 @@ Several builders make this sheet at the same time. You build only this one drawi
         for (let i = 0; i < Math.min(HELPERS, said.seen.length - 1); i++) helpers.push(helper());
       take(completeSections(text));
     };
-    const r = await oneShot({ system: SYSTEM, text: ask, images, onText, signal: stop.signal, timeoutMs: 6 * 60_000 });
+    let r;
+    try { r = await oneShot({ system: SYSTEM, text: ask, images, onText, signal: stop.signal, timeoutMs: 6 * 60_000 }); }
+    catch (e) {
+      // the main call failed (timeout, limit, login): let what is already being written finish, start nothing
+      // new. If something got written, the frame counts as done (a retry would write it twice).
+      halted = true;
+      await Promise.allSettled(helpers);
+      await Promise.allSettled(pending);
+      if (!report.written.length) throw e;
+      report.mainError = e.message;
+      log(`${name}: the main call failed after ${report.written.length} thing(s) were written; not retrying: ${e.message}`);
+      return report;
+    }
     said = narrate(r.text);
     report.said = said.seen;
     report.calls.push({ model: r.model, seconds: +r.seconds.toFixed(1), cost: r.cost, ...(r.aborted && { stopped: 'the rest went to helpers' }) });
