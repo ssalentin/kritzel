@@ -305,8 +305,8 @@ class Snapshot:
         try:
             with urllib.request.urlopen(url, timeout=10) as r:
                 data = r.read(MAX_BYTES + 1)
-        except OSError as e:
-            self.result = e
+        except Exception as e:               # OSError, or http.client's IncompleteRead and the like
+            self.result = e if isinstance(e, OSError) else OSError(str(e) or type(e).__name__)
             return
         size = jpeg_size(data)
         self.result = data, size, size and small(data)
