@@ -227,7 +227,9 @@ function flyPortables(spots, actors, { now, say, line, ground }) {
     it.x = Math.max(-lim.x, Math.min(lim.x, th.x1)); it.z = Math.max(-lim.z, Math.min(lim.z, th.z1));
     it.landed = true;
     const to = th.to;
-    if (actors.includes(to) && !to.hidden && Math.hypot(to.pos.x - th.x1, to.pos.z - th.z1) < 1.2 && !carriedBy(spots, to)) {
+    // (a climber up on a perch can't catch: the thing would ride at its height)
+    const climbing = to.mv && ['up', 'sit'].includes(to.mv.phase);
+    if (actors.includes(to) && !to.hidden && !climbing && Math.hypot(to.pos.x - th.x1, to.pos.z - th.z1) < 1.2 && !carriedBy(spots, to)) {
       it.carrier = to; to.goal = { type: 'carry', item: it, until: null }; to.goalSince = now();
       say(to, line(to, 'catch'), 1.8);
     } else say(th.from, line(th.from, 'oops'), 1.6);
