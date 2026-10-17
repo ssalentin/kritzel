@@ -409,13 +409,17 @@ export async function build(api, prevState = null) {
       // distance from the middle, so the whole book stays in view. The sim's grid follows (refreshWorld)
       const target = sizeFor(loaded.size + [...loaded.values()].reduce((n, e) => n + e.actors.length, 0)), w0 = GROUND.w, k = Math.min(1, dt * 0.6);
       GROUND.w += (target.w - GROUND.w) * k; GROUND.d += (target.d - GROUND.d) * k;
+      if (Math.abs(target.w - GROUND.w) < 0.01) { GROUND.w = target.w; GROUND.d = target.d; }   // arrive, so the camera is left alone afterwards
       if (GROUND.w !== w0) {
         island.group.scale.set(GROUND.w / BASE.w, 1, GROUND.d / BASE.d);
-        // the camera tracks the book's size it last fitted (kept on the camera, so a rebuilt engine doesn't zoom out again)
-        // only the distance changes: the user's direction, autoRotate and ?cam= stay as they are
-        if (!camera.userData.viewDist) camera.userData.viewDist = camera.position.distanceTo(controls.target);   // the distance the book was first shown from
-        const off = camera.position.clone().sub(controls.target).setLength(camera.userData.viewDist * GROUND.w / BASE.w);
-        camera.position.copy(controls.target).add(off);
+        // the camera tracks the book's size it last fitted (kept on the camera, so a rebuilt engine doesn't zoom out again).
+        // Only while the book grows, and relative to the user's own zoom: direction, zoom, autoRotate and ?cam= stay theirs
+        // only growth past the largest size already fitted moves it (a rebuilt engine regrowing from the base size doesn't)
+        const fitted = camera.userData.fittedW || BASE.w, ratio = Math.max(1, GROUND.w / fitted);
+        camera.userData.fittedW = Math.max(fitted, GROUND.w);
+        controls.maxDistance = 40 * GROUND.w / BASE.w; controls.minDistance = 6;
+        const off = camera.position.clone().sub(controls.target);
+        camera.position.copy(controls.target).add(off.multiplyScalar(ratio));
         if (Math.abs(GROUND.w - grownAt) > 0.25) { grownAt = GROUND.w; refreshWorld(); }
       }
       water.tick(t);
