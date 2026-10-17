@@ -177,6 +177,9 @@ export const DETECT_MODEL = process.env.KRITZEL_DETECT_MODEL || MODEL;
 // null when the list is unusable (the caller then asks the one main call). Model text goes to the child only
 // through seenOf/nowOf (the child-safe filter) and to the builders as a description, never run.
 const str = (x, n) => typeof x === 'string' && x.trim().length > 0 && x.length <= n;
+// up: from what the list call sees, not what it judges: asked "which way up", DeepSeek said upright for a sun
+// with its eyes below its mouth three times out of three; asked where the eyes are, it saw it every time.
+// A creature drawn hanging head-down (a bat under its branch) has its eyes below its mouth too: not turned.
 export function parseList(text) {
   let j;
   try { j = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)); } catch { return null; }
@@ -185,7 +188,7 @@ export function parseList(text) {
   for (const t of j.things.slice(0, 16)) {
     const b = Array.isArray(t?.box) && t.box.length === 4 && t.box.every(v => typeof v === 'number' && isFinite(v)) ? t.box.map(v => Math.min(1, Math.max(0, v))) : null;
     if (!b || b[2] <= b[0] || b[3] <= b[1] || !str(t.de, 60) || !str(t.en, 60) || !str(t.what, 300)) continue;
-    out.push({ box: b.map(v => +v.toFixed(3)), what: t.what, de: t.de, en: t.en, den: str(t.den, 60) ? t.den : t.de, the: str(t.the, 60) ? t.the : t.en, name_en: str(t.name_en, 40) ? t.name_en : t.en });
+    out.push({ box: b.map(v => +v.toFixed(3)), up: t.face === 'eyes below mouth' && t.hangs !== true ? 'upside down' : 'upright', what: t.what, de: t.de, en: t.en, den: str(t.den, 60) ? t.den : t.de, the: str(t.the, 60) ? t.the : t.en, name_en: str(t.name_en, 40) ? t.name_en : t.en });
   }
   return out;
 }
@@ -262,7 +265,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
         const old = s.kind === 'UPDATE' ? existing.find(t => t.file === s.file) : null;
         if (s.kind === 'UPDATE' && !old) { report.rejected.push({ kind: s.kind, file: s.file, problems: ['no such thing to update'] }); log(`${name}: UPDATE of unknown ${s.file} ignored`); return; }
         tell({ seen: seenOf(said.seen), now: nowOf(said.seen[s.n]) });
-        const check = (takenIds, extra = null) => finish({ body: s.body, model: MODEL, frame, images, takenIds, keepIds: old?.ids || [], oldName: old?.meta.name || null, calls: report.calls, deferHolds: !last, extra });
+        const check = (takenIds, extra = null) => finish({ body: s.body, model: MODEL, frame, images: s.images || images, takenIds, keepIds: old?.ids || [], oldName: old?.meta.name || null, calls: report.calls, deferHolds: !last, extra });
         const f = await check(takenNow(old));
         const run = lock.then(() => commit(s, old, f, last, check));
         lock = run.catch(() => {});                             // one failed write must not block the next ones
@@ -334,20 +337,26 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
     };
     // one drawing of the sheet, by its own call; checked and written like a section of the main reply.
     // From a list (detectSheet): its box and actor id are known, so it is placed and named without guessing
+    let turnedImages = null;                          // the frame turned round, once for all upside-down drawings
     async function buildOne(k, e, { id = null, area = null, others = said.seen.filter((_, i) => i !== k).map(x => x.de) } = {}) {
-      let text;
+      let text, seen = images;
       if (area) {
         const px = (area[0] + area[2]) / 2, py = (area[1] + area[3]) / 2, [ix, iz] = islandOf(px, py);
-        text = oneOfText({ ask, entry: e, others, id, place: [+ix.toFixed(2), +iz.toFixed(2), +px.toFixed(2), +py.toFixed(2)] });
+        // a drawing lying upside down (eyes below the mouth) is shown turned round: asked to turn it itself,
+        // DeepSeek flipped the mouth into a smile but left the eyes below it. Its place stays the paper's.
+        const turned = e.up === 'upside down';
+        if (turned) seen = turnedImages ||= images.map(i => execFileSync('convert', ['jpg:-', '-rotate', '180', 'jpg:-'], { input: i, maxBuffer: 20e6 }));
+        text = oneOfText({ ask, entry: turned ? { ...e, box: [1 - e.box[2], 1 - e.box[3], 1 - e.box[0], 1 - e.box[1]].map(v => +v.toFixed(3)) } : e,
+          others, id, place: [+ix.toFixed(2), +iz.toFixed(2), +px.toFixed(2), +py.toFixed(2)] });
       } else text = `${ask}
 
 Several builders make this sheet at the same time. You build only this one drawing: ${e.de} (${e.en}). The others (${others.join(', ')}) are built by someone else: leave them out, but keep this one's actor id different from theirs. Reply with just its one ### NEW section, no SEEN line.`;
       try {
-        const h = await buildSlot(() => oneShot({ system: SYSTEM, images, text }));
+        const h = await buildSlot(() => oneShot({ system: SYSTEM, images: seen, text }));
         report.calls.push(callOf(h, { helper: e.de }));
         const sec = parseReply(h.text).find(x => x.kind === 'NEW');
         if (!sec) { report.rejected.push({ kind: 'NEW', name: e.de, problems: ['the helper wrote no NEW section'] }); return; }
-        sec.n = k; sent.add(k);
+        sec.n = k; sec.images = seen; sent.add(k);
         write(sec);                                  // checked while this helper takes the next one
       } catch (err) { report.rejected.push({ kind: 'NEW', name: e.de, problems: [`helper call failed: ${err.message.slice(0, 200)}`] }); }
     }

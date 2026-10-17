@@ -51,6 +51,8 @@ Example module:
 ${example}`;
 
 const MAX_CODE = 9000;
+// read last, just before writing (a model that skims the long system prompt still sees it)
+const UPRIGHT = 'Before you write: which way is each drawing meant to stand? Eyes go above the mouth and feet go down; a drawing lying turned or upside down on the paper is built the right way up. A face stands up and looks to the front (+z): a round face (a sun, a plate, a ball creature) is a standing disc facing +z, never lying flat or turned sideways.';
 
 // place: the changed area's centre in the book and on the paper; height: its drawn height in world units
 export function userText({ existing, place, height, takenIds, hasBefore = false, newSheet = false }) {
@@ -60,7 +62,8 @@ export function userText({ existing, place, height, takenIds, hasBefore = false,
   if (newSheet) return (newSheet === 'switch'
     ? 'This is a new sheet of paper: a new world, empty so far.'
     : `This is a new sheet of paper. The things already in the book stay as they are (${existing.map(t => t.meta.name).join(', ') || 'none'}); do not UPDATE or REMOVE them. If the sheet only moved and its drawings are those already in the book, there is NOTHING new; build only drawings that are not in the book yet.`) + ` Build every new drawing (or printed picture) on this sheet, each as its own ### NEW section; leave out only noise.
-Place each one where it sits on the sheet: paper (x, y) → book x = (x - 0.5) * ${BOOK.kx}, z = (y - 0.5) * ${BOOK.kz} (the sheet fills both pages); meta.paper is its (x, y). A person is 2.2 tall.`;
+Place each one where it sits on the sheet: paper (x, y) → book x = (x - 0.5) * ${BOOK.kx}, z = (y - 0.5) * ${BOOK.kz} (the sheet fills both pages); meta.paper is its (x, y). A person is 2.2 tall.
+${UPRIGHT}`;
   return (hasBefore
     ? 'The first image is this part of the paper before, the second is the same part now. Compare them: what was added, changed or erased?'
     : 'This image is the part of the paper that just changed. (No before picture: do not REMOVE anything.)') + `
@@ -68,7 +71,8 @@ Things already in the book, with their modules:
 ${things || '(nothing yet)'}
 
 A NEW thing stands where it is on the paper: the changed area's centre is book x=${place[0]}, z=${place[1]} (paper { x: ${place[2]}, y: ${place[3]} }); if several new drawings are in the image, spread them around that point by where each sits in the image (keep within the pages, x -${BOOK.x}..${BOOK.x}, z -${BOOK.z}..${BOOK.z}). The changed area is about ${height} units tall (a person is 2.2).
-New actor ids: a lowercase ascii slug of the name, not one of ${JSON.stringify(takenIds)}.`;
+New actor ids: a lowercase ascii slug of the name, not one of ${JSON.stringify(takenIds)}.
+${UPRIGHT}`;
 }
 
 export function fixText({ problems, code }) {
@@ -86,13 +90,14 @@ export const DETECT_SYSTEM = `You look at a photo of a sheet of paper for Kritze
 
 export function detectText({ existing = [] }) {
   return `List every separate drawing (or printed picture: a sticker, cut-out or magazine picture counts) on this sheet. Strokes that touch or connect are one drawing, and a word written next to a drawing names it and belongs to it. Each living figure (person, animal, creature) is its own entry, and what it sits on, hangs from or stands in (a branch, tree, swing, pond) is its own entry too. Leave out pure noise (a stray dot or line, a scribble) and real objects lying on the paper (a pen, a hand, a toy).${existing.length ? ` These are in the book already: ${existing.map(t => t.meta.name).join(', ')}; if the sheet shows only those, list nothing.` : ''}
-Reply: {"things": [{"box": [x0, y0, x1, y1], "what": "...", "de": "ein Affe", "en": "a monkey", "den": "den Affen", "the": "the monkey", "name_en": "Monkey"}]}
-box: around the drawing and its word, as fractions 0..1 of the image (x0, y0 top left). what: one line on what it is, how it is drawn and what it touches. de: German with the indefinite article; den: German with the definite article in the accusative ("den Affen", "die Katze", "das Haus"); en, the: the English with a/an and the; name_en: its English name. Plain words a child knows.`;
+Reply: {"things": [{"box": [x0, y0, x1, y1], "face": "eyes above mouth", "hangs": false, "what": "...", "de": "ein Affe", "en": "a monkey", "den": "den Affen", "the": "the monkey", "name_en": "Monkey"}]}
+box: around the drawing and its word, as fractions 0..1 of the image (x0, y0 top left). face: only for a drawing with a face, and only as it is in the image, not as it is meant: are the drawn eyes above, below or beside the drawn mouth? "eyes above mouth", "eyes below mouth", "eyes beside mouth" or "no face". hangs: true when it is drawn hanging head-down from something above it (a bat, a sloth, a monkey by its tail). what: one line on what it is, how it is drawn and what it touches. de: German with the indefinite article; den: German with the definite article in the accusative ("den Affen", "die Katze", "das Haus"); en, the: the English with a/an and the; name_en: its English name. Plain words a child knows.`;
 }
 
 // one drawing of a detected sheet: the usual question, narrowed to it
+const TURN = { 'upside down': 'It lay upside down on the paper, so the image is shown turned round for you: build it the way up you see it now (its paper position below is where it really is).' };
 export function oneOfText({ ask, entry, others, place, id }) {
-  return `${ask}
+  return `${ask}${TURN[entry.up] ? `\n${TURN[entry.up]}` : ''}
 
 Several builders make this sheet at the same time. You build only this one drawing: ${entry.de} (${entry.en}): ${entry.what}. It is inside the box ${JSON.stringify(entry.box)} of the image (x0, y0, x1, y1 as fractions): paper { x: ${place[2]}, y: ${place[3]} }, book x ${place[0]}, z ${place[1]}. ${others.length ? `The others (${others.join(', ')}) are built by someone else: leave them out, but when this one holds, carries or is held by one of them, name that one by its actor id` : 'Build only it'}${id ? `. If this one is alive, its actor id is "${id}"` : ''}. Reply with just its one ### NEW section, no SEEN line.`;
 }
