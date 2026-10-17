@@ -153,6 +153,24 @@ export async function build(api, prevState = null) {
   }
   // in a hand, or in the air: not on the grid, not a perch, not dropped to the page
   const isHeld = e => !!(e.portable && (e.portable.carrier || e.portable.throw));
+  // the situation the dialogue writer reads: who carries what, what is in the air, the night, the weather. Sent
+  // when it changes and at most every 10 s (serve.py keeps the last one in frames/status/situation.json)
+  let sentSituation = '', sentAt = 0;
+  function reportSituation() {
+    // only the live viewer, and only while it is on screen: an archived world or a hidden tab runs its own sim
+    if (!location.pathname.startsWith('/viewer/') || document.visibilityState !== 'visible') return;
+    if (Date.now() - sentAt < 10000) return;
+    const carrying = [], thrown = [];
+    for (const e of loaded.values()) for (const s of e.spots) if (s.kind === 'portable') {
+      if (s.carrier) carrying.push({ who: s.carrier.id, what: e.meta?.name || '' });
+      if (s.throw) thrown.push({ who: s.throw.from?.id, what: e.meta?.name || '', to: s.throw.to?.id });
+    }
+    const weather = Object.entries(api.mood?.weather?.() || {}).filter(([k, v]) => v === true).map(([k]) => k);
+    const body = JSON.stringify({ carrying, thrown, night: Math.round((api.mood?.night ?? 0) * 100) / 100, weather });
+    if (body === sentSituation) return;
+    sentSituation = body; sentAt = Date.now();
+    fetch('/api/situation', { method: 'PUT', body, headers: { 'Content-Type': 'application/json' } }).catch(() => {});
+  }
   // a carried thing follows its carrier, up in the hand; a thrown one flies in an arc; a dropped one lies on
   // the page again. Its spots and obstacles come along. Returns true when the grid must be set up again.
   function followPortable(e) {
@@ -440,6 +458,7 @@ export async function build(api, prevState = null) {
       let carriedChange = false;
       for (const e of loaded.values()) if (e.portable && e.foot && followPortable(e)) carriedChange = true;
       if (carriedChange) refreshWorld();      // picked up or put down: the grid, perches and paths see it now
+      reportSituation();                      // what the dialogue writer needs to know (serve.py /api/situation)
       env.actors = brain.actors?.() || [];   // living props (e.g. a tree with a face) can react to who is near
       env.night = api.mood?.night ?? 0;      // 0 day … 1 night: characters get sleepy and gather at lamps
       env.lamps = api.mood?.lamps() ?? [];
