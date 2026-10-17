@@ -312,7 +312,7 @@ export async function build(api, prevState = null) {
   }
   // where animals can go: tops of things to land or climb on, and the drawn water
   function places() {
-    env.perches = [...loaded.values()].filter(e => e.foot && !e.heldBy && !e.portable?.carrier && e.foot.top > 0.3)
+    env.perches = [...loaded.values()].filter(e => e.foot && !e.heldBy && !e.portable && e.foot.top > 0.3)   // a small thing is carried, not climbed
       .map(e => ({ x: e.foot.x, z: e.foot.z, top: e.foot.top, r: Math.min(e.foot.hx, e.foot.hz) }));
     env.water = water.zones();
   }
