@@ -59,7 +59,7 @@ const WEATHER = ['rain', 'snow', 'rainbow', 'lightning'];
 const SYSTEM = `You write the characters of Kritzel, a living pop-up book of figures children drew on paper: who each one is, and short dialogues between them.
 Reply with JSON only: { "personas": { <actor id>: { "favourite": <name> or null, "likes": [<name>, ...], "fears": [<name>, ...], "hobby": "collect" | "guard" | "nap" | "follow" | "wander", "lines": { "de": [...], "en": [...] } } }, "quests": [ <quest>, ... ], "dialogues": [ { "between": [nameA, nameB], "when": { ... } (optional), "end": "stroll" | "dance" | "tag" | "look" | null, "turns": [ { "who": nameA or nameB, "de": German line, "en": English line } ] } ] }.
 Personas: only for the figures asked for. Build each from what its drawing shows and from the things and figures around it in the book: its favourite place or thing (the centre of its attention), up to 3 it likes, up to 2 it is a little afraid of (gently: a cat and water, a mouse and the cat), a hobby (collect: picks up small things; guard: stays by its favourite; nap: rests at its favourite; follow: walks after one it likes; wander: roams), and 2 or 3 typical lines, the same in German and English. Every <name> is exactly one of the names listed.
-Quests: only as many as asked for. A quest is a little world event a figure or a thing has, and everyone nearby notices, talks about it and helps: { "who": <name or actor id of the figure or thing that has it>, "title": { "de", "en" }, "start": { "de", "en" } (its first line, e.g. "Aua, mein Zahn!"), "solve": { "kind": "help" | "bring" | "visit" | "wait", "what": <name of a thing> (bring only; null for any small thing), "at": <name of a thing> (visit only), "when": "night" | "sun" | "rain" (wait only) }, "helpers": [<name>, ...] (up to 3, who would help first: those who like it), "effect": "dim" (optional, only when the sun or a sky thing is sad and its light should dim until it is cheered up), "lines": { "notice": { "de": [2-3], "en": [2-3] } (what the others say when they notice, e.g. "Was hat der Hai denn?"), "help": { "de": [2-3], "en": [2-3] } (what the helpers say), "solved": { "de", "en" }, "thanks": { "de", "en" } } }. Kind and gentle: a lost thing, a wish, a sad mood that cheering up fixes, nothing scary.
+Quests: only as many as asked for. A quest is a little world event a figure or a thing has, and everyone nearby notices, talks about it and helps: { "who": <name or actor id of the figure or thing that has it>, "title": { "de", "en" }, "start": { "de", "en" } (its first line, e.g. "Aua, mein Zahn!"), "solve": { "kind": "help" | "bring" | "visit" | "wait", "what": <name of a thing in the book> (bring only; null for any small thing; never a thing that is not in the book), "at": <name of a thing> (visit only), "when": "night" | "sun" | "rain" (wait only) }, "helpers": [<name>, ...] (up to 3, who would help first: those who like it), "effect": "dim" (optional, only when the sun or a sky thing is sad and its light should dim until it is cheered up), "lines": { "notice": { "de": [2-3], "en": [2-3] } (what the others say when they notice, e.g. "Was hat der Hai denn?"), "help": { "de": [2-3], "en": [2-3] } (what the helpers say), "solved": { "de", "en" }, "thanks": { "de", "en" } } }. Kind and gentle: a lost thing, a wish, a sad mood that cheering up fixes, nothing scary.
 Dialogues: 3 to 5 turns, the two take turns, every line answers the one before, and together they make a tiny scene that fits these two: their personas, their drawings, and the moment. "when" says when a dialogue fits, only with these keys: "near": <name> (they talk about a thing or figure next to them), "carrying": true (one of them carries something), "night": 0 to 1 (fits from this darkness on), "weather": "rain" | "snow" | "rainbow" | "lightning", "new": <name of a thing> (it just arrived in the book). A "when" names one moment only (one key), so it fits as soon as that moment comes. No "when" means any time; most dialogues have none. Lines are short (at most 60 characters), warm, playful and right for small children: no violence, no insults, nothing scary beyond a friendly "boo". German first, natural for children; "en" is short child-friendly English, not a word-for-word copy. In "between" and "who" use the figures' names (not their actor ids). They all live on the open pages of a big pop-up book: when a line mentions where they are, it is the book or its pages, never an island.`;
 
 // model text → the agreed shape, or left out: unknown refs, hobbies and when keys are dropped, every line passes safeLine
@@ -99,7 +99,10 @@ export function cleanQuest(q, refs, thingNames, describe = () => '') {
   const title = pair(q.title), start = pair(q.start), s = q.solve || {};
   if (!title || !start || !KINDS.includes(s.kind)) return null;
   const solve = { kind: s.kind };
-  if (s.kind === 'bring') solve.what = thing(s.what);                       // null: any small thing
+  if (s.kind === 'bring') {                                               // null: any small thing; a thing not in the book
+    if (s.what != null && !thing(s.what)) return null;                    // (a lost bandage) can't be brought: no quest
+    solve.what = thing(s.what);
+  }
   if (s.kind === 'visit') { solve.at = thing(s.at); if (!solve.at) return null; }
   if (s.kind === 'wait') { if (!WAITS.includes(s.when)) return null; solve.when = s.when; }
   const notice = lines(q.lines?.notice), help = lines(q.lines?.help), solved = pair(q.lines?.solved), thanks = pair(q.lines?.thanks);
@@ -141,9 +144,12 @@ export async function makePool({ thingsDir = join(ROOT, 'viewer', 'things'), cou
   // only to fill up to QUESTS
   // ... for QUEST_HOURS (a book that stays the same would replay the same two quests for days), and not once the
   // sim reports it solved (situation.solved: the who of each quest solved)
-  const solved = new Set((Array.isArray(situation?.solved) ? situation.solved : []).filter(x => typeof x === 'string').map(x => x.toLowerCase()));
+  // ({ who, at }: a solve only ends the quests made before it, so a new quest for the same who survives a feed
+  // that still lists the old solve)
+  const solves = (Array.isArray(situation?.solved) ? situation.solved : []).filter(x => typeof x?.who === 'string' && typeof x?.at === 'number');
+  const solvedSince = q => solves.some(x => x.who.toLowerCase() === q.who.toLowerCase() && x.at * 1000 > Date.parse(q.made_at || 0));
   const keptQuests = (Array.isArray(old.quests) ? old.quests : []).filter(q => q && typeof q.who === 'string' && refs.has(q.who.toLowerCase()) &&
-    !solved.has(q.who.toLowerCase()) && Date.now() - Date.parse(q.made_at || 0) < QUEST_HOURS * 3600_000).slice(0, QUESTS);
+    !solvedSince(q) && Date.now() - Date.parse(q.made_at || 0) < QUEST_HOURS * 3600_000).slice(0, QUESTS);
   const wantQuests = QUESTS - keptQuests.length;
   const text = `The figures' names, to use exactly in "between" and "who" (no other names, not their actor ids): ${cast.map(c => c.name).join(', ')}.
 The figures in the book now (actor id, name: drawing):

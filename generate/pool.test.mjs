@@ -162,6 +162,8 @@ test('a quest keeps only the agreed shape: known names, the four kinds, dim only
   assert.equal(cleanQuest({ ...q, who: 'Mond' }, refs, things), null);           // not in the book
   assert.equal(cleanQuest({ ...q, solve: { kind: 'fight' } }, refs, things), null);
   assert.equal(cleanQuest({ ...q, solve: { kind: 'visit', at: 'Schloss' } }, refs, things), null);
+  assert.equal(cleanQuest({ ...q, solve: { kind: 'bring', what: 'Binde' } }, refs, things), null);   // not in the book
+  assert.deepEqual(cleanQuest({ ...q, solve: { kind: 'bring', what: null } }, refs, things).solve, { kind: 'bring', what: null });
   assert.equal(cleanQuest({ ...q, solve: { kind: 'wait' } }, refs, things), null);
   assert.equal(cleanQuest({ ...q, start: { de: 'Du bist dumm!', en: 'Hi' } }, refs, things), null);
   assert.equal(cleanQuest({ ...q, lines: { ...lines, notice: { de: [], en: [] } } }, refs, things), null);
@@ -176,6 +178,7 @@ test('a pool without quests, or with a quest whose figure has left, is stale at 
     const pool = extra => writeFileSync(join(dir, 'dialogues.json'), JSON.stringify({ cast: ['Affe', 'Maus'], personas: { affe: p, maus: p }, dialogues: [], ...extra }));
     pool({});
     assert.equal(await poolIsStale(dir), true);
+    assert.equal(await (await import('./generate.mjs')).staleReason(dir), 'pool without quests');   // what the start log says
     pool({ quests: [{ who: 'Hund' }] });
     assert.equal(await poolIsStale(dir), true);
     pool({ quests: [{ who: 'Affe' }] });
@@ -204,6 +207,8 @@ test('a quest is replaced when it is old or the sim reports it solved', async ()
       return JSON.parse(readFileSync(join(dir, 'dialogues.json'), 'utf8')).quests.map(x => x.who);
     };
     assert.deepEqual(await run([q('Affe', now), q('Maus', old)]), ['Affe']);                 // 4 hours old: replaced
-    assert.deepEqual(await run([q('Affe', now), q('Maus', now)], { solved: ['affe'] }), ['Maus']);
+    const at = Date.now() / 1000;
+    assert.deepEqual(await run([q('Affe', now), q('Maus', now)], { solved: [{ who: 'Affe', at: at + 5 }] }), ['Maus']);
+    assert.deepEqual(await run([q('Affe', now), q('Maus', now)], { solved: [{ who: 'Affe', at: at - 3600 }] }), ['Affe', 'Maus']);   // solved before this quest was made
   } finally { process.env.PATH = path; delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
 });
