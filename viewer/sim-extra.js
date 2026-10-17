@@ -213,7 +213,9 @@ export function frame(actors, api) {
     if (/^(carry|give)$/.test(it.carrier.goal?.type ?? '')) it.letGoAt = null;
     else if (it.letGoAt == null) it.letGoAt = now();
     if (it.letGoAt != null && now() - it.letGoAt > 1) { it.carrier = null; it.letGoAt = null; continue; }
-    it.x = it.carrier.pos.x; it.z = it.carrier.pos.z;     // follows its carrier while it is carried
+    // held out in front of the carrier, not on its middle: the carrier's radius plus the thing's half-width along its facing
+    const c = it.carrier, off = (c.radius ?? 0.4) + (it.r ?? 0.5), f = c.face ?? 0;
+    it.x = c.pos.x + Math.sin(f) * off; it.z = c.pos.z + Math.cos(f) * off;
   }
   flyPortables(spots, actors, { now, say, line, ground });
 }
