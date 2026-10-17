@@ -632,6 +632,9 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         if (R() < 0.4) say(a, line(a, 'splash'), 1.4);
       }
       acc += dt;
+      // a goal with an end time ends by the clock, every frame: act() only sees it when the figure is scheduled,
+      // and a slow frame rate starved long goals (a circle dance) until the end of the world
+      for (const a of actors) if (a.goal?.until != null && now > a.goal.until) a.goal = null;
       while (acc >= TICK) { acc -= TICK; const a = scheduler.next(); if (a) guarded(a, () => act(a)); }   // empty world: nobody to act
       try { X.frame?.(actors, api); } catch (e) { reportOnce('frame', e); }   // portable things move every frame (sim-extra.js frame)
       if (X.tick && now >= (nextTick ?? 0)) { nextTick = now + 4; try { X.tick(actors, api, coverNow); } catch (e) { reportOnce('tick', e); } }   // one part failing must not stop the rest of the world
