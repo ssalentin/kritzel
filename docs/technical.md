@@ -93,7 +93,13 @@ The 📷 button in the viewer opens a camera picker with a live preview:
   is full size. Over a slow link, frames are skipped rather than queued as lag.
 
 The choice is stored in `camera.json` at the repository root for the capture stage.
-`HOST`/`PORT` env vars change where `viewer/serve.py` listens.
+`HOST`/`PORT` env vars change where `viewer/serve.py` listens, `CAMERA_PORT` where it looks for camera servers.
+
+Without a camera, `scripts/replay_camera.py` plays recorded frames (e.g. `frames/settled/*.jpg`) as one,
+with a hand moving between sheets; it prints its port. For a whole test stack in a worktree, start
+`serve.py` with `PORT` and `CAMERA_PORT=<that port>`, then capture (`VIEWER=`) and the generate watcher.
+`generate/node_modules` must be a real install in that worktree (`npm ci`), not a symlink: the build
+check's sandbox only reads the worktree's own path, so a symlink fails every check as "crashed".
 
 ### Capturing drawings
 
