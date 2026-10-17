@@ -14,6 +14,7 @@ export const FALLBACK_MODEL = process.env.KRITZEL_FALLBACK_MODEL || 'claude-opus
 
 // images: JPEG Buffers, in order. Returns { text, cost, seconds, model }.
 // onText(textSoFar), if given, is called as the reply streams in (to narrate what is being built).
+// signal (an AbortSignal) stops the call early: it then resolves with the text so far and aborted: true.
 // Claude Code updates itself in place: for a few seconds the claude binary is missing (spawn ENOENT).
 // Wait and try again, so a self-update never costs a drawing.
 export async function oneShot(opts, tries = 3) {
@@ -26,7 +27,7 @@ export async function oneShot(opts, tries = 3) {
   }
 }
 
-function callOnce({ system, text, images, model = MODEL, effort = EFFORT, timeoutMs = 3 * 60_000, onText = null }) {
+function callOnce({ system, text, images, model = MODEL, effort = EFFORT, timeoutMs = 3 * 60_000, onText = null, signal = null }) {
   const msg = { type: 'user', message: { role: 'user', content: [
     ...images.map(i => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: i.toString('base64') } })),
     { type: 'text', text },
@@ -54,8 +55,11 @@ function callOnce({ system, text, images, model = MODEL, effort = EFFORT, timeou
     p.stderr.on('data', d => { err += d; });
     const timer = setTimeout(() => { p.kill('SIGTERM'); reject(new Error(`claude -p (${model}) timed out after ${timeoutMs / 1000}s`)); }, timeoutMs);
     p.on('error', e => { clearTimeout(timer); reject(e); });
+    let aborted = false;
+    signal?.addEventListener('abort', () => { aborted = true; p.kill('SIGTERM'); }, { once: true });
     p.on('close', code => {
       clearTimeout(timer);
+      if (aborted) return resolve({ text: sofar, aborted: true, cost: null, seconds: (Date.now() - t0) / 1000, model });
       const res = out.split('\n').filter(l => l.startsWith('{')).map(l => { try { return JSON.parse(l); } catch { return null; } }).find(o => o?.type === 'result');
       if (!res) return reject(new Error(`claude -p (${model}) exited ${code} without a result: ${(err || out).slice(-400)}`));
       if (res.is_error || res.subtype !== 'success') return reject(new Error(`claude -p (${model}) failed: ${String(res.result).slice(0, 300)}`));
