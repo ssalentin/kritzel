@@ -146,3 +146,14 @@ test('a drawing of several parts built from spheres and boxes is sent back for r
   assert.deepEqual(blobs(parts, { geoms: { SphereGeometry: 4, TubeGeometry: 3, ExtrudeGeometry: 2 } }), []);
   assert.deepEqual(blobs('// parts: ball\n', { geoms: { SphereGeometry: 5 } }), []);          // a ball may be a sphere
 });
+
+test('a drawing that gives light must mark its glowing part; a detail that is a star or a fire is not a light', async () => {
+  const { unlit } = await import('./generate.mjs');
+  const m = (name, drawing) => `export const meta = { name: '${name}', drawing: '${drawing}' };`;
+  assert.equal(unlit(m('Kerze', 'a candle with a flame'), { lights: [] }).length, 1);
+  assert.equal(unlit(m('Zwei Lichter', 'two candles, each a wax stick'), {}).length, 1);
+  assert.deepEqual(unlit(m('Kerze', 'a candle'), { lights: [{ kind: 'lamp', glows: true }] }), []);
+  assert.deepEqual(unlit(m('Medaille', 'a gold star medal with a ribbon'), {}), []);
+  assert.deepEqual(unlit(m('Feuerwehrboot', 'a fire rescue boat'), {}), []);
+  assert.deepEqual(unlit(m('Seestern', 'a starfish'), {}), []);
+});
