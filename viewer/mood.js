@@ -55,8 +55,47 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
   scene.add(stars);
 
   function forget(id) {
-    for (const s of sources.get(id) || []) { s.pl?.removeFromParent(); s.pl?.dispose(); }
+    for (const s of sources.get(id) || []) { s.pl?.removeFromParent(); s.pl?.dispose(); unglow(s); }
     sources.delete(id);
+  }
+
+  // a glowing source shows itself: the meshes it covers get the light's colour as emissive (so night does
+  // not dim them), and a soft halo sits on it; a sun or moon gets a bigger corona that pulses. Materials are
+  // cloned, so other things that share a material are not touched.
+  const GLOW = { sun: { color: 0xffd27a, size: 3.2 }, moon: { color: 0xbfd6ff, size: 2.2 }, lamp: { color: 0xffa54a, size: 1.2 } };
+  let haloTex = null;
+  function halo(color) {
+    if (!haloTex) {
+      const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+      const g = cv.getContext('2d'), grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+      grad.addColorStop(0, 'rgba(255,255,255,1)'); grad.addColorStop(0.35, 'rgba(255,255,255,.5)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+      haloTex = new THREE.CanvasTexture(cv); haloTex.colorSpace = THREE.SRGBColorSpace;
+    }
+    return new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTex, color, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0.5 }));
+  }
+  function glowOn(s, l, anchor) {
+    const kind = GLOW[s.kind], color = new THREE.Color(l.color ?? kind.color);
+    const scope = l.object3D?.isObject3D ? l.object3D : anchor;      // the drawn glowing part, or the whole thing
+    const meshes = [];
+    scope?.traverse(o => {
+      if (!o.isMesh || o.isInstancedMesh || o.userData.water || o.userData.outline) return;
+      if (![].concat(o.material).some(m => m && 'emissive' in m && !m.transparent)) return;
+      const orig = o.material, lit = m => ('emissive' in m && !m.transparent) ? m.clone() : m;
+      o.material = Array.isArray(orig) ? orig.map(lit) : lit(orig);
+      for (const m of [].concat(o.material)) if ('emissive' in m) { m.emissive.copy(color); m.emissiveIntensity = 0; }
+      meshes.push({ o, orig });
+    });
+    const h = halo(color);
+    h.scale.setScalar(kind.size);
+    s.obj?.add(h);
+    s.glow = { color, meshes, halo: h, size: kind.size, phase: Math.random() * 10 };
+  }
+  function unglow(s) {
+    const g = s.glow; if (!g) return;
+    for (const { o, orig } of g.meshes) { for (const m of [].concat(o.material)) if (!([].concat(orig).includes(m))) m.dispose(); o.material = orig; }
+    g.halo.removeFromParent(); g.halo.material.dispose();
+    s.glow = null;
   }
 
   function assignShadows() {
@@ -91,6 +130,7 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
         s.pl.shadow.bias = -0.002;
         s.obj.add(s.pl);
       }
+      if (s.obj) glowOn(s, l, anchor);
       list.push(s);
     }
     if (list.length) sources.set(id, list);
@@ -132,6 +172,14 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
     stars.rotation.y = t * 0.004;
 
     for (const s of all) {
+      if (s.glow) {                       // emissive: brighter at night, flickering for candles and fires
+        const g = s.glow, flick = s.flicker ? 1 + 0.12 * Math.sin(t * 13 + g.phase) + 0.08 * Math.sin(t * 23.7) : 1;
+        const pulse = s.kind === 'sun' ? 1 + 0.05 * Math.sin(t * 1.2) : s.kind === 'moon' ? 1 + 0.03 * Math.sin(t * 0.7) : 1;
+        const lvl = (0.8 + 0.8 * cur.night) * flick * pulse;
+        for (const { o } of g.meshes) for (const m of [].concat(o.material)) if ('emissiveIntensity' in m) m.emissiveIntensity = lvl;
+        g.halo.material.opacity = (0.3 + 0.35 * cur.night) * flick;
+        g.halo.scale.setScalar(g.size * pulse * (1 + 0.1 * cur.night));
+      }
       if (!s.pl) continue;
       const flick = s.flicker ? 1 + 0.08 * Math.sin(t * 13 + s.pl.id) + 0.06 * Math.sin(t * 23.7) : 1;
       const goalI = LAMP * s.intensity * cur.lamp;
