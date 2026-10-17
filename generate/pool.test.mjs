@@ -148,7 +148,8 @@ test('a dialogue the model got slightly wrong is fixed, the rest is dropped with
 });
 
 test('a quest keeps only the agreed shape: known names, the four kinds, dim only for the sky, safe lines', async () => {
-  const { cleanQuest } = await import('./dialogues.mjs');
+  const { cleanQuest: clean } = await import('./dialogues.mjs');
+  const cleanQuest = (q, r, t) => clean(q, r, t, () => '', null, ['help', 'bring', 'visit', 'wait']);   // the whole agreed shape
   const refs = new Set(['hai', 'sonne', 'keks', 'lila']), things = new Set(['keks']);
   const lines = { notice: { de: ['Was hat der Hai denn?'], en: ['What is up with the shark?'] }, help: { de: ['Ich helfe!'], en: ['I will help!'] },
     solved: { de: 'Geschafft!', en: 'Done!' }, thanks: { de: 'Danke!', en: 'Thanks!' } };
@@ -211,4 +212,15 @@ test('a quest is replaced when it is old or the sim reports it solved', async ()
     assert.deepEqual(await run([q('Affe', now), q('Maus', now)], { solved: [{ who: 'Affe', at: at + 5 }] }), ['Maus']);
     assert.deepEqual(await run([q('Affe', now), q('Maus', now)], { solved: [{ who: 'Affe', at: at - 3600 }] }), ['Affe', 'Maus']);   // solved before this quest was made
   } finally { process.env.PATH = path; delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("quests are only what the sim runs today: a figure's, of kind help or wait", async () => {
+  const { cleanQuest } = await import('./dialogues.mjs');
+  const refs = new Set(['hai', 'sonne', 'keks']), things = new Set(['keks', 'sonne']), figures = new Set(['hai']);
+  const lines = { notice: { de: ['Was hat er?'], en: ['What is up?'] }, help: { de: ['Ich helfe!'], en: ['I help!'] }, solved: { de: 'Ja!', en: 'Yes!' }, thanks: { de: 'Danke!', en: 'Thanks!' } };
+  const q = { who: 'Hai', title: { de: 'x', en: 'x' }, start: { de: 'Hilfe!', en: 'Help!' }, solve: { kind: 'help' }, lines };
+  assert.ok(cleanQuest(q, refs, things, () => '', figures));
+  assert.equal(cleanQuest({ ...q, who: 'Sonne' }, refs, things, () => '', figures), null);                       // a thing's quest
+  assert.equal(cleanQuest({ ...q, solve: { kind: 'bring', what: 'Keks' } }, refs, things, () => '', figures), null);
+  assert.ok(cleanQuest({ ...q, solve: { kind: 'wait', when: 'rain' } }, refs, things, () => '', figures));
 });
