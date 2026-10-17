@@ -34,12 +34,35 @@ export function makeMoves({ THREE, R, ground = null }) {
     return { x: p.x + (R() - 0.5) * z.width * 0.5, z: p.z + (R() - 0.5) * z.width * 0.5 };
   }
 
+  // a climber keeps off things and other figures on the ground: a thing's footprint (grown by the
+  // climber's radius), or another figure standing on the ground close by. `skip` is the perch it is
+  // climbing onto, whose footprint it must reach. pen() is how far (x, z) is inside the nearest one
+  // (more than 0 is inside; -Infinity when nothing is near).
+  const pen = (a, x, z, env, skip) => {
+    let p = -Infinity;
+    for (const f of env.feet || []) if (f !== skip) p = Math.max(p, Math.min(f.hx + a.radius - Math.abs(x - f.x), f.hz + a.radius - Math.abs(z - f.z)));
+    for (const o of env.actors || []) if (o !== a && !o.hidden && (o.alt || 0) < 0.3) p = Math.max(p, a.radius + (o.radius || 0.1) - Math.hypot(x - o.pos.x, z - o.pos.z));
+    return p;
+  };
+
   // walk/fly/swim straight toward (x, z): returns true when there
   function toward(a, x, z, speed, dt) {
     const dx = x - a.pos.x, dz = z - a.pos.z, d = Math.hypot(dx, dz);
     if (d < 0.08) return true;
     const s = Math.min(d, speed * dt);
     a.pos.x += dx / d * s; a.pos.z += dz / d * s; a.face = Math.atan2(dx, dz);
+    return false;
+  }
+
+  // one climber's step toward (x, z) on the ground: true when there, false when moving, null when blocked
+  function walkTo(a, x, z, speed, dt, env, perch = null) {
+    const dx = x - a.pos.x, dz = z - a.pos.z, d = Math.hypot(dx, dz);
+    if (d < 0.08) return true;
+    const s = Math.min(d, speed * dt), nx = a.pos.x + dx / d * s, nz = a.pos.z + dz / d * s;
+    // a step may not go into a thing or figure, nor deeper into one; one already in a tight spot may walk out
+    const p0 = pen(a, a.pos.x, a.pos.z, env, perch), p1 = pen(a, nx, nz, env, perch);
+    if (p1 > 0 && p1 >= p0) return null;
+    a.pos.x = nx; a.pos.z = nz; a.face = Math.atan2(dx, dz);
     return false;
   }
 
@@ -100,23 +123,26 @@ export function makeMoves({ THREE, R, ground = null }) {
         return !there;
       }
 
-      // climb
+      // climb: walks on the ground round things and figures, and turns to a new goal when one is in the way
       if (!m.phase) Object.assign(m, { phase: 'roam', until: now + 4 + R() * 4 });
       if (m.phase === 'roam') {
         if (m.tx === undefined) { const p = inIsland({ x: a.pos.x + (R() - 0.5) * 3, z: a.pos.z + (R() - 0.5) * 3 }); m.tx = p.x; m.tz = p.z; }
-        const there = toward(a, m.tx, m.tz, sp * 0.7, dt);
+        const there = walkTo(a, m.tx, m.tz, sp * 0.7, dt, env);
         a.alt += (0 - a.alt) * Math.min(1, dt * 4);
-        if (there) m.tx = m.tz = undefined;
+        if (there === null) m.tx = m.tz = undefined;     // in the way: another goal
+        else if (there) m.tx = m.tz = undefined;
         const tall = perches.filter(p => p.top > 0.8 && p.top < 4.5);
         if (now > m.until && tall.length) {        // the nearest tall thing
           const p = tall.reduce((b, q) => Math.hypot(q.x - a.pos.x, q.z - a.pos.z) < Math.hypot(b.x - a.pos.x, b.z - a.pos.z) ? q : b);
           const d = Math.hypot(a.pos.x - p.x, a.pos.z - p.z) || 1;
-          Object.assign(m, { phase: 'go', tx: p.x + (a.pos.x - p.x) / d * p.r, tz: p.z + (a.pos.z - p.z) / d * p.r, top: p.top, px: p.x, pz: p.z });
+          Object.assign(m, { phase: 'go', tx: p.x + (a.pos.x - p.x) / d * p.r, tz: p.z + (a.pos.z - p.z) / d * p.r, top: p.top, px: p.x, pz: p.z, perch: p });
         }
-        return !there;
+        return !!there;
       }
       if (m.phase === 'go') {
-        if (toward(a, m.tx, m.tz, sp * 0.7, dt)) { m.phase = 'up'; a.face = Math.atan2(m.px - a.pos.x, m.pz - a.pos.z); }
+        const there = walkTo(a, m.tx, m.tz, sp * 0.7, dt, env, m.perch);
+        if (there === null) { Object.assign(m, { phase: 'roam', until: now + 2, tx: undefined, tz: undefined }); return false; }   // the way is blocked: another time
+        if (there) { m.phase = 'up'; a.face = Math.atan2(m.px - a.pos.x, m.pz - a.pos.z); }
         return true;
       }
       if (m.phase === 'up') {
