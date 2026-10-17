@@ -422,6 +422,8 @@ async function watch(dir, opts) {
   let last = frames.findLast(done) || null;
   if (!last && !readdirSync(opts.reportsDir).some(f => f.endsWith('.json'))) last = frames.at(-1) || null;
   log(`watching ${dir} → ${opts.thingsDir} (model ${MODEL}, fallback ${FALLBACK_MODEL}); handled up to ${last || '(nothing)'}`);
+  // the check runs every actor through the book's sim, which needs rot-js (a generate/ dependency)
+  try { import.meta.resolve('rot-js'); } catch { log('rot-js is missing (run npm ci in generate/): the check will not run things in the sim'); }
   const sleep = ms => new Promise(ok => setTimeout(ok, ms));
   let tries = 0, triesFor = null;           // failed attempts, and for which frame
   let archivedFor = null;                   // switch mode: the sheet whose new world is already set up
