@@ -314,7 +314,9 @@ const THINGS_LINGER_MS = +process.env.KRITZEL_THINGS_LINGER_MS || 10_000;
 // a new sheet with more than two drawings is written by the main call and up to HELPERS parallel calls
 const HELPERS = 3, PARALLEL = process.env.KRITZEL_PARALLEL !== '0';
 // onLater({ written }): things written after processFrame returned (a final's split parts)
-export async function processFrame(frame, { thingsDir, reportsDir, box = null, previous = null, bigChange = false, render = false, newSheet = false, onProgress = () => {}, onLater = () => {} }) {
+// beforeFirstWrite(): awaited once, right before the frame's first thing is written (switch mode archives the old
+// world there, so a sheet that yields nothing never opens an empty world); if it fails, nothing is written
+export async function processFrame(frame, { thingsDir, reportsDir, box = null, previous = null, bigChange = false, render = false, newSheet = false, onProgress = () => {}, onLater = () => {}, beforeFirstWrite = null }) {
   mkdirSync(reportsDir, { recursive: true });
   const name = basename(frame).replace(/\.\w+$/, '');
   const settledAt = statSync(frame).mtimeMs;
@@ -328,8 +330,10 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
     writeFileSync(join(reportsDir, name + '.json'), JSON.stringify(report, null, 1));
   };
   try {
-    const paper = readPaper(reportsDir);
-    const existing = await readThings(thingsDir, paper);
+    // switch mode: the new world starts empty (the old one is archived before the first write), with no old paper
+    // places either: the first write must not bring the old map (and its _through) back (review of 191fb91)
+    const paper = newSheet === 'switch' ? { _through: basename(frame) } : readPaper(reportsDir);
+    const existing = newSheet === 'switch' ? [] : await readThings(thingsDir, paper);
     mark('things');
     const { image, before, area, place, height } = cropOf(frame, box, previous);
     mark('crop');
@@ -365,7 +369,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
     // names stay collision-free. A thing that holds a creature written later (a branch and its sloth) waits
     // until the end.
     const renders = [], waiting = [], pending = [], sent = new Set();
-    let lock = Promise.resolve(), halted = false;
+    let lock = Promise.resolve(), halted = false, firstWrite = null;
     // A creature built up in the air hangs or perches on something (Sebastian: the sloth floated with its
     // pole). Something must be above it: in its own module, written in this frame, or already in the book
     // (its box, moved by where the viewer placed it). Otherwise it waits for the rest of the frame, then
@@ -435,6 +439,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
           thingName = unique;
         }
       }
+      if (beforeFirstWrite) await (firstWrite ||= Promise.resolve().then(beforeFirstWrite));
       const base = old ? old.file.replace(/\.js$/, '') : freeName(slug(thingName), files);
       files.add(base);
       const file = base + '.js';
@@ -927,25 +932,24 @@ async function watch(dir, opts) {
       // A big drawing or a slid sheet has a measured affine and is a normal frame.
       const newSheet = side.reason === 'big-change' && side.affine == null;
       if (newSheet && modeOf(opts.thingsDir) === 'switch') {
-        // archive once per sheet, even when the build has to be retried
-        if (archivedFor !== newest) {
-          log(`${newest}: new sheet in switch mode: archiving the world, building the whole sheet`);
-          status('building', newest, 'neue Welt');
+        // archive once per sheet (even when the build is retried), and only once the sheet yields a thing to build: an
+        // empty table after the paper is taken away must not open an empty world (pipeline-capture)
+        status('building', newest, 'neue Welt');
+        const archive = async () => {
+          if (archivedFor === newest) return;
+          log(`${newest}: new sheet in switch mode with something to build: archiving the world`);
           const root = resolve(opts.thingsDir, '..', '..');
           try { log(execFileSync(join(root, 'scripts', 'newworld.sh'), [], { cwd: root, encoding: 'utf8' }).trim()); }
-          catch (e) {                 // the old world is still there: don't build a new one into it
-            log(`${newest}: newworld.sh failed, no new world: ${e.message}`);
-            status('failed', newest, 'neue Welt fehlgeschlagen');
-            last = newest; tries = 0;
-            continue;
-          }
+          catch (e) { log(`${newest}: newworld.sh failed, no new world: ${e.message}`); throw new Error(`newworld.sh failed: ${e.message.slice(0, 120)}`); }   // the old world stays: nothing is written into it
           archivedFor = newest;
           writePaper(opts.reportsDir, { _through: newest });        // a new world has no old paper positions
-        }
-        const r = await processFrame(join(dir, newest), { ...opts, onLater: later, box: null, previous: null, newSheet: 'switch' , onProgress: status.more });
+        };
+        const r = await processFrame(join(dir, newest), { ...opts, onLater: later, box: null, previous: null, newSheet: 'switch', onProgress: status.more, beforeFirstWrite: archive });
         if (r.error) { status('failed', newest, r.error.slice(0, 80)); if (await retrySame(r.error, newest)) continue; last = newest; continue; }
-        status(r.written.length ? 'new' : 'unclear', newest, r.written.map(w => w.name).join(', '));
+        if (!r.written.length && r.rejected.some(x => /newworld\.sh failed/.test((x.problems || []).join(' ')))) status('failed', newest, 'neue Welt fehlgeschlagen');
+        else status(r.written.length ? 'new' : 'unclear', newest, r.written.map(w => w.name).join(', '));
         if (r.written.length) wantDialogues(opts, `new sheet: ${r.written.length} things`, r.written.map(w => w.name));
+        else log(`${newest}: nothing written from the new sheet: the world stays`);
         last = lastGenerated = newest; movedSince = false; tries = 0;
         continue;
       }
