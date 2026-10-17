@@ -24,12 +24,15 @@ export const PI_FALLBACK = process.env.KRITZEL_PI_FALLBACK || 'claude-sonnet-5-5
 // A model id with a provider prefix goes through pi (pi.mjs); if that fails before any text came, the same call
 // goes to PI_FALLBACK, so an outage or a refused image costs a few seconds, not the drawing. Once text has
 // streamed (and maybe been acted on), a failure is the caller's, as with claude.
+let fellBackOnce = false;
 export async function oneShot(opts, tries = 3) {
   opts = { ...opts, model: opts.model || MODEL };
   if (isPiModel(opts.model)) {
     try { return await piCall(opts); }
     catch (e) {
       if (e.sofar || opts.signal?.aborted) throw e;
+      // said once per run: every call falling back would be slower than plain Claude, and silent
+      if (!fellBackOnce) { fellBackOnce = true; console.error(`${opts.model} failed, ${PI_FALLBACK} takes the call (said once per run): ${e.message.slice(0, 200)}`); }
       const r = await oneShot({ ...opts, model: PI_FALLBACK }, tries);
       return { ...r, fellBack: e.message.slice(0, 200) };
     }

@@ -56,19 +56,22 @@ export function prewarm(model, system, n) {
   idle.set(keyOf(model, system), l);
 }
 
-// the text of one text_delta event, without parsing the whole line: every update repeats the full reply so
-// far ("partial"), so a long reply would otherwise cost a JSON.parse of megabytes
-function deltaOf(line) {
-  if (!line.startsWith('{"type":"message_update","assistantMessageEvent":{"type":"text_delta"')) return null;
-  const a = line.indexOf('"delta":'), b = line.indexOf(',"partial":', a);
-  if (a < 0 || b < 0) return null;
-  try { return JSON.parse(line.slice(a + 8, b)); } catch { return null; }
+// the text of one text_delta event: every update repeats the full reply so far ("partial"), so a long reply
+// would cost a JSON.parse of megabytes. Fast path for pi's key order; any other message_update is parsed whole
+// (if a pi update reorders the keys, the stream gets slower, not lost)
+export function deltaOf(line) {
+  if (line.startsWith('{"type":"message_update","assistantMessageEvent":{"type":"text_delta"')) {
+    const a = line.indexOf('"delta":'), b = line.indexOf(',"partial":', a);
+    if (a >= 0 && b >= 0) try { return JSON.parse(line.slice(a + 8, b)); } catch { /* parse it whole */ }
+  } else if (!line.includes('"message_update"')) return null;
+  try { const e = JSON.parse(line); return e.type === 'message_update' && e.assistantMessageEvent?.type === 'text_delta' ? String(e.assistantMessageEvent.delta ?? '') : null; } catch { return null; }
 }
 
 // Same shape as oneShot: { text, cost, seconds, model } or, when signal aborts it, { text: sofar, aborted: true }.
 // firstTextMs: no text by then → the call fails (its caller can still try another model), so a stuck
 // provider costs seconds, not minutes.
 export function piCall({ system, text, images = [], model, timeoutMs = 3 * 60_000, firstTextMs = 20_000, onText = null, signal = null }) {
+  if (signal?.aborted) return Promise.resolve({ text: '', aborted: true, cost: null, seconds: 0, model });
   const w = take(model, system), t0 = Date.now();
   hold(w, true);
   return new Promise((resolve, reject) => {
