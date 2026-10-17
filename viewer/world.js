@@ -5,11 +5,12 @@ export const caption = '';
 
 // prevState: characters' saved state (position, mood, friendships) so a reload doesn't reset them
 export async function build(api, prevState = null) {
-  const { THREE, scene, world, camera, bubble, shadowAll, report } = api;
+  const { THREE, scene, world, camera, controls, bubble, shadowAll, report } = api;
   const v = '?v=' + Date.now();
   const [sim, bookMod, charMod, extra, waterMod, moves] = await Promise.all(
     ['sim', 'book', 'characters', 'sim-extra', 'water', 'moves'].map(f => import(`./${f}.js${v}`)));
-  const { GROUND, FIT_R, groundY } = bookMod;
+  const { GROUND, BASE, FIT_R, groundY, sizeFor } = bookMod;
+  let grownAt = BASE.w;                         // the book size the sim was last set up for
 
   // shared look: soft pastel low-poly materials (flat shaded unless asked otherwise)
   const mat = (color, opts = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.7, flatShading: true, ...opts });
@@ -122,7 +123,7 @@ export async function build(api, prevState = null) {
   // meta.paper { x, y } (0-1 of the frame) → island, the way generate places things
   const fromPaper = p => {
     // the whole frame onto the whole pages (with a margin): a fresh page fills where things were drawn
-    return { x: Math.max(-8.3, Math.min(8.3, (p.x - 0.5) * 16.6)), z: Math.max(-6, Math.min(6, (p.y - 0.5) * 12)) };
+    return { x: Math.max(-BASE.w / 2 + 0.7, Math.min(BASE.w / 2 - 0.7, (p.x - 0.5) * (BASE.w - 1.4))), z: Math.max(-BASE.d / 2 + 0.7, Math.min(BASE.d / 2 - 0.7, (p.y - 0.5) * (BASE.d - 1.4))) };
   };
   // stand a thing on the page's curve: at the highest the page gets under all of it (flat ponds and
   // rivers included), so no part sinks under the paper. Sky things (above 1.5) and held things stay.
@@ -320,6 +321,7 @@ export async function build(api, prevState = null) {
   // footprints characters must not stand in (a jail holds its prisoner inside, so it isn't one)
   const blockingFeet = () => [...loaded.values()].filter(e => e.foot && !e.heldBy && !e.holds.length && !e.portable?.carrier).map(e => e.foot);
   function refreshWorld() {
+    for (const e of loaded.values()) if (!e.portable?.carrier) onPage(e);      // the page's curve moved with the book's size (a carried thing is in a hand)
     places();
     trees.length = 0;
     const spots = [];
@@ -400,6 +402,19 @@ export async function build(api, prevState = null) {
     update(t, dt) {
       clockNow = t;
       island.update(t);
+      // the book grows with what's on it (book.js sizeFor): smoothly, with its pages; the camera keeps its
+      // distance from the middle, so the whole book stays in view. The sim's grid follows (refreshWorld)
+      const target = sizeFor(loaded.size + [...loaded.values()].reduce((n, e) => n + e.actors.length, 0)), w0 = GROUND.w, k = Math.min(1, dt * 0.6);
+      GROUND.w += (target.w - GROUND.w) * k; GROUND.d += (target.d - GROUND.d) * k;
+      if (GROUND.w !== w0) {
+        island.group.scale.set(GROUND.w / BASE.w, 1, GROUND.d / BASE.d);
+        // the camera tracks the book's size it last fitted (kept on the camera, so a rebuilt engine doesn't zoom out again)
+        // only the distance changes: the user's direction, autoRotate and ?cam= stay as they are
+        if (!camera.userData.viewDist) camera.userData.viewDist = camera.position.distanceTo(controls.target);   // the distance the book was first shown from
+        const off = camera.position.clone().sub(controls.target).setLength(camera.userData.viewDist * GROUND.w / BASE.w);
+        camera.position.copy(controls.target).add(off);
+        if (Math.abs(GROUND.w - grownAt) > 0.25) { grownAt = GROUND.w; refreshWorld(); }
+      }
       water.tick(t);
       for (const e of loaded.values()) {
         if (e.wiggle) {                       // tapped: a squash-and-stretch wiggle, then back exactly
