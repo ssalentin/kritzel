@@ -249,7 +249,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
         claimed.set(k, 'helper');
         const e = said.seen[k], others = said.seen.filter((_, i) => i !== k).map(x => x.de).join(', ');
         try {
-          const h = await oneShot({ system: SYSTEM, images, text: `${ask}
+          const h = await oneShot({ system: SYSTEM, images, model: process.env.KRITZEL_HELPER_MODEL || MODEL, text: `${ask}
 
 Several builders make this sheet at the same time. You build only this one drawing: ${e.de} (${e.en}). The others (${others}) are built by someone else: leave them out, but keep this one's actor id different from theirs. Reply with just its one ### NEW section, no SEEN line.` });
           report.calls.push({ model: h.model, seconds: +h.seconds.toFixed(1), cost: h.cost, helper: e.de });
