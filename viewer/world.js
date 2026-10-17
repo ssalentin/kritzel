@@ -148,8 +148,10 @@ export async function build(api, prevState = null) {
     e.syncAt = { x: e.foot.x, z: e.foot.z };
     e.spots.push(e.portable);
   }
-  // a carried thing follows its carrier, up in the hand; a dropped one lies on the page again
-  // Its spots and obstacles come along. Returns true when it was picked up or put down (the grid is set up again).
+  // in a hand, or in the air: not on the grid, not a perch, not dropped to the page
+  const isHeld = e => !!(e.portable && (e.portable.carrier || e.portable.throw));
+  // a carried thing follows its carrier, up in the hand; a thrown one flies in an arc; a dropped one lies on
+  // the page again. Its spots and obstacles come along. Returns true when the grid must be set up again.
   function followPortable(e) {
     const p = e.portable;
     const dx = p.x - e.syncAt.x, dz = p.z - e.syncAt.z;
@@ -157,6 +159,8 @@ export async function build(api, prevState = null) {
       e.box.position.x += dx; e.box.position.z += dz; e.foot.x += dx; e.foot.z += dz; e.syncAt = { x: p.x, z: p.z };
       for (const o of [...e.obstacles, ...e.spots]) if (o !== p) { o.x += dx; o.z += dz; }
     }
+    if (p.throw) { e.box.position.y = 0.9 + (p.alt || 0); p.held = true; return false; }
+    if (p.landed) { p.landed = false; if (!p.carrier) { p.held = false; onPage(e); return true; } }   // lands: back on the grid
     if (p.carrier) { e.box.position.y = 1.1 + (p.carrier.alt || 0); if (p.held) return false; p.held = true; return true; }
     if (p.held) { p.held = false; onPage(e); return true; }
     return false;
@@ -314,18 +318,18 @@ export async function build(api, prevState = null) {
   }
   // where animals can go: tops of things to land or climb on, and the drawn water
   function places() {
-    env.perches = [...loaded.values()].filter(e => e.foot && !e.heldBy && !e.portable?.carrier && e.foot.top > 0.3)
+    env.perches = [...loaded.values()].filter(e => e.foot && !e.heldBy && !isHeld(e) && e.foot.top > 0.3)
       .map(e => ({ x: e.foot.x, z: e.foot.z, top: e.foot.top, r: Math.min(e.foot.hx, e.foot.hz), foot: e.foot }));
     env.water = water.zones();
   }
   // footprints characters must not stand in (a jail holds its prisoner inside, so it isn't one)
-  const blockingFeet = () => [...loaded.values()].filter(e => e.foot && !e.heldBy && !e.holds.length && !e.portable?.carrier).map(e => e.foot);
+  const blockingFeet = () => [...loaded.values()].filter(e => e.foot && !e.heldBy && !e.holds.length && !isHeld(e)).map(e => e.foot);
   function refreshWorld() {
-    for (const e of loaded.values()) if (!e.portable?.carrier) onPage(e);      // the page's curve moved with the book's size (a carried thing is in a hand)
+    for (const e of loaded.values()) if (!isHeld(e)) onPage(e);      // the page's curve moved with the book's size (a carried thing is in a hand)
     places();
     trees.length = 0;
     const spots = [];
-    for (const e of loaded.values()) { ensurePortable(e); if (!e.portable?.carrier) trees.push(...e.obstacles); spots.push(...e.spots); }
+    for (const e of loaded.values()) { ensurePortable(e); if (!isHeld(e)) trees.push(...e.obstacles); spots.push(...e.spots); }
     brain.setWorld({ trees, spots, feet: blockingFeet() });
     brain.setHolds([...loaded.values()].flatMap(e => e.holds));
     attachHeld();
@@ -361,7 +365,7 @@ export async function build(api, prevState = null) {
   for (const [file, entry, meta] of later) try { place(file, entry, meta, false); } catch (e) { report(`things/${file}: placing: ${e.message}`); }
   untangle();
   const actors = [...loaded.values()].flatMap(e => e.actors);
-  for (const e of loaded.values()) { ensurePortable(e); if (!e.portable?.carrier) trees.push(...e.obstacles); }
+  for (const e of loaded.values()) { ensurePortable(e); if (!isHeld(e)) trees.push(...e.obstacles); }
   const spots = [...loaded.values()].flatMap(e => e.spots);
   places();
   brain = sim.create({ THREE, actors, trees, pond, spots, feet: blockingFeet(), islandR: FIT_R, ground: GROUND, groundY, states: prevState, extra, moves });
