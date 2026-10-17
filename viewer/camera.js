@@ -63,7 +63,7 @@ export function cameraPicker({ button, panel }) {
       } catch (e) { note.textContent = t('camCantOpen') + e.message; }
     } else {
       img.onerror = () => { img.hidden = true; note.textContent = `${cam.name} (${cam.host}) sendet kein Bild.`; };
-      img.src = cam.stream + '?t=' + Date.now();
+      img.src = cam.stream + '?small&t=' + Date.now();   // the small preview: live over a thin link
       img.hidden = false;
     }
   }

@@ -6,11 +6,13 @@ The viewer's server finds it on every online tailnet peer and lists its cameras.
 It never listens on the LAN: anyone there could watch the camera. CAMERA_HOST=<addr> overrides.
 
   GET /cameras.json            → {"host": ..., "cameras": [{"id", "name", "stream", "snapshot"}]}
-  GET /stream/<id>.mjpg        → MJPEG stream (multipart/x-mixed-replace)
-  GET /snapshot/<id>.jpg       → the latest frame
+  GET /stream/<id>.mjpg        → MJPEG stream (multipart/x-mixed-replace), full size
+  GET /snapshot/<id>.jpg       → the latest frame, full size
+  add ?small to either         → the preview: PREVIEW_W px wide, PREVIEW_FPS a second, ~25 KB a frame
 
 Needs Linux (V4L2) and ffmpeg. One ffmpeg per camera, shared by all viewers;
-it stops a few seconds after the last viewer leaves.
+it stops a few seconds after the last viewer leaves. Watch the small preview over a thin
+network link: a full-size frame is ~200 KB, a preview ~25 KB.
 """
 import http.server
 import json
@@ -25,6 +27,13 @@ from pathlib import Path
 
 PORT = int(os.environ.get("CAMERA_PORT", "8766"))
 SIZE = os.environ.get("CAMERA_SIZE", "1920x1080")    # what start.sh uses for the IPEVO
+PREVIEW_W, PREVIEW_FPS = 960, 15     # 960 px is the size capture.py compares at
+SNDBUF = 64 << 10                     # a stream socket holds a few previews, not seconds of video
+
+
+def source(cam):
+    """ffmpeg's input options for a camera."""
+    return ["-f", "v4l2", "-input_format", "mjpeg", "-video_size", SIZE, "-i", f"/dev/{cam}"]
 
 
 def cameras():
@@ -52,14 +61,21 @@ class Feed:
             return f
 
     def __init__(self, cam):
-        self.frame, self.seq, self.clients, self.alive, self.error = None, 0, 0, True, ""
+        # the latest JPEG of each size: {"full"|"small": (frame, seq)}
+        self.latest, self.clients, self.alive, self.error = {"full": (None, 0), "small": (None, 0)}, 0, True, ""
         self.last_frame = self.idle_since = time.time()
         self.cam, self.cond = cam, threading.Condition()
+        r, w = os.pipe()
+        # two outputs: full size on stdout as before, the shrunken preview on the extra pipe
         self.proc = subprocess.Popen(
-            ["ffmpeg", "-loglevel", "warning", "-f", "v4l2", "-input_format", "mjpeg", "-video_size", SIZE,
-             "-i", f"/dev/{cam}", "-f", "mjpeg", "-q:v", "3", "-"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        threading.Thread(target=self.read, daemon=True).start()
+            ["ffmpeg", "-loglevel", "warning", *source(cam),
+             "-map", "0:v", "-f", "mjpeg", "-q:v", "3", "pipe:1",
+             "-map", "0:v", "-vf", f"fps={PREVIEW_FPS},scale={PREVIEW_W}:-2:flags=area", "-q:v", "8",
+             "-f", "mjpeg", f"pipe:{w}"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, pass_fds=(w,))
+        os.close(w)
+        threading.Thread(target=self.read, args=(self.proc.stdout, "full"), daemon=True).start()
+        threading.Thread(target=self.read, args=(os.fdopen(r, "rb"), "small"), daemon=True).start()
         threading.Thread(target=self.log, daemon=True).start()
         threading.Thread(target=self.watchdog, daemon=True).start()
 
@@ -88,10 +104,10 @@ class Feed:
             print(f"{self.cam}: {line}", flush=True)
             self.error = line[-300:]
 
-    def read(self):
+    def read(self, pipe, kind):
         buf = b""
         while True:
-            chunk = self.proc.stdout.read1(65536)
+            chunk = pipe.read1(65536)
             if not chunk:
                 break
             buf += chunk
@@ -100,7 +116,8 @@ class Feed:
                 start = buf.find(b"\xff\xd8")
                 if 0 <= start < end:
                     with self.cond:
-                        self.frame, self.seq, self.last_frame = buf[start:end + 2], self.seq + 1, time.time()
+                        self.latest[kind] = buf[start:end + 2], self.latest[kind][1] + 1
+                        self.last_frame = time.time()
                         self.cond.notify_all()
                 buf = buf[end + 2:]
         self.proc.kill()
@@ -114,10 +131,10 @@ class Feed:
         with Feed.lock:
             self.clients -= 1
 
-    def next(self, seq, timeout=5):
+    def next(self, kind, seq, timeout=5):
         with self.cond:
-            self.cond.wait_for(lambda: self.seq != seq or not self.alive, timeout)
-            return self.frame, self.seq
+            self.cond.wait_for(lambda: self.latest[kind][1] != seq or not self.alive, timeout)
+            return self.latest[kind]
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -130,7 +147,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        path = urllib.parse.urlsplit(self.path).path
+        url = urllib.parse.urlsplit(self.path)
+        path, kind = url.path, "small" if "small" in urllib.parse.parse_qs(url.query, keep_blank_values=True) else "full"
         if path == "/cameras.json":
             return self.send(200, json.dumps({"host": socket.gethostname(), "cameras": cameras()}).encode(),
                              "application/json")
@@ -139,7 +157,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.send(404, b"not found", "text/plain")
         feed = Feed.get(m[2])
         try:
-            frame, seq = feed.next(0)
+            frame, seq = feed.next(kind, 0)
             if frame is None:
                 msg = "camera gives no picture: " + (feed.error or "no frame within 5 s")
                 print(f"{m[2]}: {msg}")
@@ -150,10 +168,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
+            # a small send buffer: when the link is slower than the stream, frames are skipped
+            # here (next() always gives the newest) instead of queueing up as lag
+            self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SNDBUF)
             while feed.alive:
                 self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(frame))
                 self.wfile.write(frame + b"\r\n")
-                frame, seq = feed.next(seq)
+                frame, seq = feed.next(kind, seq)
         except OSError:
             pass
         finally:
