@@ -142,9 +142,11 @@ export async function build(api, prevState = null) {
   // a small thing a figure can pick up (sim-extra.js: 'portable'): it has no figure or hold in it and fits in a hand
   function ensurePortable(e) {
     if (e.portable || !e.foot || e.heldBy || e.actors.length || e.holds.length) return;
-    if (Math.max(e.foot.hx, e.foot.hz) * 2 > 2 || e.foot.top > 2.5) return;
+    const handLamp = e.light.length && e.light.every(l => l.kind === 'lamp') && Math.max(e.foot.hx, e.foot.hz) * 2 <= 3 && Math.min(e.foot.hx, e.foot.hz) * 2 <= 1.4 && e.foot.top < 1.5;
+    if (!handLamp && (Math.max(e.foot.hx, e.foot.hz) * 2 > 2 || e.foot.top > 2.5)) return;
     // a house, a lamp, a sky or a pond is not carried: only things whose spots (a biscuit's food) can come along
-    if (e.light.length || e.weather.length || e.spots.some(s => s.kind !== 'food')) return;
+    // …but a small hand lamp (a flashlight, a lantern) is made to be carried: its light rides along (Sebastian, 2026-10-17)
+    if ((e.light.length && !handLamp) || e.weather.length || e.spots.some(s => s.kind !== 'food')) return;
     let pond = false; e.box.traverse(o => { if (o.userData?.zone) pond = true; });
     if (pond) return;
     e.portable = { kind: 'portable', name: e.meta?.name, x: e.foot.x, z: e.foot.z, r: Math.max(e.foot.hx, e.foot.hz), carrier: null };
