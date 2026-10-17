@@ -18,7 +18,8 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { oneShot, MODEL, FALLBACK_MODEL } from './claude.mjs';
+import { oneShot, MODEL, FALLBACK_MODEL, PI_FALLBACK } from './claude.mjs';
+import { isPiModel, prewarm } from './pi.mjs';
 import { live } from './children.mjs';
 import { staticCheck, buildCheck, metaOf } from './check.mjs';
 import { SYSTEM, userText, fixText } from './prompts.mjs';
@@ -27,6 +28,8 @@ import { safeLine } from '../viewer/dialogues.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const log = (...a) => console.error(new Date().toISOString().slice(11, 19), ...a);
+// one call in the report: which model really answered (a pi model may have fallen back to Claude) and its time
+const callOf = (r, extra = {}) => ({ model: r.model, seconds: +r.seconds.toFixed(1), cost: r.cost, ...(r.fellBack && { fellBack: r.fellBack }), ...extra });
 
 // ---------- existing things: their meta is the registry ----------
 async function readThings(dir, paper = {}) {
@@ -133,9 +136,9 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
     if (fixModel) {
       if (deferHolds && onlyHolds(problems)) return { problems, held: true, info };
       const r = await fixSlot(() => oneShot({ system: SYSTEM, text: fixText({ problems, code }), images: images.slice(-1), model: fixModel }));   // the area now
-      calls.push({ model: fixModel, seconds: +r.seconds.toFixed(1), cost: r.cost, fix: true, fixing: problems });
+      calls.push(callOf(r, { fix: true, fixing: problems }));
       code = stripFences(r.text).replace(/^###.*\n/, '');
-      model = fixModel;
+      model = r.model;
     }
     const full = `${MARK}frames/settled/${basename(frame)} (${model})\n${code}\n`;
     problems = staticCheck(full);
@@ -286,7 +289,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
           const h = await oneShot({ system: SYSTEM, images, text: `${ask}
 
 Several builders make this sheet at the same time. You build only this one drawing: ${e.de} (${e.en}). The others (${others}) are built by someone else: leave them out, but keep this one's actor id different from theirs. Reply with just its one ### NEW section, no SEEN line.` });
-          report.calls.push({ model: h.model, seconds: +h.seconds.toFixed(1), cost: h.cost, helper: e.de });
+          report.calls.push(callOf(h, { helper: e.de }));
           const sec = parseReply(h.text).find(x => x.kind === 'NEW');
           if (!sec) { report.rejected.push({ kind: 'NEW', name: e.de, problems: ['the helper wrote no NEW section'] }); continue; }
           sec.n = k; sent.add(k);
@@ -319,7 +322,7 @@ Several builders make this sheet at the same time. You build only this one drawi
     }
     said = narrate(r.text);
     report.said = said.seen;
-    report.calls.push({ model: r.model, seconds: +r.seconds.toFixed(1), cost: r.cost, ...(r.aborted && { stopped: 'the rest went to helpers' }) });
+    report.calls.push(callOf(r, r.aborted ? { stopped: 'the rest went to helpers' } : {}));
     report.reply = r.text.slice(0, 4000);
     const sections = r.aborted ? completeSections(r.text) : numbered(parseReply(r.text));
     take(sections);
@@ -466,7 +469,8 @@ async function watch(dir, opts) {
   const frames = list();
   let last = frames.findLast(done) || null;
   if (!last && !readdirSync(opts.reportsDir).some(f => f.endsWith('.json'))) last = frames.at(-1) || null;
-  log(`watching ${dir} → ${opts.thingsDir} (model ${MODEL}, fallback ${FALLBACK_MODEL}); handled up to ${last || '(nothing)'}`);
+  log(`watching ${dir} → ${opts.thingsDir} (model ${MODEL}${isPiModel(MODEL) ? ` via pi, ${PI_FALLBACK} when pi fails` : ''}, fallback ${FALLBACK_MODEL}); handled up to ${last || '(nothing)'}`);
+  if (isPiModel(MODEL)) prewarm(MODEL, SYSTEM, 4);            // warm for the first frame: a cold pi costs ~1.3 s
   if (await poolIsStale(opts.thingsDir).catch(() => false)) { log('dialogues: the pool is for another cast: making it again'); refreshDialogues(opts); }
   // the check runs every actor through the book's sim, which needs rot-js (a generate/ dependency)
   try { import.meta.resolve('rot-js'); } catch { log('rot-js is missing (run npm ci in generate/): the check will not run things in the sim'); }
