@@ -14,13 +14,19 @@ import { safeDialogue } from '../viewer/dialogues.js';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const POOL_MODEL = process.env.KRITZEL_DIALOGUE_MODEL || 'claude-haiku-5-5';
 
+const STR = `['"]([^'"]+)['"]`, PLAIN = `(?:\\s*\\w+:\\s*(?:'[^']*'|"[^"]*"|[\\w.-]+)\\s*,)*?`;
+
 // the characters: every actor of every thing, with its name and what the thing is
 export function castOf(thingsDir) {
   const cast = [];
   for (const file of readdirSync(thingsDir).filter(f => /^[\w.-]+\.js$/.test(f)).sort()) {
     const code = readFileSync(join(thingsDir, file), 'utf8');
     const drawing = code.match(/drawing:\s*['"]([^'"]+)['"]/)?.[1] || '';
-    for (const [, id, name] of code.matchAll(/\bid:\s*['"]([\w-]+)['"]\s*,\s*name:\s*['"]([^'"]+)['"]/g)) cast.push({ id, name, drawing });
+    // id and name in either order, with short plain fields between them (id, move, name, ...)
+    for (const m of code.matchAll(new RegExp(`\\bid:\\s*${STR}\\s*,${PLAIN}\\s*name:\\s*${STR}|\\bname:\\s*${STR}\\s*,${PLAIN}\\s*id:\\s*${STR}`, 'g'))) {
+      const [id, name] = m[1] !== undefined ? [m[1], m[2]] : [m[4], m[3]];
+      if (/^[\w-]+$/.test(id)) cast.push({ id, name, drawing });
+    }
   }
   return cast;
 }

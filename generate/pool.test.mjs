@@ -21,3 +21,15 @@ test('the pool is stale when missing or made for another cast', async () => {
     assert.equal(await poolIsStale(dir), false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('the cast finds actors written with other fields between id and name, in either order', async () => {
+  const { castOf } = await import('./dialogues.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'kritzel-cast-'));
+  try {
+    writeFileSync(join(dir, 'affe.js'), actor('affe', 'Affe'));
+    writeFileSync(join(dir, 'kroete.js'), `export const meta = { name: 'Schildkröte', drawing: 'a turtle' };\nexport function build() { return { actors: [{\n  id: 'schildkroete', move: 'crawl', name: 'Schildkröte', start: [1.8, 0.5], speed: 0.4 }] }; }\n`);
+    writeFileSync(join(dir, 'vogel.js'), `export const meta = { name: 'Vogel', drawing: 'x' };\nexport function build() { return { actors: [{ name: "Vogel mit Augen", move: 'fly', id: 'vogel' }] }; }\n`);
+    writeFileSync(join(dir, 'haus.js'), `export const meta = { name: 'Haus', drawing: 'x' };\nexport function build() { return { actors: [] }; }\n`);
+    assert.deepEqual(castOf(dir).map(c => [c.id, c.name]), [['affe', 'Affe'], ['schildkroete', 'Schildkröte'], ['vogel', 'Vogel mit Augen']]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
