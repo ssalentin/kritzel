@@ -211,8 +211,9 @@ export function frame(actors, api) {
     if (!actors.includes(it.carrier) || it.carrier.hidden) { it.carrier = null; continue; }   // gone or hidden: let go
     // a brief talk or greeting keeps it; a goal that stays something else for over a second lets it go
     if (/^(carry|give)$/.test(it.carrier.goal?.type ?? '')) it.letGoAt = null;
-    else if ((it.letGoAt ??= now()) && now() - it.letGoAt > 1) { it.carrier = null; it.letGoAt = null; continue; }
-    else { it.x = it.carrier.pos.x; it.z = it.carrier.pos.z; }
+    else if (it.letGoAt == null) it.letGoAt = now();
+    if (it.letGoAt != null && now() - it.letGoAt > 1) { it.carrier = null; it.letGoAt = null; continue; }
+    it.x = it.carrier.pos.x; it.z = it.carrier.pos.z;     // follows its carrier while it is carried
   }
   flyPortables(spots, actors, { now, say, line, ground });
 }
