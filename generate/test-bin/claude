@@ -1,0 +1,4 @@
+#!/bin/sh
+# A stand-in for `claude -p` in tests: one successful result.
+cat >/dev/null
+echo '{"type":"result","subtype":"success","is_error":false,"result":"from claude","total_cost_usd":0.01}'

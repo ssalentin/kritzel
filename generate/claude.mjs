@@ -1,23 +1,39 @@
-// One headless Claude Code call (`claude -p`) on this host's existing Claude Code login.
+// One headless model call: `claude -p` on this host's existing Claude Code login, or (a model id with a provider
+// prefix, e.g. KRITZEL_MODEL=deepseek/deepseek-v4-flash) a warm pi process, see pi.mjs.
 // One shot, no agent loop: the image goes inline (stream-json input), all tools are off and
 // the default system prompt is replaced. (--bare would be shorter but ignores the OAuth login.)
 // A camera frame is input from strangers; with no tools the reply is just text we check.
 import { spawn } from 'node:child_process';
 import { track } from './children.mjs';
 import { tmpdir } from 'node:os';
+import { isPiModel, piCall } from './pi.mjs';
 
 export const MODEL = process.env.KRITZEL_MODEL || 'claude-sonnet-5-5';
 // KRITZEL_EFFORT is for measuring; an unknown value falls back to low instead of failing every call
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const EFFORT = EFFORTS.includes(process.env.KRITZEL_EFFORT) ? process.env.KRITZEL_EFFORT : 'low';
 export const FALLBACK_MODEL = process.env.KRITZEL_FALLBACK_MODEL || 'claude-opus-5-5';
+// a model through pi ("deepseek/deepseek-v4-flash") that fails before its first text: this Claude model takes the call
+export const PI_FALLBACK = process.env.KRITZEL_PI_FALLBACK || 'claude-sonnet-5-5';
 
 // images: JPEG Buffers, in order. Returns { text, cost, seconds, model }.
 // onText(textSoFar), if given, is called as the reply streams in (to narrate what is being built).
 // signal (an AbortSignal) stops the call early: it then resolves with the text so far and aborted: true.
 // Claude Code updates itself in place: for a few seconds the claude binary is missing (spawn ENOENT).
 // Wait and try again, so a self-update never costs a drawing.
+// A model id with a provider prefix goes through pi (pi.mjs); if that fails before any text came, the same call
+// goes to PI_FALLBACK, so an outage or a refused image costs a few seconds, not the drawing. Once text has
+// streamed (and maybe been acted on), a failure is the caller's, as with claude.
 export async function oneShot(opts, tries = 3) {
+  opts = { ...opts, model: opts.model || MODEL };
+  if (isPiModel(opts.model)) {
+    try { return await piCall(opts); }
+    catch (e) {
+      if (e.sofar || opts.signal?.aborted) throw e;
+      const r = await oneShot({ ...opts, model: PI_FALLBACK }, tries);
+      return { ...r, fellBack: e.message.slice(0, 200) };
+    }
+  }
   for (let i = 1; ; i++) {
     try { return await callOnce(opts); }
     catch (e) {

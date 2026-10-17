@@ -1,0 +1,24 @@
+#!/usr/bin/env node
+// A stand-in for `pi --mode rpc` in tests: FAKE_PI=ok (default) streams "Hello world" in two deltas;
+// slow streams forever until aborted; error fails the call; die exits before replying.
+const mode = process.env.FAKE_PI || 'ok';
+let buf = '', n = 0;
+const out = o => process.stdout.write(JSON.stringify(o) + '\n');
+const delta = (d, so) => out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: d, partial: { content: [{ type: 'text', text: so }] } } });
+const end = (text, stopReason = 'stop', extra = {}) => out({ type: 'agent_end', messages: [{ role: 'user', content: [] }, { role: 'assistant', content: [{ type: 'text', text }], stopReason, usage: { cost: { total: 0.001 } }, ...extra }] });
+let timer = null, sofar = '';
+process.stdin.on('data', d => {
+  buf += d;
+  for (let i; (i = buf.indexOf('\n')) >= 0;) {
+    const c = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
+    if (c.type === 'new_session') { sofar = ''; out({ type: 'response', command: 'new_session', success: true }); }
+    if (c.type === 'abort') { clearInterval(timer); out({ type: 'response', command: 'abort', success: true }); end(sofar, 'aborted'); }
+    if (c.type !== 'prompt') continue;
+    n++;
+    out({ type: 'response', command: 'prompt', success: true });
+    if (mode === 'die') process.exit(3);
+    if (mode === 'error') { end('', 'error', { errorMessage: '529 overloaded' }); continue; }
+    if (mode === 'slow') { timer = setInterval(() => { sofar += 'x'; delta('x', sofar); }, 20); continue; }
+    sofar = `Hello (call ${n}, ${c.images.length} image) `; delta(sofar, sofar); delta('world', sofar + 'world'); end(sofar + 'world');
+  }
+});
