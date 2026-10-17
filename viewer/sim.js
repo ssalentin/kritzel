@@ -598,7 +598,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     snapshot() { return Object.fromEntries(actors.map(a => [a.id, snapshotOf(a)])); },
     failures: () => [...failed].map(([a, message]) => ({ id: a.id, file: a.file, message })),
     update(t, dt, { cover = 0, birdsLow = false, night = 0, lamps = [], weather = {}, perches = [], water = [] } = {}) {
-      envNow = { perches, water };
+      envNow = { perches, water, feet, actors };     // climbers keep off things and figures (moves.js)
       now = t; nightNow = night; lampsNow = lamps;
       // a storm sends everyone in through a door; rain only now and then (they'd rather splash)
       coverNow = Math.max(cover, weather.lightning ? 1 : weather.rain ? 0.4 : 0);
