@@ -127,7 +127,7 @@ const onlyHolds = problems => problems.length > 0 && problems.every(p => /^(hold
 // deferHolds: when the only problem is a held creature not written yet, say so at once instead of
 // asking for a fix (which would just drop the hold)
 async function finish({ body, model, frame, images, takenIds, keepIds, oldName = null, calls, deferHolds = false }) {
-  let code = body.split('\n').filter(l => !l.startsWith(MARK)).join('\n').trim(), problems;
+  let code = body.split('\n').filter(l => !l.startsWith(MARK)).join('\n').trim(), problems, simSkipped = null;
   for (const fixModel of [null, MODEL, FALLBACK_MODEL]) {
     if (fixModel) {
       if (deferHolds && onlyHolds(problems)) return { problems, held: true };
@@ -141,6 +141,7 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
     if (!problems.length) {
       const b = await buildCheck(full, { takenIds });
       problems = b.problems;
+      simSkipped = b.info?.simSkipped || null;
       // a module from before the one-figure rule may hold several figures: updating it is not splitting it
       if (keepIds.length > 1) problems = problems.filter(p => !/actors in one module/.test(p));
       // an updated thing keeps its actor ids (the sim remembers friendships), unless it was renamed into
@@ -148,7 +149,10 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
       const renamed = oldName && code.match(/name:\s*['"]([^'"]+)['"]/)?.[1] !== oldName;
       if (!(renamed && !b.info.actors?.length)) for (const id of keepIds) if (!b.info.actors?.includes(id)) problems.push(`keep the actor id "${id}" (the sim remembers its friendships)`);
     }
-    if (!problems.length) return { code: full, model, warnings: /^\/\/ parts:/m.test(code) ? [] : ['no // parts: list (a thinking aid for the model; module accepted)'] };
+    if (!problems.length) return { code: full, model, warnings: [
+      ...(/^\/\/ parts:/m.test(code) ? [] : ['no // parts: list (a thinking aid for the model; module accepted)']),
+      ...(simSkipped ? [`not run in the sim (run npm ci in generate/): ${simSkipped}`] : []),
+    ] };
   }
   return { problems };
 }

@@ -3,9 +3,12 @@
   "private": true,
   "type": "module",
   "description": "Settled camera frame → viewer/things/<thing>.js, via headless Claude Code",
-  "scripts": { "test": "node --test" },
+  "scripts": {
+    "test": "node --test"
+  },
   "dependencies": {
-    "three": "0.160.0",
-    "playwright-core": "^1.56.0"
+    "playwright-core": "^1.56.0",
+    "rot-js": "2.2.1",
+    "three": "0.160.0"
   }
 }

@@ -8,10 +8,33 @@
 import * as THREE from 'three';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { registerHooks } from 'node:module';
+
+// the viewer's sim imports 'rot-js' (an importmap in the page): here it is generate/'s own copy
+registerHooks({ resolve: (spec, ctx, next) => next(spec, spec === 'rot-js' ? { ...ctx, parentURL: import.meta.url } : ctx) });
 
 const VIEWER = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'viewer');
 // the world is an open pop-up book: two pages, x -9..9 (spine at x = 0), z -6.5..6.5, ground y = 0 (= BOOK in place.mjs)
 const PAGE_X = 9, PAGE_Z = 6.5;
+
+// The book's real sim moves one actor a while and plays every animation state on it. Returns what it
+// throws ({ error }), if anything: in the book, one rig that throws there stops every figure after it.
+async function simThrows(actor) {
+  globalThis.document ??= { documentElement: {} };            // i18n.js sets the page's language
+  let create;
+  try { ({ create } = await import(pathToFileURL(join(VIEWER, 'sim.js')).href)); }
+  catch (e) { return { skipped: e.message }; }                 // no rot-js here (npm ci in generate/): not checked
+  try {
+    const b = create({ THREE, actors: [actor], trees: [], pond: { x: 0, z: 0, r: 0 }, spots: [], islandR: 6.5,
+      ground: { shape: 'rect', w: 2 * PAGE_X, d: 2 * PAGE_Z }, seed: 1 });
+    let t = 0;
+    const run = n => { for (let i = 0; i < n; i++) { t += 0.1; b.update(t, 0.1, {}); } };
+    run(30);
+    for (const s of STATES) { actor.anim = s; actor.animStart = t; actor.animUntil = t + 1; run(3); }
+    return null;
+  } catch (e) { return { error: e.message }; }
+}
+
 const STATES = ['idle', 'walk', 'talk', 'wave', 'dance', 'sit', 'scared', 'highfive', 'lookup', 'yawn', 'stretch'];
 const out = process.stdout.write.bind(process.stdout);   // taken before the module can replace it
 
@@ -134,6 +157,14 @@ async function buildCheck(file, takenIds) {
           catch (e) { problems.push(`actor ${a.id}: animate('${s}') throws: ${e.message}`); break; }
         }
       }
+    }
+    // the real sim, as the book runs it (live 2026-10-17: a 'person' rig without the person's limbs threw
+    // every frame and froze every figure after it). Only once the rig itself is sound.
+    if (!problems.length) for (const a of actors) {
+      const r = await simThrows(a);
+      if (r?.skipped) { info.simSkipped = r.skipped.slice(0, 200); break; }
+      if (r?.error) problems.push(`actor ${a.id}: the book's sim throws when it moves and animates it: ${r.error}` +
+        (!a.rig.animate ? `. Without rig.animate the sim animates it as a person (makePerson's armL, armR, legL, legR, head, body): build it with makePerson, or give the rig its own animate(state, t, moving)` : ''));
     }
     // speech: each lines group is a German array (old shape) or { de: [...], en: [...] } of the same length
     // everything a character can say passes the same child-safe filter as the dialogues (viewer/dialogues.js)

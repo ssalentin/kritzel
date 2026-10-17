@@ -169,7 +169,7 @@ test('the world is an open book: things must stand on its pages (x -9..9, z -6.5
 
 test('speech lines: German arrays or { de, en } twins of the same length', async () => {
   const withLines = lines => thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(0.4, 1, 0.4), ctx.mat(1))); ctx.world.add(g);
-    return { actors: [{ id: 'x1', name: 'X', rig: { kind: 'person', g, say() {} }, lines: ${lines} }] };`);
+    return { actors: [{ id: 'x1', name: 'X', rig: { kind: 'blob', g, say() {}, animate() {} }, lines: ${lines} }] };`);
   assert.deepEqual((await buildCheck(withLines("{ greet: ['Hallo!'] }"))).problems, []);
   assert.deepEqual((await buildCheck(withLines("{ greet: { de: ['Hallo!', 'Hi!'], en: ['Hello!', 'Hi!'] } }"))).problems, []);
   assert.ok((await buildCheck(withLines("{ greet: { de: ['Hallo!', 'Hi!'], en: ['Hello!'] } }"))).problems.some(p => p.includes('twin')));
@@ -177,14 +177,14 @@ test('speech lines: German arrays or { de, en } twins of the same length', async
 
 test('actor move: one of walk, hop, crawl, fly, swim, climb', async () => {
   const mv = m => thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(0.4, 1, 0.4), ctx.mat(1))); ctx.world.add(g);
-    return { actors: [{ id: 'v1', name: 'Vogel', move: ${m}, rig: { kind: 'person', g, say() {} } }] };`);
+    return { actors: [{ id: 'v1', name: 'Vogel', move: ${m}, rig: { kind: 'blob', g, say() {}, animate() {} } }] };`);
   assert.deepEqual((await buildCheck(mv("'fly'"))).problems, []);
   assert.ok((await buildCheck(mv("'teleport'"))).problems.some(p => p.includes('move must be')));
 });
 
 test('a thing\'s own lines pass the child-safe filter too', async () => {
   const withLines = lines => thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(0.4, 1, 0.4), ctx.mat(1))); ctx.world.add(g);
-    return { actors: [{ id: 'x1', name: 'X', rig: { kind: 'person', g, say() {} }, lines: ${lines} }] };`);
+    return { actors: [{ id: 'x1', name: 'X', rig: { kind: 'blob', g, say() {}, animate() {} }, lines: ${lines} }] };`);
   assert.deepEqual((await buildCheck(withLines("{ greet: { de: ['Ich mag Waffeln!'], en: ['I like waffles!'] } }"))).problems, []);
   assert.ok((await buildCheck(withLines("{ chat: { de: ['Du bist dumm!'], en: ['You are nice!'] } }"))).problems.some(p => p.includes('not right for children')));
   assert.ok((await buildCheck(withLines("{ chat: ['Hallo!', 'Ich hasse dich.'] }"))).problems.some(p => p.includes('not right for children')));
@@ -206,4 +206,14 @@ test('a branch or pole in a rig is flagged, a long body is not', async () => {
   const pencil = `const p = new ctx.THREE.Mesh(new ctx.THREE.CylinderGeometry(0.11, 0.11, 1.8), ctx.mat(2)); p.position.y = 0.9; g.add(p);`;
   for (const m of [bar, post]) assert.ok((await buildCheck(rig(m))).problems.some(p => p.includes('pole or branch')), m);
   assert.ok(!(await buildCheck(rig(pencil))).problems.some(p => p.includes('pole or branch')));
+});
+
+test('a rig that throws in the book\'s sim is caught (live 2026-10-17: person rig without limbs)', async () => {
+  const limbless = thing(`const g = new ctx.THREE.Group(), m = new ctx.THREE.Mesh(new ctx.THREE.CylinderGeometry(0.3, 0.3, 1.2), ctx.mat(1)); m.position.y = 0.6; g.add(m); ctx.world.add(g);
+    const rig = { kind: 'person', g, say() {} };
+    return { actors: [{ id: 'zylinder', name: 'Zylinder', rig: { ...rig, animate: rig.animate } }] };`);
+  const p = (await buildCheck(limbless)).problems;
+  assert.ok(p.some(x => x.includes("the book's sim throws") && x.includes('makePerson')), p.join('\n'));
+  const person = thing(`const r = ctx.makePerson({ shirtColor: 0x3366cc }); return { actors: [{ id: 'paul', name: 'Paul', rig: r }] };`);
+  assert.deepEqual((await buildCheck(person)).problems, []);
 });
