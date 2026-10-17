@@ -228,6 +228,7 @@ async function buildCheck(file, takenIds) {
     }
     // light (the engine's light contract): one object or a list of { kind, object3D, color, intensity, range, flicker }
     const lights = r.light == null ? [] : [].concat(r.light);
+    info.lights = lights.map(l => ({ kind: l?.kind, glows: !!l?.object3D?.isObject3D }));   // a luminous drawing must have one
     for (const l of lights) {
       if (!['sun', 'moon', 'lamp'].includes(l?.kind)) { problems.push(`light.kind must be 'sun', 'moon' or 'lamp' (got ${JSON.stringify(l?.kind)})`); continue; }
       if (l.object3D != null && !l.object3D.isObject3D) problems.push(`${l.kind} light: object3D must be a mesh or group of this thing`);

@@ -174,6 +174,8 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
       // solid blobs (Sebastian: 'always solid blobs'): a drawing of 4+ parts built almost all from spheres and boxes
       // gets one fix call for real silhouettes, on the first pass only: spheres are often right (a snowman, grapes, a
       // caterpillar of balls), so after a fix whatever passes the other checks is taken. Not for a draft (speed)
+      // the glow is a look, not correctness: asked for once, then taken (a candle must not vanish over a missing glow)
+      if (!problems.length && !fixModel) problems.push(...unlit(code, info));
       if (!problems.length && !fixModel && (!DRAFT_MODEL || model === MODEL)) problems.push(...blobs(code, info));
       if (!problems.length && extra) problems.push(...extra(info));
     }
@@ -247,6 +249,20 @@ export function againInBook(listed, existing) {
   // the list's in_book counts only when the places agree it is the same sheet: it knows the book's things only by
   // their descriptions, so a new 'bird with spread wings' can come back as the book's Vogel
   return same ? [...new Set([...named, ...best.map(q => q.e)])] : [];
+}
+
+// a drawing that gives light (by its name or what it shows) must declare light with its glowing part as object3D, so the
+// viewer can make it glow (Sebastian: candles, lamps, lanterns, fire, sun, moon, stars). Not a starfish or a sunflower
+const LUMINOUS = /(?:^|[\s-])(?:kerzen?|candles?|lampe|lamp|laterne|lantern|feuer|fire|lagerfeuer|campfire|fackel|torch|taschenlampe|flashlight|leuchtturm|lighthouse|sonne|sun|mond|moon|sterne?|stars?|sternchen)(?:$|[\s-.,!])/i;
+const NOT_LUMINOUS = /seestern|starfish|sonnenblume|sunflower|sonnenbrille|sunglasses|sonnenschirm|parasol/i;
+export function unlit(code, info) {
+  const name = code.match(/\bmeta\s*=\s*\{[^}]*?\bname:\s*['"]([^'"]+)['"]/)?.[1] || '', drawing = code.match(/drawing:\s*['"]([^'"]*)['"]/)?.[1] || '';
+  // by its name, or by what the drawing is (the head of its description: 'two candles, ...'), not by a detail in it
+  // ('a gold star medal', 'a creature with a star on top', 'a fire rescue boat' are not lights)
+  const head = /^\s*(?:a|an|the|one|two|three|four|\d+)?\s*(?:[\w-]+\s+){0,2}?(?:candles?|lamps?|lanterns?|fires?|campfire|torch(?:es)?|flashlight|lighthouse|sun|moon|stars?)(?=\s*(?:$|[,.;]|with\b|and\b|on\b|in\b|that\b|labelled\b|glowing\b|shining\b))/i;
+  const luminous = (LUMINOUS.test(` ${name} `) || head.test(drawing)) && !NOT_LUMINOUS.test(`${name} ${drawing}`);
+  if (!luminous || (info?.lights || []).some(l => l.glows)) return [];
+  return ['it is a drawing that gives light: return light ({ kind: \'sun\' | \'moon\' | \'lamp\', object3D: the glowing part, color, intensity }) with the glowing mesh (the flame, the bulb, the sun disc, the star) as object3D and an emissive material'];
 }
 
 // 14 of 219 archived modules: giraffes, parrots, a hippo of spheres and boxes
