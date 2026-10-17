@@ -465,11 +465,12 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   }
 
   // one figure's error must not freeze the others: skip that figure (it stands still), report it once
-  const failed = new Set();
+  // (failures() lists them: the generate check rejects a rig whose figure throws here)
+  const failed = new Map();
   function guarded(a, fn) {
+    if (failed.has(a)) return;
     try { fn(); } catch (e) {
-      if (failed.has(a)) return;
-      failed.add(a);
+      failed.set(a, e.message);
       console.error(`${a.file ?? a.id}: ${a.id} skipped: ${e.message}`);
     }
   }
@@ -595,6 +596,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
       }
     },
     snapshot() { return Object.fromEntries(actors.map(a => [a.id, snapshotOf(a)])); },
+    failures: () => [...failed].map(([a, message]) => ({ id: a.id, file: a.file, message })),
     update(t, dt, { cover = 0, birdsLow = false, night = 0, lamps = [], weather = {}, perches = [], water = [] } = {}) {
       envNow = { perches, water };
       now = t; nightNow = night; lampsNow = lamps;
@@ -663,7 +665,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         // a dialogue is on: nobody next to the two talks over them
         if (stage && now < stage.until && p.a !== stage.a && p.a !== stage.b &&
           Math.hypot(p.a.pos.x - (stage.a.pos.x + stage.b.pos.x) / 2, p.a.pos.z - (stage.a.pos.z + stage.b.pos.z) / 2) < 3.5) continue;
-        p.a.rig.say(p.text); p.a.sayUntil = now + p.dur;
+        guarded(p.a, () => { p.a.rig.say(p.text); p.a.sayUntil = now + p.dur; });
       }
 
       separate(dt);
