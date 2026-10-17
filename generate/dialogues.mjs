@@ -21,6 +21,9 @@ export const POOL_FALLBACK = process.env.KRITZEL_DIALOGUE_FALLBACK || 'claude-ha
 const POOL_MAX = 36;
 // quests in the book at once (the sim runs one at a time)
 const QUESTS = 2, QUEST_HOURS = +process.env.KRITZEL_QUEST_HOURS || 3;
+// what the sim runs today (studio.world, 15:51): quests a figure has, of kind help or wait. bring needs a thing a
+// figure can carry (QA: a 3.3-wide box can't be), visit is not run yet: both come back when the sim does them
+export const QUEST_KINDS = (process.env.KRITZEL_QUEST_KINDS || 'help,wait').split(',');
 
 const STR = `['"]([^'"]+)['"]`, PLAIN = `(?:\\s*\\w+:\\s*(?:'[^']*'|"[^"]*"|[\\w.-]+)\\s*,)*?`;
 
@@ -59,7 +62,7 @@ const WEATHER = ['rain', 'snow', 'rainbow', 'lightning'];
 const SYSTEM = `You write the characters of Kritzel, a living pop-up book of figures children drew on paper: who each one is, and short dialogues between them.
 Reply with JSON only: { "personas": { <actor id>: { "favourite": <name> or null, "likes": [<name>, ...], "fears": [<name>, ...], "hobby": "collect" | "guard" | "nap" | "follow" | "wander", "lines": { "de": [...], "en": [...] } } }, "quests": [ <quest>, ... ], "dialogues": [ { "between": [nameA, nameB], "when": { ... } (optional), "end": "stroll" | "dance" | "tag" | "look" | null, "turns": [ { "who": nameA or nameB, "de": German line, "en": English line } ] } ] }.
 Personas: only for the figures asked for. Build each from what its drawing shows and from the things and figures around it in the book: its favourite place or thing (the centre of its attention), up to 3 it likes, up to 2 it is a little afraid of (gently: a cat and water, a mouse and the cat), a hobby (collect: picks up small things; guard: stays by its favourite; nap: rests at its favourite; follow: walks after one it likes; wander: roams), and 2 or 3 typical lines, the same in German and English. Every <name> is exactly one of the names listed.
-Quests: only as many as asked for. A quest is a little world event a figure or a thing has, and everyone nearby notices, talks about it and helps: { "who": <name or actor id of the figure or thing that has it>, "title": { "de", "en" }, "start": { "de", "en" } (its first line, e.g. "Aua, mein Zahn!"), "solve": { "kind": "help" | "bring" | "visit" | "wait", "what": <name of a thing in the book> (bring only; null for any small thing; never a thing that is not in the book), "at": <name of a thing> (visit only), "when": "night" | "sun" | "rain" (wait only) }, "helpers": [<name>, ...] (up to 3, who would help first: those who like it), "effect": "dim" (optional, only when the sun or a sky thing is sad and its light should dim until it is cheered up), "lines": { "notice": { "de": [2-3], "en": [2-3] } (what the others say when they notice, e.g. "Was hat der Hai denn?"), "help": { "de": [2-3], "en": [2-3] } (what the helpers say), "solved": { "de", "en" }, "thanks": { "de", "en" } } }. Kind and gentle: a lost thing, a wish, a sad mood that cheering up fixes, nothing scary.
+Quests: only as many as asked for, each one a figure has, of kind ${QUEST_KINDS.join(' or ')}. A quest is a little world event a figure has, and everyone nearby notices, talks about it and helps: { "who": <name or actor id of the figure or thing that has it>, "title": { "de", "en" }, "start": { "de", "en" } (its first line, e.g. "Aua, mein Zahn!"), "solve": { "kind": "help" | "bring" | "visit" | "wait", "what": <name of a thing in the book> (bring only; null for any small thing; never a thing that is not in the book), "at": <name of a thing> (visit only), "when": "night" | "sun" | "rain" (wait only) }, "helpers": [<name>, ...] (up to 3, who would help first: those who like it), "effect": "dim" (optional, only when the sun or a sky thing is sad and its light should dim until it is cheered up), "lines": { "notice": { "de": [2-3], "en": [2-3] } (what the others say when they notice, e.g. "Was hat der Hai denn?"), "help": { "de": [2-3], "en": [2-3] } (what the helpers say), "solved": { "de", "en" }, "thanks": { "de", "en" } } }. Kind and gentle: a lost thing, a wish, a sad mood that cheering up fixes, nothing scary.
 Dialogues: 3 to 5 turns, the two take turns, every line answers the one before, and together they make a tiny scene that fits these two: their personas, their drawings, and the moment. "when" says when a dialogue fits, only with these keys: "near": <name> (they talk about a thing or figure next to them), "carrying": true (one of them carries something), "night": 0 to 1 (fits from this darkness on), "weather": "rain" | "snow" | "rainbow" | "lightning", "new": <name of a thing> (it just arrived in the book). A "when" names one moment only (one key), so it fits as soon as that moment comes. No "when" means any time; most dialogues have none. Lines are short (at most 60 characters), warm, playful and right for small children: no violence, no insults, nothing scary beyond a friendly "boo". German first, natural for children; "en" is short child-friendly English, not a word-for-word copy. In "between" and "who" use the figures' names (not their actor ids). They all live on the open pages of a big pop-up book: when a line mentions where they are, it is the book or its pages, never an island.`;
 
 // model text → the agreed shape, or left out: unknown refs, hobbies and when keys are dropped, every line passes safeLine
@@ -87,8 +90,9 @@ export function cleanWhen(w, refs, thingNames) {
 // what the sim runs, every line passes safeLine (a line pair needs both languages)
 const KINDS = ['help', 'bring', 'visit', 'wait'], WAITS = ['night', 'sun', 'rain'];
 const SKY = /sonne|sun|mond|moon|stern|star|wolke|cloud|himmel|sky|regenbogen|rainbow/i;
-export function cleanQuest(q, refs, thingNames, describe = () => '') {
+export function cleanQuest(q, refs, thingNames, describe = () => '', figures = null, kinds = QUEST_KINDS) {
   if (!q || typeof q !== 'object' || typeof q.who !== 'string' || !refs.has(q.who.toLowerCase())) return null;
+  if (figures && !figures.has(q.who.toLowerCase())) return null;            // a thing's quest: not run by the sim yet
   const pair = x => x && safeLine(x.de, 'de') && safeLine(x.en, 'en') ? { de: x.de, en: x.en } : null;
   const lines = x => {
     const de = (Array.isArray(x?.de) ? x.de : []).filter(l => safeLine(l, 'de')).slice(0, 3), en = (Array.isArray(x?.en) ? x.en : []).filter(l => safeLine(l, 'en')).slice(0, 3);
@@ -97,7 +101,7 @@ export function cleanQuest(q, refs, thingNames, describe = () => '') {
   };
   const thing = x => typeof x === 'string' && thingNames.has(x.toLowerCase()) ? x : null;
   const title = pair(q.title), start = pair(q.start), s = q.solve || {};
-  if (!title || !start || !KINDS.includes(s.kind)) return null;
+  if (!title || !start || !KINDS.includes(s.kind) || !kinds.includes(s.kind)) return null;
   const solve = { kind: s.kind };
   if (s.kind === 'bring') {                                               // null: any small thing; a thing not in the book
     if (s.what != null && !thing(s.what)) return null;                    // (a lost bandage) can't be brought: no quest
@@ -164,9 +168,10 @@ ${want.length ? `Write personas for: ${want.map(c => c.id).join(', ')}.` : 'Ever
   try { j = JSON.parse(r.text.slice(r.text.indexOf('{'), r.text.lastIndexOf('}') + 1)); } catch { /* unusable reply: keep what we had */ }
   const personas = { ...kept };
   for (const c of want) { const p = cleanPersona(j.personas?.[c.id], refs); if (p) personas[c.id] = p; }
+  const figureRefs = new Set(cast.flatMap(c => [c.name, c.id]).map(x => x.toLowerCase()));
   const describe = n => [...cast, ...things].find(x => [x.name, x.id].some(y => y && y.toLowerCase() === n.toLowerCase()))?.drawing || '';
   const quests = [...keptQuests];
-  for (const q of (Array.isArray(j.quests) ? j.quests : []).slice(0, wantQuests)) { const c = cleanQuest(q, refs, thingNames, describe); if (c && !quests.some(x => x.who === c.who)) quests.push({ ...c, made_at: new Date().toISOString() }); }
+  for (const q of (Array.isArray(j.quests) ? j.quests : []).slice(0, wantQuests)) { const c = cleanQuest(q, refs, thingNames, describe, figureRefs); if (c && !quests.some(x => x.who === c.who)) quests.push({ ...c, made_at: new Date().toISOString() }); }
   const names = new Set(cast.map(c => c.name));
   // the viewer matches figures by name: an actor id written instead is put back to its name
   const nameOf = Object.fromEntries(cast.map(c => [c.id, c.name])), named = n => nameOf[n] && !names.has(n) ? nameOf[n] : n;
