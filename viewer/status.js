@@ -155,9 +155,10 @@ export function createStatus({ THREE, scene, el, world, banner }) {
       const was = prevCap;
       prevCap = c.alive ? c.state : 'dead';
       if (was && was !== prevCap && ['camera-off', 'no-camera', 'dead'].includes(was) && ['watching', 'moving'].includes(prevCap)) connectedAt = next.now;
-      // a drawing seen just now: stand it on the island at once (not old ones from before the page loaded)
-      const last = c.last;
-      if (Array.isArray(last?.box) && !lights.has(last.frame) && next.now - last.at < 30 && st !== null) addLight(last);
+      // a drawing seen just now: its light comes once generate has recognised something in it (Sebastian,
+      // 2026-10-17: no light for a shadow or a nudged sheet), not when capture merely noticed a change
+      const last = c.last, named = ng.frame === last?.frame && ng.seen?.length > 0;
+      if (Array.isArray(last?.box) && named && !lights.has(last.frame) && next.now - last.at < 30 && st !== null) addLight(last);
       // its thing has been built (or nothing could be made of it): the light fades
       if (['new', 'changed', 'failed'].includes(g.state) && g.frame) retire(g.frame);
       // nothing new after all (a nudged sheet, a shadow): generate says so (triage 'none' → idle, or
