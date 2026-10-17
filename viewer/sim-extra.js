@@ -571,6 +571,7 @@ export function tickQuests(actors, api) {
   let solved = false;
   if (q.solve.kind === 'help' && here.length >= 2) solved = true;
   // a wait quest is solved when its condition comes true: one already true at the start does not count
+  if (q.solve.kind === 'wait' && aq.waitHeld && !waitHolds(q.solve, api)) aq.waitHeld = false;   // it went away: a later change counts
   if (q.solve.kind === 'wait' && !aq.waitHeld && waitHolds(q.solve, api)) solved = true;
   if (!solved) return;
   say(giver, questLine(q.lines?.solved), 3.2);
