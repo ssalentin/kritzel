@@ -378,6 +378,16 @@ export async function movePaperAlong(dir, upTo, { thingsDir, reportsDir }) {
 // the cast changed: refresh the pool of generated dialogues in the background (never waited on);
 // if it changes again meanwhile, one more round follows
 let poolBusy = false, poolAgain = false;
+// the dialogue pool was made for another cast (or is missing): a restart during a pool call leaves it so
+export async function poolIsStale(thingsDir) {
+  const { castOf } = await import('./dialogues.mjs');
+  const want = [...new Set(castOf(thingsDir).map(c => c.name))].sort();
+  if (want.length < 2) return false;                            // no pool is made for fewer than two
+  let have = null;
+  try { have = JSON.parse(readFileSync(join(thingsDir, 'dialogues.json'), 'utf8')).cast; } catch { /* missing */ }
+  return JSON.stringify(have) !== JSON.stringify(want);
+}
+
 function refreshDialogues(opts) {
   if (poolBusy) { poolAgain = true; return; }
   poolBusy = true;
@@ -422,6 +432,7 @@ async function watch(dir, opts) {
   let last = frames.findLast(done) || null;
   if (!last && !readdirSync(opts.reportsDir).some(f => f.endsWith('.json'))) last = frames.at(-1) || null;
   log(`watching ${dir} → ${opts.thingsDir} (model ${MODEL}, fallback ${FALLBACK_MODEL}); handled up to ${last || '(nothing)'}`);
+  if (await poolIsStale(opts.thingsDir).catch(() => false)) { log('dialogues: the pool is for another cast: making it again'); refreshDialogues(opts); }
   // the check runs every actor through the book's sim, which needs rot-js (a generate/ dependency)
   try { import.meta.resolve('rot-js'); } catch { log('rot-js is missing (run npm ci in generate/): the check will not run things in the sim'); }
   const sleep = ms => new Promise(ok => setTimeout(ok, ms));
