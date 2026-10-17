@@ -47,3 +47,29 @@ test('a new thing whose name is in the book already gets a number, in its meta a
     assert.ok(!/name:\s*'Schnecke'/.test(code) && /name:\s*'Schnecke 2'/.test(code));
   } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a drawing of spheres gets one fix call for silhouettes, then is taken as it is (a snowman is spheres)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kritzel-blobs-'));
+  try {
+    for (const d of ['things', 'reports']) mkdirSync(join(dir, d));
+    const frame = join(dir, '20261017-120002.jpg');
+    execFileSync('convert', ['-size', '640x480', 'xc:white', frame]);
+    const snowman = `// parts: base = a big ball\n// parts: middle = a smaller ball on it\n// parts: head = a small ball on top\n// parts: buttons = three small dots down the front
+export const meta = { name: 'Schneemann', drawing: 'a snowman of three balls', paper: { x: 0.5, y: 0.5 } };
+export function build(ctx) {
+  const { THREE, world, mat, shadowAll } = ctx;
+  const g = new THREE.Group();
+  for (const [r, y] of [[0.6, 0.6], [0.45, 1.4], [0.3, 2.0]]) { const b = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), mat(0xffffff)); b.position.y = y; g.add(b); }
+  for (const y of [1.3, 1.45, 1.6]) { const d = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), mat(0x222222)); d.position.set(0, y, 0.44); g.add(d); }
+  shadowAll(g); world.add(g);
+  return { actors: [], obstacles: [{ x: 0, z: 0, r: 0.6 }], spots: [] };
+}`;
+    writeFileSync(join(dir, 'reply.txt'), `### NEW\n${snowman}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const r = await processFrame(frame, { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports'), box: [100, 100, 200, 200] });
+    assert.equal(r.written[0]?.name, 'Schneemann', JSON.stringify(r.rejected));
+    const fixes = r.calls.filter(c => c.fix);
+    assert.equal(fixes.length, 1);
+    assert.match(fixes[0].fixing.join(' '), /spheres and boxes/);
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
