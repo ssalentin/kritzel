@@ -69,6 +69,7 @@ def changelog(n=60):
 CAMERA_PORT = int(os.environ.get("CAMERA_PORT", "8766"))   # where camera_server.py (or replay_camera.py) listens
 STATUS = ROOT / "frames" / "status"
 PLACEMENT_LOCK = threading.Lock()
+SITUATION = ROOT / "frames" / "status" / "situation.json"   # what the sim reports for the dialogue writer (PUT /api/situation)
 MODE_FILE = ROOT / "viewer" / "things" / "mode.json"     # {"mode": "add" | "switch"}; missing = add (issue #16)
 NEWWORLD_LOCK, NEWWORLD_GAP_S = threading.Lock(), 10
 last_newworld = [0.0]
@@ -252,6 +253,28 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_PUT(self):
         if urllib.parse.urlsplit(self.path).path == "/api/placement":
             return self.placement()
+        if urllib.parse.urlsplit(self.path).path == "/api/situation":
+            # what the sim reports: who carries what, what is in the air, the night, the weather. Small and checked
+            # (a viewer on the page writes it; the dialogue writer reads it from frames/status/situation.json)
+            try:
+                n = int(self.headers.get("Content-Length", ""))
+                assert 0 <= n <= 4096
+                body = json.loads(self.rfile.read(n))
+                assert isinstance(body, dict)
+                situ = {
+                    "carrying": [{"who": str(x["who"])[:80], "what": str(x["what"])[:80]} for x in body.get("carrying", [])[:8]],
+                    "thrown": [{"who": str(x["who"])[:80], "what": str(x["what"])[:80], "to": str(x["to"])[:80]} for x in body.get("thrown", [])[:8]],
+                    "night": min(1.0, max(0.0, float(body.get("night", 0)))),
+                    "weather": [str(k)[:20] for k in body.get("weather", [])[:6]],
+                    "at": time.time(),
+                }
+            except (ValueError, AssertionError, KeyError, TypeError):
+                return self.json({"error": "expected {carrying, thrown, night, weather}"}, 400)
+            SITUATION.parent.mkdir(parents=True, exist_ok=True)
+            tmp = SITUATION.with_name(".situation.json.tmp")
+            tmp.write_text(json.dumps(situ) + "\n")
+            tmp.replace(SITUATION)
+            return self.json(situ)
         if urllib.parse.urlsplit(self.path).path == "/api/mode":
             try:
                 n = int(self.headers.get("Content-Length", ""))
