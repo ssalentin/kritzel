@@ -512,7 +512,11 @@ class Detector:
             self.fit_due = False
             spell, base, baseline = self.spell, self.base, self.baseline
             def work():
-                self.lined[spell] = line_up(thumb, base, baseline, over=lambda: self.spell != spell)
+                try:
+                    self.lined[spell] = line_up(thumb, base, baseline, over=lambda: self.spell != spell)
+                except Exception as e:        # never leave the frame waiting for a verdict: a new sheet, then
+                    print(f"lining up the sheet failed: {e!r}", file=sys.stderr, flush=True)
+                    self.lined[spell] = None
             self.lining = spell
             if self.THREADED:
                 self.worker = threading.Thread(target=work, daemon=True)

@@ -76,6 +76,13 @@ class Far(unittest.TestCase):
         a, dx, dy, _ = r
         self.assertLessEqual(abs(dx - 180) + abs(dy - 4), 6)
 
+    def test_an_empty_table_after_a_sheet_and_back(self):
+        # live replay 2026-10-17: lining up against an empty table (no lines at all) raised in numpy
+        empty = table(seed=5)
+        self.assertIsNone(c.far(sheet(), empty))
+        self.assertIsNone(c.far(empty, sheet()))
+        self.assertIsNone(c.line_up(sheet(), empty, c.envelope(empty)))
+
     def test_a_different_sheet_is_not_the_old_one_moved(self):
         self.assertIsNone(c.far(sheet(seed=7, x0=50, y0=24, x1=270, y1=176), sheet(seed=2)))
 
