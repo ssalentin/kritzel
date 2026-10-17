@@ -9,6 +9,8 @@
 //   crop to changed_box + margin, downscale → ONE claude -p call (no tools, image inline) that
 //   answers NOTHING, UNCLEAR: …, or the module → static + real build() checks (< 1 s) → atomic
 //   write to things/. A failed check gets one retry, then one try on the fallback model.
+//   Each module is checked and written as soon as it is complete in the streamed reply; on a new
+//   sheet with more than two drawings, up to HELPERS parallel calls write some of them.
 // Every frame leaves <reports>/<frame>.json: the reply, checks, timings, cost. --render also
 // renders each written thing in the real viewer (headless) to <reports>/<frame>-<thing>-front.png.
 import { readFileSync, writeFileSync, renameSync, existsSync, readdirSync, mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
@@ -111,11 +113,25 @@ export const nowOf = x => (x && kid(x.den, x.the)) || null;
 export const whyOf = body => { try { const j = JSON.parse(body.match(/^KIDS:\s*(\{.*\})\s*$/m)?.[1]); return kid(j.de, j.en); } catch { return null; } };
 
 // one module: check it; on failure ask for a fix (same model, then the fallback). → { code, model } | { problems }
-async function finish({ body, model, frame, images, takenIds, keepIds, oldName = null, calls }) {
+// fix calls run alongside each other on a busy sheet: at most FIX_SLOTS at once (the plan is shared)
+const FIX_SLOTS = 2;
+let fixesRunning = 0;
+const fixQueue = [];
+async function fixSlot(fn) {
+  if (fixesRunning >= FIX_SLOTS) await new Promise(ok => fixQueue.push(ok));
+  fixesRunning++;
+  try { return await fn(); } finally { fixesRunning--; fixQueue.shift()?.(); }
+}
+const onlyHolds = problems => problems.length > 0 && problems.every(p => /^(holds|heldBy) names actor/.test(p));
+
+// deferHolds: when the only problem is a held creature not written yet, say so at once instead of
+// asking for a fix (which would just drop the hold)
+async function finish({ body, model, frame, images, takenIds, keepIds, oldName = null, calls, deferHolds = false }) {
   let code = body.split('\n').filter(l => !l.startsWith(MARK)).join('\n').trim(), problems;
   for (const fixModel of [null, MODEL, FALLBACK_MODEL]) {
     if (fixModel) {
-      const r = await oneShot({ system: SYSTEM, text: fixText({ problems, code }), images: images.slice(-1), model: fixModel });   // the area now
+      if (deferHolds && onlyHolds(problems)) return { problems, held: true };
+      const r = await fixSlot(() => oneShot({ system: SYSTEM, text: fixText({ problems, code }), images: images.slice(-1), model: fixModel }));   // the area now
       calls.push({ model: fixModel, seconds: +r.seconds.toFixed(1), cost: r.cost, fix: true, fixing: problems });
       code = stripFences(r.text).replace(/^###.*\n/, '');
       model = fixModel;
@@ -138,6 +154,8 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
 }
 
 // ---------- one settled frame ----------
+// a new sheet with more than two drawings is written by the main call and up to HELPERS parallel calls
+const HELPERS = 3, PARALLEL = process.env.KRITZEL_PARALLEL !== '0';
 export async function processFrame(frame, { thingsDir, reportsDir, box = null, previous = null, bigChange = false, render = false, newSheet = false, onProgress = () => {} }) {
   mkdirSync(reportsDir, { recursive: true });
   const name = basename(frame).replace(/\.\w+$/, '');
@@ -152,33 +170,138 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
     const files = new Set(existing.map(t => t.file.replace(/\.js$/, '')));
     let said = { seen: [], begun: 0 }, told = '';
     const tell = p => { const k = JSON.stringify(p); if (k !== told) { told = k; try { onProgress(p); } catch { /* narration never breaks a frame */ } } };
-    const onText = text => { said = narrate(text); tell({ seen: seenOf(said.seen), now: nowOf(said.seen[said.begun - 1]) }); };
-    const r = await oneShot({ system: SYSTEM, text: userText({ existing, place, height, takenIds: existing.flatMap(t => t.ids), hasBefore: !!before, newSheet }), images, onText });
+    const numbered = secs => { let n = 0; for (const x of secs) if (x.kind === 'NEW' || x.kind === 'UPDATE') x.n = n++; return secs; };   // n: its entry in SEEN
+    const ask = userText({ existing, place, height, takenIds: existing.flatMap(t => t.ids), hasBefore: !!before, newSheet });
+
+    // A NEW/UPDATE section is checked (and fixed if needed) as soon as it is complete in the stream (the
+    // next ### header has begun), alongside the others; only writing it is one at a time, so ids and file
+    // names stay collision-free. A thing that holds a creature written later (a branch and its sloth) waits
+    // until the end.
+    const renders = [], waiting = [], pending = [], sent = new Set();
+    let lock = Promise.resolve(), halted = false;
+    const takenNow = old => [...existing.filter(t => t !== old).flatMap(t => t.ids), ...report.written.flatMap(w => w.ids)];
+    const write = (s, last = false) => {
+      const job = (async () => {
+        const old = s.kind === 'UPDATE' ? existing.find(t => t.file === s.file) : null;
+        if (s.kind === 'UPDATE' && !old) { report.rejected.push({ kind: s.kind, file: s.file, problems: ['no such thing to update'] }); log(`${name}: UPDATE of unknown ${s.file} ignored`); return; }
+        tell({ seen: seenOf(said.seen), now: nowOf(said.seen[s.n]) });
+        const check = takenIds => finish({ body: s.body, model: MODEL, frame, images, takenIds, keepIds: old?.ids || [], oldName: old?.meta.name || null, calls: report.calls, deferHolds: !last });
+        const f = await check(takenNow(old));
+        const run = lock.then(() => commit(s, old, f, last, check));
+        lock = run.catch(() => {});                             // one failed write must not block the next ones
+        await run;
+      })().catch(e => {                                         // a failed fix call (timeout, limit) costs this one thing, not the watcher
+        report.rejected.push({ kind: s.kind, file: s.file, problems: [`not written: ${e.message.slice(0, 200)}`] });
+        log(`${name}: ${s.kind} ${s.file || ''} not written: ${e.message}`);
+      });
+      pending.push(job);
+      return job;
+    };
+    async function commit(s, old, f, last, check) {
+      // written meanwhile by a parallel section with the same actor id: check again against what is there now
+      if (f.code && [...f.code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].some(x => takenNow(old).includes(x[1]))) f = await check(takenNow(old));
+      const thingName = (f.code || s.body).match(/name:\s*['"]([^'"]+)['"]/)?.[1] || 'Ding';
+      if (!f.code && !last && onlyHolds(f.problems)) { waiting.push(s); return; }
+      if (!f.code) { report.rejected.push({ kind: s.kind, file: s.file, name: thingName, problems: f.problems }); log(`${name}: REJECTED ${s.kind} ${s.file || thingName}: ${f.problems.join('; ')}`); return; }
+      const base = old ? old.file.replace(/\.js$/, '') : freeName(slug(thingName), files);
+      files.add(base);
+      const file = base + '.js';
+      atomicWrite(join(thingsDir, file), f.code);
+      const pm = f.code.match(/paper:\s*\{\s*x:\s*([\d.]+),\s*y:\s*([\d.]+)/);
+      if (pm) { paper[file] = { x: +pm[1], y: +pm[2] }; writePaper(reportsDir, paper); }
+      const latency = +((Date.now() - settledAt) / 1000).toFixed(1);
+      const ids = [...f.code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]);
+      const made = kid(thingName, said.seen[s.n]?.name_en || thingName);
+      report.written.push({ kind: s.kind, file, name: thingName, model: f.model, latency, ids, ...(made && { made }), ...(f.warnings.length && { warnings: f.warnings }) });
+      log(`${name}: ${s.kind === 'UPDATE' ? 'UPDATED' : 'WROTE'} ${file} (${thingName}) by ${f.model}, ${latency}s after the frame settled`);
+      renders.push({ base, file, code: f.code });
+    }
+    // sections of the main reply: only those it owns (not given to a helper), and no UPDATE on a new sheet
+    const take = secs => {
+      for (const s of secs) {
+        if ((s.kind !== 'NEW' && s.kind !== 'UPDATE') || sent.has(s.n) || claimed.get(s.n) === 'helper') continue;
+        sent.add(s.n);
+        if (newSheet && s.kind === 'UPDATE') { report.rejected.push({ kind: s.kind, file: s.file, problems: ['a new sheet only adds new things'] }); continue; }
+        write(s);
+      }
+    };
+    const completeSections = text => {                        // everything before the last section header
+      const heads = [...text.matchAll(/^###\s*(NEW|UPDATE|REMOVE|UNCLEAR)\b/gm)];
+      if (heads.length < 2) return [];
+      try { return numbered(parseReply(text.slice(0, heads.at(-1).index))); } catch { return []; }
+    };
+
+    // A new sheet with many drawings: helpers write some of them in parallel calls, from the end of the
+    // SEEN list, while the main call writes from the start. When the main call begins one a helper has
+    // taken, everything after it is taken too: the main call stops there. At most HELPERS + 1 writing
+    // calls at once, plus up to FIX_SLOTS fix calls.
+    const claimed = new Map(), stop = new AbortController(), helpers = [];
+    const helper = async () => {
+      for (;;) {
+        if (halted) return;
+        let k = -1;
+        for (let i = said.seen.length - 1; i >= said.begun; i--) if (!claimed.has(i)) { k = i; break; }
+        if (k < 0) return;
+        claimed.set(k, 'helper');
+        const e = said.seen[k], others = said.seen.filter((_, i) => i !== k).map(x => x.de).join(', ');
+        try {
+          const h = await oneShot({ system: SYSTEM, images, text: `${ask}
+
+Several builders make this sheet at the same time. You build only this one drawing: ${e.de} (${e.en}). The others (${others}) are built by someone else: leave them out, but keep this one's actor id different from theirs. Reply with just its one ### NEW section, no SEEN line.` });
+          report.calls.push({ model: h.model, seconds: +h.seconds.toFixed(1), cost: h.cost, helper: e.de });
+          const sec = parseReply(h.text).find(x => x.kind === 'NEW');
+          if (!sec) { report.rejected.push({ kind: 'NEW', name: e.de, problems: ['the helper wrote no NEW section'] }); continue; }
+          sec.n = k; sent.add(k);
+          write(sec);                                  // checked while this helper takes the next one
+        } catch (err) { report.rejected.push({ kind: 'NEW', name: e.de, problems: [`helper call failed: ${err.message.slice(0, 200)}`] }); }
+      }
+    };
+    const onText = text => {
+      said = narrate(text);
+      tell({ seen: seenOf(said.seen), now: nowOf(said.seen[said.begun - 1]) });
+      for (let k = 0; k < said.begun; k++) if (!claimed.has(k)) claimed.set(k, 'main');
+      if ([...claimed].some(([k, who]) => who === 'helper' && k < said.begun)) stop.abort();   // the rest is the helpers'
+      if (newSheet && PARALLEL && said.seen.length > 2 && !helpers.length)
+        for (let i = 0; i < Math.min(HELPERS, said.seen.length - 1); i++) helpers.push(helper());
+      take(completeSections(text));
+    };
+    let r;
+    try { r = await oneShot({ system: SYSTEM, text: ask, images, onText, signal: stop.signal, timeoutMs: 6 * 60_000 }); }
+    catch (e) {
+      // the main call failed (timeout, limit, login): let what is already being written finish, start nothing
+      // new. If something got written, the frame counts as done (a retry would write it twice).
+      halted = true;
+      await Promise.allSettled(helpers);
+      await Promise.allSettled(pending);
+      for (const s of waiting.splice(0)) report.rejected.push({ kind: s.kind, file: s.file, problems: ['not written: the main call failed before the creature it holds was written'] });
+      if (!report.written.length) throw e;
+      report.mainError = e.message;
+      log(`${name}: the main call failed after ${report.written.length} thing(s) were written; not retrying: ${e.message}`);
+      return report;
+    }
     said = narrate(r.text);
     report.said = said.seen;
-    report.calls.push({ model: r.model, seconds: +r.seconds.toFixed(1), cost: r.cost });
+    report.calls.push({ model: r.model, seconds: +r.seconds.toFixed(1), cost: r.cost, ...(r.aborted && { stopped: 'the rest went to helpers' }) });
     report.reply = r.text.slice(0, 4000);
-    const sections = parseReply(r.text);
-    let n = 0;
-    for (const x of sections) if (x.kind === 'NEW' || x.kind === 'UPDATE') x.n = n++;   // its entry in SEEN
-    if (!sections.length) log(`${name}: nothing new (${r.seconds.toFixed(1)}s)`);
-    if (newSheet) {      // a new sheet only brings new things: nothing on the old island is rewritten or removed from it
-      for (const x of sections.filter(x => x.kind === 'UPDATE' || x.kind === 'REMOVE')) report.rejected.push({ kind: x.kind, file: x.file, problems: ['a new sheet only adds new things'] });
-      sections.splice(0, sections.length, ...sections.filter(x => x.kind === 'NEW' || x.kind === 'UNCLEAR'));
-    }
-    const renders = [];
+    const sections = r.aborted ? completeSections(r.text) : numbered(parseReply(r.text));
+    take(sections);
+    await Promise.all(helpers);
+    await Promise.all(pending);
+    for (const s of waiting.splice(0)) await write(s, true);   // their creatures are written now (or never will be)
+    if (!sections.length && !report.written.length) log(`${name}: nothing new (${r.seconds.toFixed(1)}s)`);
     // many removals at once is a new or moved sheet, not a child erasing: remove nothing and say so
-    const removes = sections.filter(s => s.kind === 'REMOVE');
+    const removes = newSheet ? [] : sections.filter(s => s.kind === 'REMOVE');
+    for (const s of newSheet ? sections.filter(s => s.kind === 'REMOVE') : []) report.rejected.push({ kind: s.kind, file: s.file, problems: ['a new sheet only adds new things'] });
     // a big change (new or moved sheet) never removes anything: that is newworld's job, the person decides
     if (removes.length && (bigChange || removes.length > 2)) {
       const why = bigChange ? 'a big change (new or moved sheet): nothing is removed then' : `${removes.length} removals in one frame: a new sheet? not removing`;
       for (const s of removes) report.rejected.push({ kind: s.kind, file: s.file, problems: [why] });
       log(`${name}: ${removes.length} REMOVE(s) refused: ${why}`);
-      sections.splice(0, sections.length, ...sections.filter(s => s.kind !== 'REMOVE'));
+      removes.length = 0;
     }
     for (const s of sections) {
       if (s.kind === 'UNCLEAR') { report.unclear.push(s.body); report.why ||= whyOf(s.body); log(`${name}: UNCLEAR ${s.body}`); continue; }
-      if (s.kind === 'REMOVE') {
+      if (s.kind === 'REMOVE' && removes.includes(s)) {
         // only with a before picture to compare; the file moves to frames/removed/, so a wrong removal is one mv away from undone
         const t = existing.find(x => x.file === s.file);
         // and only a thing that sits in the area that changed: one confusion (or "REMOVE bana.js" written on
@@ -192,28 +315,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
         delete paper[t.file]; writePaper(reportsDir, paper);
         report.removed.push({ file: t.file, kept: join(bin, `${name}-${t.file}`), why: s.body.slice(0, 200) });
         log(`${name}: REMOVED ${t.file} (erased from the paper; kept as ${join(bin, `${name}-${t.file}`)})`);
-        continue;
       }
-      const old = s.kind === 'UPDATE' ? existing.find(t => t.file === s.file) : null;
-      if (s.kind === 'UPDATE' && !old) { report.rejected.push({ kind: s.kind, file: s.file, problems: ['no such thing to update'] }); log(`${name}: UPDATE of unknown ${s.file} ignored`); continue; }
-      // ids of every other thing, including ones written earlier in this reply
-      const takenIds = [...existing.filter(t => t !== old).flatMap(t => t.ids), ...report.written.flatMap(w => w.ids)];
-      tell({ seen: seenOf(said.seen), now: nowOf(said.seen[s.n]) });
-      const f = await finish({ body: s.body, model: r.model, frame, images, takenIds, keepIds: old?.ids || [], oldName: old?.meta.name || null, calls: report.calls });
-      const thingName = (f.code || s.body).match(/name:\s*['"]([^'"]+)['"]/)?.[1] || 'Ding';
-      if (!f.code) { report.rejected.push({ kind: s.kind, file: s.file, name: thingName, problems: f.problems }); log(`${name}: REJECTED ${s.kind} ${s.file || thingName}: ${f.problems.join('; ')}`); continue; }
-      const base = old ? old.file.replace(/\.js$/, '') : freeName(slug(thingName), files);
-      files.add(base);
-      const file = base + '.js';
-      atomicWrite(join(thingsDir, file), f.code);
-      const pm = f.code.match(/paper:\s*\{\s*x:\s*([\d.]+),\s*y:\s*([\d.]+)/);
-      if (pm) { paper[file] = { x: +pm[1], y: +pm[2] }; writePaper(reportsDir, paper); }
-      const latency = +((Date.now() - settledAt) / 1000).toFixed(1);
-      const ids = [...f.code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]);
-      const made = kid(thingName, said.seen[s.n]?.name_en || thingName);
-      report.written.push({ kind: s.kind, file, name: thingName, model: f.model, latency, ids, ...(made && { made }), ...(f.warnings.length && { warnings: f.warnings }) });
-      log(`${name}: ${s.kind === 'UPDATE' ? 'UPDATED' : 'WROTE'} ${file} (${thingName}) by ${f.model}, ${latency}s after the frame settled`);
-      renders.push({ base, file, code: f.code });
     }
     if (render && renders.length) {   // after the writes, off the critical path, one at a time
       (async () => {
