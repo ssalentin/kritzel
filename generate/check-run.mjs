@@ -43,11 +43,12 @@ const out = process.stdout.write.bind(process.stdout);   // taken before the mod
 async function makeCtx() {
   const world = new THREE.Group();
   const mat = (color, opts = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.7, flatShading: true, ...opts });
-  const limb = (len, r, m) => {
-    const pivot = new THREE.Group();
-    const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(r, len - 2 * r, 6, 12), m);
-    mesh.position.y = -len / 2;
-    pivot.add(mesh);
+  const limb = (len, r, m) => {         // as world.js: two segments with an elbow/knee joint
+    const pivot = new THREE.Group(), elbow = new THREE.Group();
+    const seg = () => { const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(r, len / 2 - 2 * r, 6, 12), m); mesh.position.y = -len / 4; return mesh; };
+    elbow.position.y = -len / 2;
+    pivot.add(seg(), elbow); elbow.add(seg());
+    pivot.elbow = elbow;
     return pivot;
   };
   const rand = (s => () => (s = (s * 16807) % 2147483647) / 2147483647)(7);
