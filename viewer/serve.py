@@ -118,6 +118,17 @@ def public(path):
     return path in ("/viewer", "/worlds", "/scripts/camera_server.py") or path.startswith(("/viewer/", "/worlds/"))
 
 
+def solved_entries(items):
+    """Quests solved lately, { who, at }: a bad entry is dropped, the rest of the report still counts."""
+    out = []
+    for x in items[:8] if isinstance(items, list) else []:
+        try:
+            out.append({"who": str(x["who"])[:80], "at": float(x["at"])})
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
 def clean_choice(c):
     """Keep only known fields of a camera choice; a remote one must name a camera on a tailnet host."""
     kind = c.get("kind")
@@ -268,7 +279,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     "thrown": [{"who": str(x["who"])[:80], "what": str(x["what"])[:80], "to": str(x["to"])[:80]} for x in body.get("thrown", [])[:8]],
                     "night": min(1.0, max(0.0, float(body.get("night", 0)))),
                     "weather": [str(k)[:20] for k in body.get("weather", [])[:6]],
-                    "solved": [{"who": str(x["who"])[:80], "at": float(x["at"])} for x in body.get("solved", [])[:8]],
+                    "solved": solved_entries(body.get("solved", [])),
                     "at": time.time(),
                 }
                 client = str(body.get("client", ""))[:40]

@@ -541,6 +541,11 @@ const QUEST_LIMIT_S = 90, QUEST_COOLDOWN = [120, 240];
 let activeQuest = null, nextQuestAt = 0;
 const questCooldown = now => now + QUEST_COOLDOWN[0] + Math.random() * (QUEST_COOLDOWN[1] - QUEST_COOLDOWN[0]);
 const questLine = text => (lang() === 'en' ? text?.en : text?.de) ?? '';
+// does a wait quest's condition hold now: rain, night, or sun (no rain, night's low)
+const waitHolds = (solve, api) => {
+  const w = api.weather() || {}, night = api.night();
+  return solve.when === 'rain' ? w.rain === true : solve.when === 'night' ? night > 0.5 : solve.when === 'sun' ? !w.rain && night < 0.2 : false;
+};
 // the quests solved lately (their who strings): the dialogue writer replaces a quest when one is solved
 const solvedLog = [];
 export function solvedQuests() {
@@ -551,12 +556,15 @@ export function tickQuests(actors, api) {
   const { now, R, say, busy, weather, night } = api;
   const t = now();
   if (!activeQuest) {
-    const list = questPool();
-    if (!list.length || t < nextQuestAt || R() > 0.4) return;
+    if (t < nextQuestAt || R() > 0.4) return;
+    // only quests a figure can give, of the kinds that can be solved (help, wait); bring and visit wait for v1
+    const figureOf = q => actors.find(b => !b.hidden && (b.name === q.who || b.id === q.who));
+    const list = questPool().filter(q => ['help', 'wait'].includes(q.solve.kind) && figureOf(q));
+    if (!list.length) { nextQuestAt = t + 30; return; }
     const q = list[Math.floor(R() * list.length)];
-    const giver = actors.find(b => !b.hidden && (b.name === q.who || b.id === q.who));
-    if (!giver || giver.goal?.type === 'chase' || giver.goal?.type === 'flee') { nextQuestAt = t + 10; return; }
-    activeQuest = { q, giver, since: t, helpers: [] };
+    const giver = figureOf(q);
+    if (giver.goal?.type === 'chase' || giver.goal?.type === 'flee') { nextQuestAt = t + 10; return; }
+    activeQuest = { q, giver, since: t, helpers: [], waitHeld: waitHolds(q.solve, api) };
     say(giver, questLine(q.start), 3.2);
     busy(giver, null, 'talk', 3);
     const near = actors.filter(b => b !== giver && !b.hidden && b.kind !== 'squid' && Math.hypot(b.pos.x - giver.pos.x, b.pos.z - giver.pos.z) < 8);
@@ -581,7 +589,8 @@ export function tickQuests(actors, api) {
   const here = aq.helpers.filter(h => !h.hidden && Math.hypot(h.pos.x - giver.pos.x, h.pos.z - giver.pos.z) < 2.5);
   let solved = false;
   if (q.solve.kind === 'help' && here.length >= 2) solved = true;
-  if (q.solve.kind === 'wait' && (q.solve.when === 'rain' ? w.rain === true : q.solve.when === 'night' ? night() > 0.5 : q.solve.when === 'sun' ? !w.rain && night() < 0.2 : false)) solved = true;
+  // a wait quest is solved when its condition comes true: one already true at the start does not count
+  if (q.solve.kind === 'wait' && !aq.waitHeld && waitHolds(q.solve, api)) solved = true;
   if (!solved) return;
   say(giver, questLine(q.lines?.solved), 3.2);
   here.forEach((h, i) => say(h, questLine(q.lines?.thanks), 2.4, 0.8 + i * 0.4));
