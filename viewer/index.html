@@ -44,6 +44,15 @@
   #log h3 { margin: 0 0 6px; font-size: 15px; }
   #log .day { margin: 10px 0 2px; font-weight: 600; color: #557; }
   #log li { margin: 2px 0; } #log ul { margin: 0; padding-left: 18px; } #log code { color: #889; font-size: 11px; }
+  /* the build queue, top left: which things are being built (buildqueue.js) */
+  #bq { position: fixed; left: 16px; top: 60px; max-width: min(320px, calc(100vw - 32px)); box-sizing: border-box; padding: 6px 4px; z-index: 4;
+    background: #fffc; border-radius: 12px; box-shadow: 0 4px 14px #0002; }
+  #bq[hidden] { display: none; }
+  #bq .row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 5px 10px; transition: opacity 1s; }
+  #bq .row[data-state=done] { opacity: .75; }
+  #bq .name { font-size: 17px; font-weight: 600; color: #1d2a30; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  #bq .label { font-size: 14px; color: #5a4a2a; white-space: nowrap; flex: none; }
+  @media (max-width: 560px) { #bq { top: 12px; left: 12px; max-width: calc(100vw - 24px); } #bq .name { font-size: 15px; } }
   /* the live camera in a picture frame, bottom right (camframe.js): a wooden edge, the pipeline's words under it */
   #frame { position: fixed; right: 16px; bottom: 12px; width: min(24vw, 300px); box-sizing: border-box; padding: 10px 10px 8px; z-index: 5;
     background: linear-gradient(135deg, #d8b679, #a9773c); border-radius: 6px; box-shadow: 0 8px 20px #0005, inset 0 0 0 2px #f1dca455; font: inherit; }
@@ -111,6 +120,7 @@
 <div id="status" data-tone="ok"><span class="dot"></span><span class="text"></span><span class="gen" hidden>⚠ Generator aus</span></div>
 <div id="veil"><div><span class="pen">✏️</span> Leg los mit dem Malen!</div></div>
 <div id="hint">Tippe eine Figur an, um ihr mit der Kamera zu folgen · Esc beendet <span id="ver"></span></div>
+<div id="bq" hidden></div>
 <div id="frame" data-mode="live"><div class="pic"><div class="none"></div></div><div class="cap"><span class="txt"></span></div><button class="min" type="button" aria-label="Bild ein-/ausblenden"></button></div>
 <div id="card"></div>
 <div id="log" hidden></div>
@@ -134,6 +144,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { createMood } from './mood.js';
 import { createStatus } from './status.js';
 import { createCamFrame } from './camframe.js';
+import { createBuildQueue } from './buildqueue.js';
 import { GROUND } from './book.js';
 import { createStyle } from './style.js';
 import { t, lang, setLang, onLang } from './i18n.js';
@@ -403,8 +414,9 @@ newBtn.addEventListener('click', async e => {
 
 // what capture and generate are doing, and a glowing light where a new drawing will appear; the picture frame says the same
 const frame = createCamFrame(document.getElementById('frame'));
+const queue = createBuildQueue(document.getElementById('bq'));
 const status = createStatus({ THREE, scene, el: document.getElementById('status'), world: () => current,
-  banner: document.getElementById('arrive'), onView: (v, st) => frame.update(v, st) });
+  banner: document.getElementById('arrive'), onView: (v, st) => { frame.update(v, st); queue.update(st); } });
 
 const api = { THREE, scene, world, camera, controls, bubble, shadowAll, mood: lighting,
   reserved: () => status.reserved(), claimSpot: () => status.claimSpot(),
