@@ -143,7 +143,7 @@ export async function build(api, prevState = null) {
     if (e.light.length || e.weather.length || e.spots.some(s => s.kind !== 'food')) return;
     let pond = false; e.box.traverse(o => { if (o.userData?.zone) pond = true; });
     if (pond) return;
-    e.portable = { kind: 'portable', name: e.meta?.name, x: e.foot.x, z: e.foot.z, carrier: null };
+    e.portable = { kind: 'portable', name: e.meta?.name, x: e.foot.x, z: e.foot.z, r: Math.max(e.foot.hx, e.foot.hz), carrier: null };
     e.syncAt = { x: e.foot.x, z: e.foot.z };
     e.spots.push(e.portable);
   }

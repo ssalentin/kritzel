@@ -151,7 +151,8 @@ export function portable(a, g, api) {
   if (g.type === 'pick') {
     if (it.carrier) { a.goal = null; return; }
     // walk until touching it, then pick it up: the carrier is at the thing, not a cell or two away
-    if (Math.hypot(a.pos.x - it.x, a.pos.z - it.z) > 0.8) {
+    // (the thing's footprint keeps figures out of its middle: touching means reaching its edge)
+    if (Math.hypot(a.pos.x - it.x, a.pos.z - it.z) > 0.8 + (it.r ?? 0)) {
       const c = nearest(it.x, it.z, a);
       if (!c || !step(a, c.x, c.y)) a.goal = null;
       return;
