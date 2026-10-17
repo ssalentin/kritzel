@@ -60,7 +60,7 @@
   #frame[data-min="1"] { width: auto; padding: 4px; }
   #frame[data-min="1"] .min { position: static; }
   @media (max-width: 560px) { #frame { width: 34vw; right: 10px; bottom: 10px; padding: 6px; }
-    #frame .cap { font-size: 11px; } }
+    #frame .cap { font-size: 11px; } #status { max-width: calc(100vw - 34vw - 40px); } }
   #card { position: fixed; right: 16px; bottom: calc(min(24vw, 300px) * 0.75 + 84px); max-width: min(280px, calc(100vw - 32px)); display: none;
     background: var(--panel); border-radius: 10px; padding: 8px 12px; }
   @media (max-width: 560px) { #card { bottom: calc(34vw * 0.75 + 80px); } }
