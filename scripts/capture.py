@@ -13,7 +13,8 @@ When the settled sheet differs from the last one handed on, it writes
 
 No frame while something moves (a drawing hand), none when nothing changed. A small change
 counts once still for STILL_S ("drawn"); a large one (new sheet, moved paper, a resting hand)
-must stay still for BIG_S ("big-change"). For a drawing, the snapshot is fetched and checked
+must stay still for BIG_S ("big-change"), or only SHEET_S when the change is scattered all over
+the sheet, as a new sheet's is (a hand, its shadow or one big coloured area is one patch). For a drawing, the snapshot is fetched and checked
 while the still time runs (from EARLY_S on), so it's handed on as soon as STILL_S is up.
 
 For the viewer's status pill it keeps frames/status/capture.json up to date (state, since, beat,
@@ -22,6 +23,7 @@ white paper, cut out around it. Needs ffmpeg. Env: VIEWER (default
 http://127.0.0.1:8765), KRITZEL_ROOT (where camera.json and frames/ live).
 """
 import datetime
+import math
 import json
 import os
 import re
@@ -47,6 +49,9 @@ SHEET_INK = 600            # NEW inky thumb px that make a big change a new shee
 EDGE = 10                # thumb px at the frame's edge that never count (the table shows there when the paper slides)
 BIG = 0.04               # share changed that is a big change, not drawing
 STILL_S, BIG_S, FPS = 1.2, 8.0, 8
+TURN, REACH = 6, 40      # a sheet turned up to TURN degrees and slid up to REACH thumb px (×6 at 1080p) is still the same sheet
+SHEET_S, SCATTER, SPAN = 3.0, 0.6, 0.5   # a big change whose biggest patch is under SCATTER of it, spanning over
+                                        # SPAN of the picture: a new sheet, handed on after SHEET_S
 EARLY_S = 0.3            # into a still spell: look what's new, and fetch the snapshot of a drawing already
 SHRINK = f"format=gray,scale=960:540:flags=area,erosion,erosion,scale={W}:{H}:flags=area"   # keeps thin lines
 MAX_BYTES = 20 << 20
@@ -190,6 +195,56 @@ def moved(thumb, d):
     return out
 
 
+def quarter(img):
+    """A quarter-size (W/4 × H/4) picture: 4×4 blocks averaged."""
+    w, h = W // 4, H // 4
+    return [sum(img[(4 * y + j) * W + 4 * x + i] for j in range(4) for i in range(4)) / 16 for y in range(h) for x in range(w)]
+
+
+def fit(thumb, base):
+    """How the sheet turned and slid since `base` when that is more than paper_shift can follow:
+    (degrees, dx, dy) with thumb at R(p - centre) + centre + d ≈ base at p. Searched coarsely on
+    quarter-size pictures, then refined at full size. Pure Python, about a second: only for big changes."""
+    def search(img, ref, w, h, step, angles, offsets):
+        pad = REACH // (W // w) + 8                     # room around the picture for every candidate
+        pw = w + 2 * pad
+        padded = [0.0] * (pw * (h + 2 * pad))           # 0 = the picture's median brightness
+        for y in range(h):
+            padded[(y + pad) * pw + pad:(y + pad) * pw + pad + w] = img[y * w:(y + 1) * w]
+        cx, cy, best = (w - 1) / 2, (h - 1) / 2, None
+        pts = [(x, y) for y in range(0, h, step) for x in range(0, w, step)]
+        vals = [ref[y * w + x] for x, y in pts]
+        for a in angles:
+            ca, sa = math.cos(math.radians(a)), math.sin(math.radians(a))
+            idx = [(round(sa * (x - cx) + ca * (y - cy) + cy) + pad) * pw + round(ca * (x - cx) - sa * (y - cy) + cx) + pad
+                   for x, y in pts]
+            for dx, dy in offsets:
+                o = dy * pw + dx
+                cost = sum(abs(padded[i + o] - v) for i, v in zip(idx, vals))
+                if best is None or cost < best[0]:
+                    best = (cost, a, dx, dy)
+        return best
+    r = REACH // 4
+    _, a, dx, dy = search(quarter(thumb), quarter(base), W // 4, H // 4, 3, range(-TURN, TURN + 1),
+                          [(x, y) for y in range(-r, r + 1) for x in range(-r, r + 1)])
+    _, a, dx, dy = search(thumb, base, W, H, 6, [a + k / 4 for k in range(-3, 4)],
+                          [(4 * dx + x, 4 * dy + y) for y in range(-3, 4) for x in range(-3, 4)])
+    return a, dx, dy
+
+
+def warp(thumb, a, d):
+    """`thumb` lined up with the picture it was compared with, after the sheet turned by a degrees
+    and slid by d (as fit() measured it): every pixel p takes thumb's value at R(p - centre) + centre + d."""
+    ca, sa = math.cos(math.radians(a)), math.sin(math.radians(a))
+    cx, cy, out = (W - 1) / 2, (H - 1) / 2, []
+    for y in range(H):
+        for x in range(W):
+            X = min(max(round(ca * (x - cx) - sa * (y - cy) + cx + d[0]), 0), W - 1)
+            Y = min(max(round(sa * (x - cx) + ca * (y - cy) + cy + d[1]), 0), H - 1)
+            out.append(thumb[Y * W + X])
+    return out
+
+
 class Detector:
     """Feed it snapshots; it returns (reason, changed_indices) when a new sheet has settled.
 
@@ -202,13 +257,17 @@ class Detector:
         self.base = baseline
         self.baseline = baseline and envelope(baseline)
         self.anchor = self.still_since = self.shift = self.moved_at = self.diff = self.measured = None
+        self.turn, self.fitted = 0, False    # degrees the sheet turned, and whether fit() lined it up
+        self.fit_due = False                 # a big change in this still spell that fit() should try
         self.spell = 0                       # counts still spells
+        self.patchy = None                   # (diff, scattered?) for the diff it was worked out for
 
     def feed(self, thumb, t):
         if self.anchor is None or len(new_marks(thumb, self.anchor)) >= NEW_PX:
             if self.anchor is not None:
                 self.moved_at = t
-            self.anchor, self.still_since, self.shift, self.diff = envelope(thumb, 1), t, None, None
+            self.anchor, self.still_since, self.shift, self.diff, self.turn = envelope(thumb, 1), t, None, None, 0
+            self.fitted = False
             self.spell += 1
             return None
         if t - self.still_since < EARLY_S:
@@ -220,25 +279,63 @@ class Detector:
                 self.shift = paper_shift(thumb, self.base)
                 aligned = moved(thumb, self.shift)
                 self.diff = inky(new_marks(aligned, self.baseline), aligned, self.baseline)
+                self.fit_due = self.big()     # doesn't line up by sliding: the same sheet turned, or slid further?
+        # (fit() takes a second or two: only once the big change has been still for STILL_S, so a hand
+        # pausing on the paper doesn't hold up the loop; a sheet waits SHEET_S anyway)
+        if self.fit_due and t - self.still_since >= STILL_S:
+            self.fit_due = False
+            a, dx, dy = fit(thumb, self.base)
+            aligned = warp(thumb, a, (dx, dy))
+            diff = inky(new_marks(aligned, self.baseline), aligned, self.baseline)
+            if len(diff) <= BIG * W * H:
+                self.turn, self.shift, self.diff, self.fitted = a, (dx, dy), diff, True
         diff = self.diff
         if len(diff) < NEW_PX:
             return None
         big = self.big()
-        if t - self.still_since < (BIG_S if big else STILL_S):
+        if t - self.still_since < (STILL_S if not big else SHEET_S if self.scattered() else BIG_S):
             return None
-        dx, dy = self.shift                  # report where the change is in the new picture
-        # how the sheet moved since the last one handed on (thumb px), if that could be measured:
-        # not for the first sheet, not for a new sheet, not when the best fit sits at the search's edge
-        self.measured = None if (self.baseline is None or max(abs(dx), abs(dy)) >= SLIDE
-                                 or len(diff) > 0.5 * W * H) else (dx, dy)
+        dx, dy = self.shift
+        # how the sheet moved since the last one handed on (degrees, thumb px), if that could be measured:
+        # not for the first sheet, not for a new sheet, not when the best slide sits at the search's edge
+        self.measured = None if (self.baseline is None or (not self.fitted and max(abs(dx), abs(dy)) >= SLIDE)
+                                 or len(diff) > 0.5 * W * H) else (self.turn, dx, dy)
+        # where the change is in the new picture
+        ca, sa = math.cos(math.radians(self.turn)), math.sin(math.radians(self.turn))
+        cx, cy = (W - 1) / 2, (H - 1) / 2
+        diff = [min(max(round(sa * (i % W - cx) + ca * (i // W - cy) + cy + dy), 0), H - 1) * W
+                + min(max(round(ca * (i % W - cx) - sa * (i // W - cy) + cx + dx), 0), W - 1) for i in diff]
         self.prev = (self.base, self.baseline)
-        self.base, self.baseline, self.still_since, self.shift, self.diff = thumb, envelope(thumb), t, (0, 0), []
-        diff = [min(max(i // W + dy, 0), H - 1) * W + min(max(i % W + dx, 0), W - 1) for i in diff]
+        self.base, self.baseline, self.still_since, self.shift, self.diff, self.turn = thumb, envelope(thumb), t, (0, 0), [], 0
+        self.fitted = False
         return ("big-change" if big else "drawn"), diff
+
+    def scattered(self):
+        """The change is spread over many patches, the biggest under SCATTER of it, and over most of the
+        picture (its bounding box over SPAN of it): a new sheet (its lines and paper edges changed
+        everywhere), not a hand, an arm or a shadow lying on the paper. Once per still spell."""
+        if self.patchy is None or self.patchy[0] is not self.diff:
+            xs, ys = [i % W for i in self.diff], [i // W for i in self.diff]
+            if (max(xs) - min(xs)) * (max(ys) - min(ys)) < SPAN * W * H:
+                self.patchy = self.diff, False
+                return False
+            left, biggest = set(self.diff), 0
+            while left and biggest < SCATTER * len(self.diff):
+                todo, n = [left.pop()], 1
+                while todo:
+                    i = todo.pop()
+                    for j in (i - 1, i + 1, i - W, i + W, i - W - 1, i - W + 1, i + W - 1, i + W + 1):
+                        if j in left:
+                            left.remove(j)
+                            todo.append(j)
+                            n += 1
+                biggest = max(biggest, n)
+            self.patchy = self.diff, biggest < SCATTER * len(self.diff)
+        return self.patchy[1]
 
     def big(self):
         """A large change, or a sheet that slid further than we can line up."""
-        return len(self.diff) > BIG * W * H or (self.baseline is not None and max(map(abs, self.shift)) >= SLIDE)
+        return len(self.diff) > BIG * W * H or (self.baseline is not None and not self.fitted and max(map(abs, self.shift)) >= SLIDE)
 
     def drawing(self):
         """Still for EARLY_S with a small change in it: a drawing that will be handed on at STILL_S
@@ -248,7 +345,7 @@ class Detector:
     def undo(self, t):
         """The last emit didn't happen after all: back to the sheet before it, wait for stillness again."""
         self.base, self.baseline = self.prev
-        self.anchor, self.still_since, self.shift, self.diff = None, t, None, None
+        self.anchor, self.still_since, self.shift, self.diff, self.turn, self.fitted = None, t, None, None, 0, False
 
 
 def box(diff, size):
@@ -319,15 +416,25 @@ class Snapshot:
         return self.result
 
 
+def affine(moved_by, size):
+    """(degrees, dx, dy) in thumb px, as the Detector measured it → [a, b, c, d, e, f] in picture px."""
+    deg, dx, dy = moved_by
+    sx, sy = size[0] / W, size[1] / H
+    ca, sa = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+    cx, cy = (W - 1) / 2 * sx, (H - 1) / 2 * sy
+    r = lambda v, n=1: round(v, n) + 0.0
+    return [r(ca, 4), r(-sa, 4), r(cx - ca * cx + sa * cy + dx * sx), r(sa, 4), r(ca, 4), r(cy - sa * cx - ca * cy + dy * sy)]
+
+
 def hand_on(data, size, reason, diff, info, previous, moved_by=None):
     now = datetime.datetime.now()
     stem = now.strftime("%Y%m%d-%H%M%S")
     meta = {"captured_at": now.astimezone().isoformat(timespec="seconds"), "camera": info,
             "previous": previous, "reason": reason, "changed": round(len(diff) / (W * H), 4),
             "changed_box": box(diff, size), "width": size[0], "height": size[1],
-            # previous frame's px → this frame's px (x' = a*x + b*y + c, y' = d*x + e*y + f); only a
-            # translation is measured (up to SLIDE thumb px); null when it could not be measured
-            "affine": moved_by and [1, 0, round(moved_by[0] * size[0] / W, 1), 0, 1, round(moved_by[1] * size[1] / H, 1)]}
+            # previous frame's px → this frame's px (x' = a*x + b*y + c, y' = d*x + e*y + f): a slide, or
+            # a turn (up to TURN°) and slide (up to REACH thumb px); null when it could not be measured
+            "affine": moved_by and affine(moved_by, size)}
     for name, body in ((f"{stem}.json", json.dumps(meta, indent=2).encode() + b"\n"), (f"{stem}.jpg", data)):
         tmp = OUT / (name + ".tmp")
         tmp.write_bytes(body)
