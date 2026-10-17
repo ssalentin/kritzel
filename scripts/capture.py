@@ -523,6 +523,8 @@ class Detector:
                 self.worker.start()
             else:
                 work()
+        if self.fit_due:
+            return None                       # a line-up is due but hasn't started (one still runs): no verdict yet
         if self.lining == self.spell:
             if self.spell not in self.lined:
                 return None                   # still lining up: no verdict yet
