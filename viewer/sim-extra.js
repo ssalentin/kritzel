@@ -153,7 +153,7 @@ export function options(a, add, { spots, cover, spotCell }) {
 export function portable(a, g, api) {
   const { now, step, say, line, nearest, R, busy, spots, actors } = api;
   const it = g.item ?? g.spot;
-  const drop = () => { if (it.carrier === a) { it.carrier = null; say(a, line(a, 'put'), 1.8); } a.goal = null; };
+  const drop = () => { if (it.carrier === a) { it.carrier = null; it.carryUntil = null; say(a, line(a, 'put'), 1.8); } a.goal = null; };
   if (g.type === 'pick') {
     if (it.carrier) { a.goal = null; return; }
     // walk until touching it, then pick it up: the carrier is at the thing, not a cell or two away
@@ -205,6 +205,7 @@ const THROW_S = 1.1;
 function throwTo(a, it, to, { now, say, line }) {
   it.carrier = null;
   it.throw = { x0: it.x, z0: it.z, x1: to.pos.x, z1: to.pos.z, t0: now(), to, from: a };
+  it.carryUntil = null;           // the catcher's carry starts its own clock
   say(a, line(a, 'throw'), 1.6);
   a.goal = null;
 }
@@ -234,7 +235,7 @@ function flyPortables(spots, actors, { now, say, line, ground }) {
     it.landed = true;
     const to = th.to;
     if (actors.includes(to) && !to.hidden && Math.hypot(to.pos.x - th.x1, to.pos.z - th.z1) < 1.2 && !carriedBy(spots, to)) {
-      it.carrier = to; to.goal = { type: 'carry', item: it, until: null }; to.goalSince = now();
+      it.carrier = to; it.carryUntil = null; to.goal = { type: 'carry', item: it, until: null }; to.goalSince = now();
       say(to, line(to, 'catch'), 1.8);
     } else say(th.from, line(th.from, 'oops'), 1.6);
   }
