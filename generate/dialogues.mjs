@@ -167,7 +167,10 @@ ${want.length ? `Write personas for: ${want.map(c => c.id).join(', ')}.` : 'Ever
   let j = {};
   try { j = JSON.parse(r.text.slice(r.text.indexOf('{'), r.text.lastIndexOf('}') + 1)); } catch { /* unusable reply: keep what we had */ }
   const personas = { ...kept };
-  for (const c of want) { const p = cleanPersona(j.personas?.[c.id], refs); if (p) personas[c.id] = p; }
+  // keyed by the actor id as asked, but the model sometimes keys by the name ('Turmwesen' for turmwesen, live: the
+  // persona was dropped on every call and every watcher start asked again): any case, id or name
+  const byKey = Object.fromEntries(Object.entries(j.personas && typeof j.personas === 'object' ? j.personas : {}).map(([k, v]) => [k.toLowerCase(), v]));
+  for (const c of want) { const p = cleanPersona(byKey[c.id.toLowerCase()] ?? byKey[c.name.toLowerCase()], refs); if (p) personas[c.id] = p; }
   const figureRefs = new Set(cast.flatMap(c => [c.name, c.id]).map(x => x.toLowerCase()));
   const describe = n => [...cast, ...things].find(x => [x.name, x.id].some(y => y && y.toLowerCase() === n.toLowerCase()))?.drawing || '';
   const quests = [...keptQuests];
