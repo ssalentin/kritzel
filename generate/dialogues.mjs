@@ -1,18 +1,22 @@
 #!/usr/bin/env node
-// A pool of short generated dialogues for the characters on the island (issue #9), on top of the
-// authored templates in viewer/dialogues.js. One cheap headless call writes ~12 dialogues for the
-// current cast to viewer/things/dialogues.json (served with the things, archived with the world); the viewer plays them when two of those characters meet
-// and never waits for a call. Every line passes the child-safe filter here and again before playback.
+// A pool of short generated dialogues for the characters in the book (issue #9), on top of the authored
+// templates in viewer/dialogues.js, and each figure's personality (what it likes, fears, keeps near, does).
+// One cheap call per change writes viewer/things/dialogues.json (served with the things, archived with the
+// world): { cast, model, made_at, reason, personas, dialogues }. The sim plays a dialogue when two of those
+// characters meet (picking one whose "when" fits the moment) and never waits for a call. Every line passes the
+// child-safe filter here and again before playback.
 //
 //   node generate/dialogues.mjs [--things DIR]     (the watcher runs it after new things)
 import { readFileSync, writeFileSync, renameSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { oneShot } from './claude.mjs';
-import { safeDialogue } from '../viewer/dialogues.js';
+import { safeDialogue, safeLine } from '../viewer/dialogues.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-export const POOL_MODEL = process.env.KRITZEL_DIALOGUE_MODEL || 'claude-haiku-5-5';
+// the cheap fast model through pi (as live generation), Haiku when pi fails
+export const POOL_MODEL = process.env.KRITZEL_DIALOGUE_MODEL || 'deepseek/deepseek-v4-flash';
+export const POOL_FALLBACK = process.env.KRITZEL_DIALOGUE_FALLBACK || 'claude-haiku-5-5';
 
 const STR = `['"]([^'"]+)['"]`, PLAIN = `(?:\\s*\\w+:\\s*(?:'[^']*'|"[^"]*"|[\\w.-]+)\\s*,)*?`;
 
@@ -31,24 +35,102 @@ export function castOf(thingsDir) {
   return cast;
 }
 
-const SYSTEM = `You write short dialogues for Kritzel, a living pop-up book of characters children drew on paper.
-Reply with JSON only: { "dialogues": [ { "between": [nameA, nameB], "end": "stroll" | "dance" | "tag" | "look" | null, "turns": [ { "who": nameA or nameB, "de": German line, "en": English line } ] } ] }.
-Each dialogue: 3 to 5 turns, the two take turns, every line answers the one before, and together they make a tiny scene that fits these two (what they are, what they look like) and can end in something they do together ("end"). Lines are short (at most 60 characters), warm, playful and right for small children: no violence, no insults, nothing scary beyond a friendly "boo". German first, natural for children; "en" is short child-friendly English, not a word-for-word copy. Use the characters' names as given. They all live on the open pages of a big pop-up book: when a line mentions where they are, it is the book or its pages, never an island.`;
+// the things without figures (a tree, a pond, a cake): what a figure can like, fear or make its favourite place
+export function thingsOf(thingsDir) {
+  const ids = new Set(castOf(thingsDir).map(c => c.id)), out = [];
+  for (const file of readdirSync(thingsDir).filter(f => /^[\w.-]+\.js$/.test(f)).sort()) {
+    const code = readFileSync(join(thingsDir, file), 'utf8');
+    const name = code.match(/\bmeta\s*=\s*\{[^}]*?\bname:\s*['"]([^'"]+)['"]/)?.[1];
+    const actors = [...code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].some(m => ids.has(m[1]));
+    if (name && !actors) out.push({ file, name, drawing: code.match(/drawing:\s*['"]([^'"]+)['"]/)?.[1] || '' });
+  }
+  return out;
+}
 
-export async function makePool({ thingsDir = join(ROOT, 'viewer', 'things'), count = 12, model = POOL_MODEL } = {}) {
-  const cast = castOf(thingsDir);
+// the shape agreed with studio.world (the sim reads it): personas keyed by actor id; refs are a thing's or
+// figure's meta.name (or an actor id); hobby is one the sim acts on; when only with keys the sim evaluates
+export const HOBBIES = ['collect', 'guard', 'nap', 'follow', 'wander'];
+const WEATHER = ['rain', 'snow', 'rainbow', 'lightning'];
+
+const SYSTEM = `You write the characters of Kritzel, a living pop-up book of figures children drew on paper: who each one is, and short dialogues between them.
+Reply with JSON only: { "personas": { <actor id>: { "favourite": <name> or null, "likes": [<name>, ...], "fears": [<name>, ...], "hobby": "collect" | "guard" | "nap" | "follow" | "wander", "lines": { "de": [...], "en": [...] } } }, "dialogues": [ { "between": [nameA, nameB], "when": { ... } (optional), "end": "stroll" | "dance" | "tag" | "look" | null, "turns": [ { "who": nameA or nameB, "de": German line, "en": English line } ] } ] }.
+Personas: only for the figures asked for. Build each from what its drawing shows and from the things and figures around it in the book: its favourite place or thing (the centre of its attention), up to 3 it likes, up to 2 it is a little afraid of (gently: a cat and water, a mouse and the cat), a hobby (collect: picks up small things; guard: stays by its favourite; nap: rests at its favourite; follow: walks after one it likes; wander: roams), and 2 or 3 typical lines, the same in German and English. Every <name> is exactly one of the names listed.
+Dialogues: 3 to 5 turns, the two take turns, every line answers the one before, and together they make a tiny scene that fits these two: their personas, their drawings, and the moment. "when" says when a dialogue fits, only with these keys: "near": <name> (they talk about a thing or figure next to them), "carrying": true (one of them carries something), "night": 0 to 1 (fits from this darkness on), "weather": "rain" | "snow" | "rainbow" | "lightning", "new": <name of a thing> (it just arrived in the book). No "when" means any time; most dialogues have none. Lines are short (at most 60 characters), warm, playful and right for small children: no violence, no insults, nothing scary beyond a friendly "boo". German first, natural for children; "en" is short child-friendly English, not a word-for-word copy. In "between" and "who" use the figures' names (not their actor ids). They all live on the open pages of a big pop-up book: when a line mentions where they are, it is the book or its pages, never an island.`;
+
+// model text → the agreed shape, or left out: unknown refs, hobbies and when keys are dropped, every line passes safeLine
+export function cleanPersona(p, refs) {
+  if (!p || typeof p !== 'object') return null;
+  const ref = x => typeof x === 'string' && refs.has(x.toLowerCase()) ? x : null;
+  const list = (a, n) => (Array.isArray(a) ? a : []).map(ref).filter(Boolean).slice(0, n);
+  const lines = lang => (Array.isArray(p.lines?.[lang]) ? p.lines[lang] : []).filter(l => safeLine(l, lang)).slice(0, 3);
+  const de = lines('de'), en = lines('en'), n = Math.min(de.length, en.length);
+  return { favourite: ref(p.favourite), likes: list(p.likes, 3), fears: list(p.fears, 2), hobby: HOBBIES.includes(p.hobby) ? p.hobby : 'wander',
+    lines: { de: de.slice(0, n), en: en.slice(0, n) } };
+}
+export function cleanWhen(w, refs, thingNames) {
+  if (!w || typeof w !== 'object') return null;
+  const out = {};
+  if (typeof w.near === 'string' && refs.has(w.near.toLowerCase())) out.near = w.near;
+  if (w.carrying === true) out.carrying = true;
+  if (typeof w.night === 'number' && w.night >= 0 && w.night <= 1) out.night = +w.night.toFixed(2);
+  if (WEATHER.includes(w.weather)) out.weather = w.weather;
+  if (typeof w.new === 'string' && thingNames.has(w.new.toLowerCase())) out.new = w.new;   // things only, not figures
+  return Object.keys(out).length ? out : null;
+}
+
+// the moment, in words for the model, from frames/status/situation.json (written by the viewer's sim)
+export function momentOf(sit, newThings = []) {
+  const parts = [];
+  for (const c of sit?.carrying || []) parts.push(`${c.who} carries ${c.what}`);
+  for (const t of sit?.thrown || []) parts.push(`${t.who} throws ${t.what}${t.to ? ` to ${t.to}` : ''}`);
+  if (typeof sit?.night === 'number' && sit.night >= 0.5) parts.push('it is night');
+  for (const w of sit?.weather || []) if (WEATHER.includes(w)) parts.push(`weather: ${w}`);
+  for (const n of newThings) parts.push(`${n} just arrived in the book`);
+  return parts.join('; ');
+}
+
+// One call per change: personas for the figures that have none yet (a figure keeps its personality: it must not
+// change its favourite with every refresh), and a fresh set of dialogues that fit the cast and the moment.
+export async function makePool({ thingsDir = join(ROOT, 'viewer', 'things'), count = 12, model = POOL_MODEL, reason = '', situation = null, newThings = [] } = {}) {
+  const cast = castOf(thingsDir), things = thingsOf(thingsDir);
   if (cast.length < 2) return { written: 0, reason: 'fewer than two characters' };
-  const text = `The characters in the book now:\n${cast.map(c => `- ${c.name}: ${c.drawing}`).join('\n')}\n\nWrite ${count} dialogues, spread over different pairs of these characters.`;
-  const t0 = Date.now();
-  const r = await oneShot({ system: SYSTEM, text, images: [], model, effort: 'low' });
-  let list = [];
-  try { list = JSON.parse(r.text.slice(r.text.indexOf('{'), r.text.lastIndexOf('}') + 1)).dialogues || []; } catch { /* unusable reply: no pool */ }
-  const names = new Set(cast.map(c => c.name));
-  const ok = list.filter(d => safeDialogue(d) && d.between.every(n => names.has(n)));
   const out = join(thingsDir, 'dialogues.json');
-  writeFileSync(out + '.tmp', JSON.stringify({ cast: [...names].sort(), model, made_at: new Date().toISOString(), dialogues: ok }, null, 1));
+  let old = {};
+  try { old = JSON.parse(readFileSync(out, 'utf8')); } catch { /* first pool */ }
+  const ids = new Set(cast.map(c => c.id));
+  const kept = Object.fromEntries(Object.entries(old.personas || {}).filter(([id]) => ids.has(id)));
+  const want = cast.filter(c => !kept[c.id]);
+  const refs = new Set([...cast.flatMap(c => [c.name, c.id]), ...things.map(t => t.name)].map(x => x.toLowerCase()));
+  const thingNames = new Set(things.map(t => t.name.toLowerCase()));
+  const moment = momentOf(situation, newThings);
+  const text = `The figures in the book now (actor id, name: drawing):
+${cast.map(c => `- ${c.id}, ${c.name}: ${c.drawing}${kept[c.id] ? ` (persona: ${JSON.stringify(kept[c.id])})` : ''}`).join('\n')}
+The things in the book (name: drawing):
+${things.map(t => `- ${t.name}: ${t.drawing}`).join('\n') || '(none)'}
+${moment ? `Right now: ${moment}.\n` : ''}
+${want.length ? `Write personas for: ${want.map(c => c.id).join(', ')}.` : 'Every figure has its persona: write "personas": {}.'} Write ${count} dialogues, spread over different pairs${moment ? ', a few of them for this moment (with a matching "when")' : ''}.`;
+  const t0 = Date.now();
+  const r = await oneShot({ system: SYSTEM, text, images: [], model, fallback: POOL_FALLBACK, effort: 'low' });
+  let j = {};
+  try { j = JSON.parse(r.text.slice(r.text.indexOf('{'), r.text.lastIndexOf('}') + 1)); } catch { /* unusable reply: keep what we had */ }
+  const personas = { ...kept };
+  for (const c of want) { const p = cleanPersona(j.personas?.[c.id], refs); if (p) personas[c.id] = p; }
+  const names = new Set(cast.map(c => c.name));
+  // the viewer matches figures by name: an actor id written instead is put back to its name
+  const nameOf = Object.fromEntries(cast.map(c => [c.id, c.name])), named = n => nameOf[n] && !names.has(n) ? nameOf[n] : n;
+  const offered = (Array.isArray(j.dialogues) ? j.dialogues : []).map(d => d && Array.isArray(d.between) && Array.isArray(d.turns)
+    ? { ...d, between: d.between.map(named), turns: d.turns.map(t => ({ ...t, who: named(t?.who) })) } : d);
+  const why = d => !safeDialogue(d) ? 'shape or line' : !d.between.every(n => names.has(n)) ? `unknown name (${d.between.join(', ')})` : null;
+  const dropped = offered.map(why).filter(Boolean);
+  const dialogues = offered.filter(d => !why(d))
+    .map(d => { const when = cleanWhen(d.when, refs, thingNames); const { when: _, ...rest } = d; return when ? { ...rest, when } : rest; });
+  // an unusable reply keeps the old dialogues rather than leaving the book with none
+  const keepOld = !dialogues.length && Array.isArray(old.dialogues);
+  writeFileSync(out + '.tmp', JSON.stringify({ cast: [...names].sort(), model: r.model, made_at: new Date().toISOString(), reason,
+    personas, dialogues: keepOld ? old.dialogues : dialogues }, null, 1));
   renameSync(out + '.tmp', out);
-  return { written: ok.length, offered: list.length, seconds: (Date.now() - t0) / 1000, cost: r.cost, model };
+  return { written: dialogues.length, personas: Object.keys(personas).length - Object.keys(kept).length, offered: offered.length, ...(dropped.length && { dropped: [...new Set(dropped)].slice(0, 5) }),
+    seconds: (Date.now() - t0) / 1000, cost: r.cost, model: r.model, ...(r.fellBack && { fellBack: r.fellBack }) };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
