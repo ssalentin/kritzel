@@ -42,3 +42,20 @@ test('changes close together make one call, and no more than the hourly cap', as
     assert.ok(lines.some(l => /dialogues: 2 calls this hour, the next \(weather: rain\) in \d+s/.test(l)));
   } finally { console.error = err; rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('the hourly cap holds across a restart: the call times are kept next to the reports', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kritzel-budget-'));
+  const lines = [], err = console.error;
+  console.error = (...a) => lines.push(a.join(' '));
+  try {
+    const actor = (id, name) => `export const meta = { name: '${name}', drawing: 'x' };\nexport function build() { return { actors: [{ id: '${id}', name: '${name}', rig: {} }] }; }\n`;
+    writeFileSync(join(dir, 'affe.js'), actor('affe', 'Affe'));
+    writeFileSync(join(dir, 'maus.js'), actor('maus', 'Maus'));
+    // a fresh module instance is a restarted watcher
+    const fresh = await import('./generate.mjs?restart=' + Date.now());
+    writeFileSync(join(dir, 'pool-calls.json'), JSON.stringify([Date.now() - 60_000, Date.now() - 30_000, Date.now() - 7200_000]));
+    fresh.wantDialogues({ thingsDir: dir, reportsDir: dir }, 'new Affe');
+    await new Promise(ok => setTimeout(ok, 500));
+    assert.ok(lines.some(l => /dialogues: 2 calls this hour, the next \(new Affe\)/.test(l)), lines.join(' | '));
+  } finally { console.error = err; rmSync(dir, { recursive: true, force: true }); }
+});
