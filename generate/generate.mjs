@@ -346,7 +346,8 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
       report.written.push({ kind: s.kind, file, name: thingName, model: f.model, latency, at: T(), ids, ...(made && { made }), ...(f.warnings.length && { warnings: f.warnings }) });
       log(`${name}: ${s.kind === 'UPDATE' ? 'UPDATED' : 'WROTE'} ${file} (${thingName}) by ${f.model}, ${latency}s after the frame settled`);
       renders.push({ base, file, code: f.code });
-      if (DRAFT_MODEL && f.model !== MODEL) finals.push(finalOf({ s, file, draft: f.code, thingName, ids }));
+      // finals for new drafts only: an UPDATE's final would need its own question (the old module, what changed)
+      if (DRAFT_MODEL && f.model !== MODEL && s.kind === 'NEW') finals.push(finalOf({ s, file, draft: f.code, thingName, ids, draftBox: f.info?.box }));
     }
     // the final build of one drafted drawing: the final model, the same image and question, told what the book already
     // knows about it (name, actor ids, start, paper place), checked like any module, fixed only by the final model.
@@ -354,14 +355,24 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
     // fails, the draft stays.
     const finals = [];
     if (DRAFT_MODEL) report.finals = [];
-    function finalOf({ s, file, draft, thingName, ids }) {
+    // The final must stand where the draft stands: the viewer adds its saved placement offset to the module's own
+    // coordinates, so a final built elsewhere would land shifted (into a neighbour). And a creature up in the air needs
+    // something to hang from, as for the draft (hang-support).
+    const centre = b => b && [(b.min[0] + b.max[0]) / 2, (b.min[2] + b.max[2]) / 2];
+    const sameSpot = draftBox => info => {
+      const a = centre(draftBox), b = centre(info?.box);
+      if (!a || !b || Math.hypot(a[0] - b[0], a[1] - b[1]) <= 0.3) return [];
+      return [`it stands centred at x ${b[0].toFixed(2)}, z ${b[1].toFixed(2)}, but this thing stands at x ${a[0].toFixed(2)}, z ${a[1].toFixed(2)} in the book: build it centred there (move its group, its scenery and its actor's start by ${(a[0] - b[0]).toFixed(2)}, ${(a[1] - b[1]).toFixed(2)})`];
+    };
+    function finalOf({ s, file, draft, thingName, ids, draftBox }) {
       return finalSlot(async () => {
         const path = join(thingsDir, file);
         const base = s.prompt || `${ask}\n\nYou build only this one drawing: ${said.seen[s.n]?.de || thingName}. Reply with just its one ### NEW section.`;
         const start = draft.match(/start:\s*\[[^\]]*\]/)?.[0], paperAt = draft.match(/paper:\s*\{[^}]*\}/)?.[0];
+        const at = centre(draftBox);
         const text = `${base}
 
-A quick draft of this drawing is in the book now (below). Build the drawing properly yourself, from the image, not from the draft's shapes: one complete module. Keep what the book already knows about it: name '${thingName}'${ids.length ? `, actor id${ids.length > 1 ? 's' : ''} ${ids.map(i => `'${i}'`).join(', ')}${start ? ` (${start})` : ''}` : ''}${paperAt ? `, meta ${paperAt}` : ''}. Reply with only the module: plain JavaScript, no section header, no fences.
+A quick draft of this drawing is in the book now (below)${at ? `, centred at x ${at[0].toFixed(2)}, z ${at[1].toFixed(2)}: build yours centred there too` : ''}. Build the drawing properly yourself, from the image, not from the draft's shapes: one complete module. Keep what the book already knows about it: name '${thingName}'${ids.length ? `, actor id${ids.length > 1 ? 's' : ''} ${ids.map(i => `'${i}'`).join(', ')}${start ? ` (${start})` : ''}` : ''}${paperAt ? `, meta ${paperAt}` : ''}. Reply with only the module: plain JavaScript, no section header, no fences.
 
 ${draft}`;
         const done = (x) => { report.finals.push({ file, at: T(), ...x }); mark('finalsDone'); report.timing.finalsDone = T(); save(); };
@@ -369,8 +380,10 @@ ${draft}`;
           const r = await oneShot({ system: SYSTEM, text, images: s.images || images, model: MODEL });
           report.calls.push(callOf(r, { final: file }));
           const others = [...existing.flatMap(t => t.ids), ...report.written.flatMap(w => w.ids)].filter(i => !ids.includes(i));
+          await bookBoxes();
+          const extra = info => [...sameSpot(draftBox)(info), ...hangingLoose(file)(info)];
           let f = await finish({ body: stripFences(r.text).replace(/^###.*\n/, ''), model: MODEL, frame, images: s.images || images, takenIds: others,
-            keepIds: ids, oldName: thingName, calls: report.calls, fixModels: [MODEL] });
+            keepIds: ids, oldName: thingName, calls: report.calls, fixModels: [MODEL], extra });
           if (!f.code) { log(`${name}: final of ${file} failed its checks, the draft stays: ${f.problems.join('; ').slice(0, 200)}`); return done({ kept: 'draft', problems: f.problems }); }
           // the book knows it by its name (personas, quests, dialogues): the final keeps the draft's
           const finalName = f.code.match(/name:\s*['"]([^'"]+)['"]/)?.[1];

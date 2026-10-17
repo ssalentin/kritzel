@@ -54,3 +54,13 @@ test('a thing changed meanwhile keeps the change: the stale final is dropped', a
   assert.match(now, /a child changed it/);
   assert.equal(saved.finals[0].dropped, 'changed meanwhile');
 });
+
+test('a final built somewhere else gets one fix to stand where the draft stands, or the draft stays', async () => {
+  // the final moves the whole snail 3 units along x: its fix call (the same fake reply) is still off, so the draft stays
+  const moved = example.replace(/world\.add\((\w+)\)/, (m, g) => `${g}.position.x += 3; world.add(${g})`);
+  assert.notEqual(moved, example);
+  const { saved, draft, now } = await run({ final: moved });
+  assert.equal(now, draft);
+  assert.equal(saved.finals[0].kept, 'draft');
+  assert.match(saved.finals[0].problems.join(' '), /build it centred there/);
+});
