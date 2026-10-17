@@ -78,10 +78,11 @@ export function build(ctx) {
   let later = null;
   // a later frame writes its own stein.js while the final runs: the part must not overwrite it
   const { saved, now, files } = await run({ final: `### NEW\n${example.replace(/0x[0-9a-f]{6}/i, '0x123456')}\n### NEW\n${stone}`, slow: 'claude-sonnet-5-5:300',
-    meanwhile: f => writeFileSync(join(f, '..', 'stein.js'), stone.replace("'Stein'", "'Anderer Stein'")), onLater: x => { later = x; } });
+    meanwhile: f => writeFileSync(join(f, '..', 'stein.js'), stone), onLater: x => { later = x; } });
   assert.match(now, /0x123456/);                                        // the draft's file holds the first part
   assert.deepEqual(files.filter(f => f.endsWith('.js')).sort(), ['schnecke.js', 'stein-2.js', 'stein.js']);
   assert.deepEqual(saved.finals[0].split, ['stein-2.js']);
   assert.equal(saved.written.find(w => w.file === 'stein-2.js').splitFrom, 'schnecke.js');
   assert.deepEqual(later.written.map(w => w.file), ['stein-2.js']);      // the watcher hears of it (dialogues)
+  assert.equal(later.written[0].name, 'Stein 2');                        // a later frame's Stein is on disk: the part is Stein 2
 });
