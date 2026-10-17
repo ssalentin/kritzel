@@ -139,6 +139,18 @@ controls.autoRotateSpeed = 0.5;
 // ?cam=x,y,z,tx,ty,tz pins the view (handy for screenshots)
 const camQ = new URLSearchParams(location.search).get('cam')?.split(',').map(Number);
 if (camQ?.length === 6) { camera.position.set(...camQ.slice(0, 3)); controls.target.set(...camQ.slice(3)); controls.autoRotate = false; }
+// with no character followed, the view turns around the middle of the book again (shortly after a drag/pan)
+const HOME = controls.target.clone();
+let handsOn = false, handsOff = 0;
+controls.addEventListener('start', () => { handsOn = true; });
+controls.addEventListener('end', () => { handsOn = false; handsOff = performance.now(); });
+function goHome(dt) {
+  if (handsOn || performance.now() - handsOff < 1500) return;
+  const d = HOME.clone().sub(controls.target);
+  if (d.lengthSq() < 1e-5) return;
+  d.multiplyScalar(1 - Math.exp(-2.5 * dt));   // ease back over about a second, keeping the user's view angle
+  controls.target.add(d); camera.position.add(d);
+}
 
 // light comes mostly from the room environment (as in the example); the sun only adds soft shadows
 const hemi = new THREE.HemisphereLight(0xfff4e6, 0x9cc7b8, 0.15);
@@ -377,6 +389,7 @@ window.__lighting = () => lighting;
 window.__camera = camera;
 window.__status = status;
 window.__camera = camera;                // tests: project a character to the screen to tap it
+window.__controls = controls;            // tests: where the view turns around
 window.__render = () => style.render();   // one frame on demand (tests that step the world themselves)
 
 function clearWorld() {
@@ -617,7 +630,7 @@ function animate() {
   if (focus) {
     if (actorsNow().includes(focus)) followFocus(); else focus = null;
     if (performance.now() > cardAt) { cardAt = performance.now() + 250; try { refreshCard(); } catch {} }
-  }
+  } else goHome(dt);
   stepMorph();
   layoutBubbles(dt);
   lighting.update(clock.elapsedTime, dt);
