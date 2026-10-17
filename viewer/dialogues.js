@@ -116,7 +116,8 @@ export function safeDialogue(d) {
 // ---------- the generated pool (things/dialogues.json next to placement.json, written by generate/dialogues.mjs) ----------
 // { cast: [names], dialogues: [{ between: [nameA, nameB], end, turns: [{ who: name, de, en }] }] }
 let pool = [], poolAt = 0;
-const played = new Set();
+const played = new Set();                  // played dialogues, by content (the pool grows and is re-read: an index would shift)
+const contentKey = d => JSON.stringify(d.turns);
 async function refreshPool() {
   if (Date.now() - poolAt < 60_000) return;
   poolAt = Date.now();
@@ -129,9 +130,9 @@ async function refreshPool() {
 export function fromPool(c) {
   refreshPool();
   const na = c.a.name || c.a.id, nb = c.b.name || c.b.id;
-  const i = pool.findIndex((d, k) => !played.has(k) && d.between.includes(na) && d.between.includes(nb) && na !== nb);
+  const i = pool.findIndex(d => !played.has(contentKey(d)) && d.between.includes(na) && d.between.includes(nb) && na !== nb);
   if (i < 0) return null;
-  played.add(i);
+  played.add(contentKey(pool[i]));
   const d = pool[i];
   return { end: d.end ?? null, generated: true, turns: d.turns.map(t => ({ speaker: t.who === na ? c.a : c.b, de: t.de, en: t.en })) };
 }
