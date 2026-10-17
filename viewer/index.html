@@ -63,14 +63,15 @@
   #cam video, #cam img { width: 100%; border-radius: 6px; background: #0002; }
   #cam .note { font-size: 12px; opacity: .75; }
   #cam .note:empty { display: none; }
-  #veil { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none;
-    background: radial-gradient(circle at 50% 45%, rgba(255,255,255,.88), rgba(191,227,221,.92));
-    opacity: 0; transition: opacity .6s ease; font: 600 22px system-ui, sans-serif; color: #2c4a44; }
+  /* an empty page after a new world: the book shows, with an invitation to draw (gone once a drawing is noticed) */
+  #veil { position: fixed; inset: 0 0 auto; top: 22vh; display: grid; place-items: center; pointer-events: none;
+    opacity: 0; transition: opacity .6s ease; }
+  #veil > div { padding: 14px 26px; border-radius: 999px; background: rgba(255,255,255,.9); box-shadow: 0 6px 24px rgba(0,0,0,.18);
+    font: 600 26px system-ui, sans-serif; color: #2c4a44; }
   #veil.on { opacity: 1; }
+  #status[data-tone="busy"] ~ #veil { opacity: 0; }
   #veil .pen { display: inline-block; animation: draw 0.9s ease-in-out infinite alternate; }
-  #veil .dots::after { content: ''; animation: dots 1.2s steps(4) infinite; }
   @keyframes draw { from { transform: translate(-14px, 4px) rotate(-12deg); } to { transform: translate(14px, -4px) rotate(8deg); } }
-  @keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
 </style>
 <script type="importmap">
 { "imports": {
@@ -84,7 +85,7 @@
 <div id="hud"><div id="err"></div></div>
 <div id="arrive" aria-live="polite"></div>
 <div id="status" data-tone="ok"><span class="dot"></span><span class="text"></span><span class="gen" hidden>⚠ Generator aus</span></div>
-<div id="veil"><div><span class="pen">✏️</span> Neue Welt wird gemalt<span class="dots"></span></div></div>
+<div id="veil"><div><span class="pen">✏️</span> Leg los mit dem Malen!</div></div>
 <div id="hint">Tippe eine Figur an, um ihr mit der Kamera zu folgen · Esc beendet <span id="ver"></span></div>
 <div id="card"></div>
 <button id="snd" type="button" aria-pressed="false">🔇 Ton an</button>
@@ -563,7 +564,7 @@ function followFocus() {
 
 // ---------- new world = turning the page: the old things fold flat, a page turns over, a fresh page ----------
 const veil = document.getElementById('veil');
-// the veil ("a new world is being drawn") comes after the turn and stays until the first new thing is there
+// the veil ("start drawing!") comes after the turn, over the empty page, and stays until the first new thing is there
 let morph = null;                      // { t0, release, folds, sheet }
 function pageSheet() {                 // one page of paper, hinged at the spine, lying on the right page
   const pivot = new THREE.Group(), w = GROUND.w / 2, d = GROUND.d;
