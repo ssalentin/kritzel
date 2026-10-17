@@ -624,7 +624,7 @@ export function wantDialogues(opts, reason, newThings = []) {
 // 49 calls in an hour with restarts in between)
 const callsFile = opts => join(opts.reportsDir || join(ROOT, 'frames', 'generated'), 'pool-calls.json');
 function loadPoolCalls(opts) {
-  try { const a = JSON.parse(readFileSync(callsFile(opts), 'utf8')); if (Array.isArray(a)) pool.calls = a.filter(t => typeof t === 'number' && Date.now() - t < 3600_000).sort(); } catch { /* none yet */ }
+  try { const a = JSON.parse(readFileSync(callsFile(opts), 'utf8')); if (Array.isArray(a)) pool.calls = a.filter(t => typeof t === 'number' && Date.now() - t < 3600_000).sort((a, b) => a - b); } catch { /* none yet */ }
 }
 function savePoolCalls(opts) { try { atomicWrite(callsFile(opts), JSON.stringify(pool.calls)); } catch { /* the cap still holds in this run */ } }
 function runPool(opts) {
