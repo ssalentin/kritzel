@@ -382,9 +382,10 @@ export async function build(api, prevState = null) {
       if (GROUND.w !== w0) {
         island.group.scale.set(GROUND.w / BASE.w, 1, GROUND.d / BASE.d);
         // the camera tracks the book's size it last fitted (kept on the camera, so a rebuilt engine doesn't zoom out again)
-        const fit = GROUND.w / BASE.w;
-        if (!camera.userData.viewOffset) camera.userData.viewOffset = camera.position.clone().sub(controls.target);   // the view the book was first shown in
-        camera.position.copy(controls.target).add(camera.userData.viewOffset.clone().multiplyScalar(fit));
+        // only the distance changes: the user's direction, autoRotate and ?cam= stay as they are
+        if (!camera.userData.viewDist) camera.userData.viewDist = camera.position.distanceTo(controls.target);   // the distance the book was first shown from
+        const off = camera.position.clone().sub(controls.target).setLength(camera.userData.viewDist * GROUND.w / BASE.w);
+        camera.position.copy(controls.target).add(off);
         if (Math.abs(GROUND.w - grownAt) > 0.25) { grownAt = GROUND.w; refreshWorld(); }
       }
       water.tick(t);
