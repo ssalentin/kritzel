@@ -171,9 +171,14 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
       // a house that hops and talks (live: 'Eins, zwei, drei... ich komme!'): a building or object is only an actor
       // when a face is drawn on it
       if (b.info.actors?.length && notAlive(code)) problems.push('it is a building or an object with no drawn face, so it is not alive: no actor (return actors: [], keep it as scenery with obstacles)');
+      // solid blobs (Sebastian: 'always solid blobs'): a drawing of 4+ parts built almost all from spheres and boxes
+      // gets one fix call for real silhouettes, on the first pass only: spheres are often right (a snowman, grapes, a
+      // caterpillar of balls), so after a fix whatever passes the other checks is taken. Not for a draft (speed)
+      if (!problems.length && !fixModel && (!DRAFT_MODEL || model === MODEL)) problems.push(...blobs(code, info));
       if (!problems.length && extra) problems.push(...extra(info));
     }
     if (!problems.length) return { code: full, model, info, warnings: [
+      ...(info.tris > TRIS ? [`${info.tris} triangles (more than ${TRIS}): heavy for the viewer, which draws every thing at once`] : []),
       ...(/^\/\/ parts:/m.test(code) ? [] : ['no // parts: list (a thinking aid for the model; module accepted)']),
       ...(simSkipped ? [`not run in the sim (run npm ci in generate/): ${simSkipped}`] : []),
     ] };
@@ -242,6 +247,15 @@ export function againInBook(listed, existing) {
   // the list's in_book counts only when the places agree it is the same sheet: it knows the book's things only by
   // their descriptions, so a new 'bird with spread wings' can come back as the book's Vogel
   return same ? [...new Set([...named, ...best.map(q => q.e)])] : [];
+}
+
+// 14 of 219 archived modules: giraffes, parrots, a hippo of spheres and boxes
+const TRIS = +process.env.KRITZEL_TRIS || 30000;            // per thing; above it is a warning, not a rejection
+export function blobs(code, info) {
+  const g = info?.geoms || {}, n = Object.values(g).reduce((a, x) => a + x, 0), blob = (g.SphereGeometry || 0) + (g.BoxGeometry || 0);
+  const parts = (code.match(/^\/\/ parts:/gm) || []).length;
+  if (parts < 4 || n < 4 || blob < 0.85 * n) return [];
+  return [`${blob} of its ${n} shapes are spheres and boxes, for a drawing of ${parts} parts: build each part's real silhouette as drawn (tubes along the drawn limbs, tails and strokes; extruded outlines for flat parts like ears, wings and fins; lathed profiles for round parts; details as separate pieces), a sphere only where the drawing is a ball`];
 }
 
 // ---------- a new sheet: list its drawings first ----------
