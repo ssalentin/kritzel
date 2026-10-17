@@ -134,7 +134,9 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { createMood } from './mood.js';
 import { createStatus } from './status.js';
 import { createCamFrame } from './camframe.js';
-import { GROUND } from './book.js';
+import { GROUND, BASE as BOOK_BASE } from './book.js';
+// the book's size now: world.js grows its own copy of the book module, so the page turn asks the world
+const bookSize = () => current?.book?.() ?? { w: BOOK_BASE.w, d: BOOK_BASE.d };
 import { createStyle } from './style.js';
 import { t, lang, setLang, onLang } from './i18n.js';
 
@@ -504,6 +506,7 @@ async function poll() {
       thingStamps = stamps;
       if ((changed.length || removed.length) && current.reloadThings) {
         err.textContent = '';             // stale errors from the previous version of a thing go away; new ones get reported again
+        if (removed.length) await foldAway(removed.map(f => current.box?.(f))); // a removed thing folds away first
         try { await current.reloadThings(changed, removed); } catch (e) { err.textContent = 'things: ' + e.message; }
       }
     }
@@ -642,8 +645,9 @@ function followFocus() {
 const veil = document.getElementById('veil');
 // the veil ("start drawing!") comes after the turn, over the empty page, and stays until the first new thing is there
 let morph = null;                      // { t0, release, folds, sheet }
-function pageSheet() {                 // one page of paper, hinged at the spine, lying on the right page
-  const pivot = new THREE.Group(), w = GROUND.w / 2, d = GROUND.d;
+function pageSheet() {                 // one page of paper, hinged at the spine, lying on the right page (at the book's size now)
+  const pivot = new THREE.Group(), b = bookSize(), w = BOOK_BASE.w / 2, d = BOOK_BASE.d;
+  pivot.scale.set(b.w / BOOK_BASE.w, 1, b.d / BOOK_BASE.d);
   const geo = new THREE.PlaneGeometry(w, d, 24, 1);
   geo.rotateX(-Math.PI / 2); geo.translate(w / 2, 0, 0);
   const sheet = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xf4ecdc, roughness: 0.95, side: THREE.DoubleSide }));
@@ -659,23 +663,46 @@ function newWorldTransition(turn = true) {
   morph = { t0: performance.now() - (turn ? 0 : 2000), release: null, folds: [], sheet: null };
   if (!turn) { veil.classList.add('on'); return Promise.resolve(); }
   sound?.fx('melodie');
-  for (const box of world.children) if (!box.userData.book) for (const o of box.children) morph.folds.push([o, o.rotation.x]);
+  // the old things fold flat into the page, one after another (a pop-up book), not all at once
+  let i = 0;
+  for (const box of world.children) if (!box.userData.book) { foldBox(box, i * 0.09 + Math.random() * 0.05); i++; }
   morph.sheet = pageSheet();
   return new Promise(ok => setTimeout(ok, 750));
+}
+// a pop-up flap: each mesh of a thing waves (a small hop), then folds down into the page with a little squash,
+// after its own delay; a thing folds away this way before it is taken out (a removed one)
+const folding = [];
+function foldBox(box, delay = 0) {
+  const t0 = performance.now() + delay * 1000;
+  for (const o of box.children) folding.push({ o, rx: o.rotation.x, py: o.position.y, sy: o.scale.y, t0 });
+}
+function foldAway(boxes) {
+  boxes.forEach((b, i) => { if (b) foldBox(b, i * 0.12); });
+  return new Promise(ok => setTimeout(ok, 1000 + boxes.length * 120));
+}
+function stepFolds(now) {
+  folding.forEach(f => {
+    const t = (now - f.t0) / 1000;
+    if (t < 0) return;
+    const hop = Math.sin(Math.PI * Math.min(1, t / 0.35)) * 0.3 * (1 - Math.min(1, t / 0.7));   // a little wave first
+    const k = Math.min(1, Math.max(0, (t - 0.25) / 0.7)), e = k * k;                             // then the flap falls (ease-in)
+    f.o.rotation.x = f.rx - e * Math.PI / 2;
+    f.o.position.y = f.py + hop;
+    f.o.scale.y = f.sy * (1 - 0.12 * Math.sin(Math.PI * k));                                     // a slight squash on the way down
+  });
 }
 function releaseMorph() { if (morph && !morph.release) morph.release = Math.max(performance.now(), morph.t0 + 2000); }
 function stepMorph() {
   if (!morph) return;
   const now = performance.now(), t = (now - morph.t0) / 1000;
-  const fold = Math.min(1, t / 0.7);                          // the old things fold flat onto the page
-  for (const [o, rx] of morph.folds) o.rotation.x = rx - (1 - (1 - fold) ** 2) * Math.PI / 2;
+  stepFolds(now);                                             // the old things fold flat onto the page
   if (morph.sheet) {                                          // the page turns over, from the right page to the left
     const k = Math.min(1, Math.max(0, (t - 0.6) / 1.3)), e = k * k * (3 - 2 * k);
     const { pivot, geo, base } = morph.sheet, pos = geo.attributes.position;
     pivot.rotation.z = e * Math.PI;
     for (let i = 0; i < pos.count; i++) {                     // it bends while it is in the air
       const x = base[i * 3];
-      pos.setY(i, Math.sin(e * Math.PI) * 0.35 * (x / (GROUND.w / 2)) ** 2 * -1);
+      pos.setY(i, Math.sin(e * Math.PI) * 0.35 * (x / (bookSize().w / 2)) ** 2 * -1);
     }
     pos.needsUpdate = true;
     if (k >= 1) { scene.remove(pivot); geo.dispose(); pivot.children[0].material.dispose(); morph.sheet = null; }
