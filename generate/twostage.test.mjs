@@ -64,3 +64,20 @@ test('a final built somewhere else gets one fix to stand where the draft stands,
   assert.equal(saved.finals[0].kept, 'draft');
   assert.match(saved.finals[0].problems.join(' '), /build it centred there/);
 });
+
+test('a final may split its draft: the first part replaces it, the others are new things', async () => {
+  const stone = `export const meta = { name: 'Stein', drawing: 'a round stone', paper: { x: 0.3, y: 0.5 } };
+export function build(ctx) {
+  const { THREE, world, mat, shadowAll } = ctx;
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.DodecahedronGeometry(0.5), mat(0x999999)));
+  g.position.set(-1, 0.4, 0);
+  shadowAll(g); world.add(g);
+  return { actors: [], obstacles: [{ x: -1, z: 0, r: 0.5 }], spots: [] };
+}`;
+  const { saved, now, files } = await run({ final: `### NEW\n${example.replace(/0x[0-9a-f]{6}/i, '0x123456')}\n### NEW\n${stone}` });
+  assert.match(now, /0x123456/);                                        // the draft's file holds the first part
+  assert.deepEqual(files.filter(f => f.endsWith('.js')).sort(), ['schnecke.js', 'stein.js']);
+  assert.deepEqual(saved.finals[0].split, ['stein.js']);
+  assert.equal(saved.written.find(w => w.file === 'stein.js').splitFrom, 'schnecke.js');
+});
