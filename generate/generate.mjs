@@ -11,7 +11,8 @@
 //   write to things/. A failed check gets one retry, then one try on the fallback model.
 //   Each module is checked and written as soon as it is complete in the streamed reply; on a new
 //   sheet with more than two drawings, up to HELPERS parallel calls write some of them.
-// Every frame leaves <reports>/<frame>.json: the reply, checks, timings, cost. --render also
+// Every frame leaves <reports>/<frame>.json: the reply, checks, cost, and timing: seconds from the frame's start to
+// each stage (things read, crop, first text, SEEN, first thing written, done; each call's end as "at"). --render also
 // renders each written thing in the real viewer (headless) to <reports>/<frame>-<thing>-front.png.
 import { readFileSync, writeFileSync, renameSync, existsSync, readdirSync, mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -29,7 +30,8 @@ import { safeLine } from '../viewer/dialogues.js';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const log = (...a) => console.error(new Date().toISOString().slice(11, 19), ...a);
 // one call in the report: which model really answered (a pi model may have fallen back to Claude) and its time
-const callOf = (r, extra = {}) => ({ model: r.model, seconds: +r.seconds.toFixed(1), cost: r.cost, ...(r.fellBack && { fellBack: r.fellBack }), ...extra });
+// (endedAt becomes "at", seconds since the frame's start, when the report is saved)
+const callOf = (r, extra = {}) => ({ model: r.model, seconds: +r.seconds.toFixed(1), cost: r.cost, ...(r.fellBack && { fellBack: r.fellBack }), ...extra, endedAt: Date.now() });
 
 // ---------- existing things: their meta is the registry ----------
 async function readThings(dir, paper = {}) {
@@ -170,12 +172,20 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
   mkdirSync(reportsDir, { recursive: true });
   const name = basename(frame).replace(/\.\w+$/, '');
   const settledAt = statSync(frame).mtimeMs;
-  const report = { frame, box, previous, started: new Date().toISOString(), calls: [], written: [], removed: [], rejected: [], unclear: [] };
-  const save = () => writeFileSync(join(reportsDir, name + '.json'), JSON.stringify(report, null, 1));
+  // timing: where the time goes, in seconds since this frame's start (waited: from settling to the start)
+  const t0 = Date.now(), T = () => +((Date.now() - t0) / 1000).toFixed(1);
+  const report = { frame, box, previous, started: new Date(t0).toISOString(), timing: { waited: +((t0 - settledAt) / 1000).toFixed(1) }, calls: [], written: [], removed: [], rejected: [], unclear: [] };
+  const mark = k => { report.timing[k] ??= T(); };
+  const save = () => {
+    for (const c of report.calls) if (c.endedAt) { c.at = +((c.endedAt - t0) / 1000).toFixed(1); delete c.endedAt; }
+    writeFileSync(join(reportsDir, name + '.json'), JSON.stringify(report, null, 1));
+  };
   try {
     const paper = readPaper(reportsDir);
     const existing = await readThings(thingsDir, paper);
+    mark('things');
     const { image, before, area, place, height } = cropOf(frame, box, previous);
+    mark('crop');
     const images = before ? [before, image] : [image];
     const files = new Set(existing.map(t => t.file.replace(/\.js$/, '')));
     let said = { seen: [], begun: 0 }, told = '';
@@ -253,7 +263,8 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
       const latency = +((Date.now() - settledAt) / 1000).toFixed(1);
       const ids = [...f.code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]);
       const made = kid(thingName, said.seen[s.n]?.name_en || thingName);
-      report.written.push({ kind: s.kind, file, name: thingName, model: f.model, latency, ids, ...(made && { made }), ...(f.warnings.length && { warnings: f.warnings }) });
+      mark('firstWritten');
+      report.written.push({ kind: s.kind, file, name: thingName, model: f.model, latency, at: T(), ids, ...(made && { made }), ...(f.warnings.length && { warnings: f.warnings }) });
       log(`${name}: ${s.kind === 'UPDATE' ? 'UPDATED' : 'WROTE'} ${file} (${thingName}) by ${f.model}, ${latency}s after the frame settled`);
       renders.push({ base, file, code: f.code });
     }
@@ -299,6 +310,8 @@ Several builders make this sheet at the same time. You build only this one drawi
     };
     const onText = text => {
       said = narrate(text);
+      mark('firstText');
+      if (said.seen.length) mark('seen');
       tell({ seen: seenOf(said.seen), now: nowOf(said.seen[said.begun - 1]) });
       for (let k = 0; k < said.begun; k++) if (!claimed.has(k)) claimed.set(k, 'main');
       if ([...claimed].some(([k, who]) => who === 'helper' && k < said.begun)) stop.abort();   // the rest is the helpers'
@@ -382,6 +395,7 @@ Several builders make this sheet at the same time. You build only this one drawi
     return report;
   } finally {
     report.finished = new Date().toISOString();
+    report.timing.done = T();
     save();
   }
 }
