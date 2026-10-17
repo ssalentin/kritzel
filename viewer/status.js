@@ -21,7 +21,7 @@ function glowTexture(THREE) {
   return tex;
 }
 
-export function createStatus({ THREE, scene, el, world, banner }) {
+export function createStatus({ THREE, scene, el, world, banner, onView = null }) {
   const dot = el.querySelector('.dot'), text = el.querySelector('.text'), gen = el.querySelector('.gen');
   let st = null, lastView = '', viewSince = 0, prevCap = null, connectedAt = 0;
   const lights = new Map();          // frame → { g, light, orb, halo, sparks, spot, born, dying, claimed }
@@ -132,6 +132,7 @@ export function createStatus({ THREE, scene, el, world, banner }) {
     if (!st) return;
     const now = st.now + (performance.now() - st.at) / 1000;   // server clock, ticking between polls
     const v = view(now);
+    onView?.(v, st);                              // the picture frame (camframe.js) says the same thing
     const key = v.text.replace(/\d+ s$/, '');
     if (key !== lastView) { lastView = key; viewSince = performance.now(); }
     el.dataset.tone = v.tone;
