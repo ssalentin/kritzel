@@ -146,6 +146,20 @@ async function buildCheck(file, takenIds) {
           const post = axis === 1 && b.min.y - at.y < 0.15 && Math.hypot(c.x - at.x, c.z - at.z) > 0.6;   // down to the ground, away from its feet
           if (bar || post) pole.push(long.toFixed(1));
         });
+        // built up in the air (the sim keeps rig.g on the ground): it hangs or perches on something, which must
+        // be there above it. Supported here when this module has scenery (outside the rig) over its spot.
+        if (a.move !== 'fly' && a.move !== 'swim' && rigBox.min.y - at.y > 0.6) {
+          const cx = (rigBox.min.x + rigBox.max.x) / 2, cz = (rigBox.min.z + rigBox.max.z) / 2, top = rigBox.max.y;
+          let own = false;
+          ctx.world.traverse(o => {
+            if (!o.isMesh || own) return;
+            let inRig = false; o.traverseAncestors(p => { if (p === a.rig.g) inRig = true; });
+            if (inRig) return;
+            const b = new THREE.Box3().setFromObject(o);
+            if (b.max.y >= top - 0.3 && b.min.x - 0.3 <= cx && cx <= b.max.x + 0.3 && b.min.z - 0.3 <= cz && cz <= b.max.z + 0.3) own = true;
+          });
+          (info.hanging ||= []).push({ id: a.id, x: +cx.toFixed(2), z: +cz.toFixed(2), top: +top.toFixed(2), supported: own });
+        }
         if (pole.length) problems.push(`actor ${a.id}: its rig carries a long thin pole or branch (${pole.join(', ')} long), which would walk around with it; the rig is only the body: build what it hangs from, sits on or stands in as its own thing without actors`);
       }
       if (typeof a.rig?.say !== 'function') problems.push(`actor ${a.id}: rig.say(text) is missing`);

@@ -126,11 +126,12 @@ const onlyHolds = problems => problems.length > 0 && problems.every(p => /^(hold
 
 // deferHolds: when the only problem is a held creature not written yet, say so at once instead of
 // asking for a fix (which would just drop the hold)
-async function finish({ body, model, frame, images, takenIds, keepIds, oldName = null, calls, deferHolds = false }) {
-  let code = body.split('\n').filter(l => !l.startsWith(MARK)).join('\n').trim(), problems, simSkipped = null;
+// extra(info) → more problems, from what the check measured (a creature hanging with nothing above it)
+async function finish({ body, model, frame, images, takenIds, keepIds, oldName = null, calls, deferHolds = false, extra = null }) {
+  let code = body.split('\n').filter(l => !l.startsWith(MARK)).join('\n').trim(), problems, simSkipped = null, info = {};
   for (const fixModel of [null, MODEL, FALLBACK_MODEL]) {
     if (fixModel) {
-      if (deferHolds && onlyHolds(problems)) return { problems, held: true };
+      if (deferHolds && onlyHolds(problems)) return { problems, held: true, info };
       const r = await fixSlot(() => oneShot({ system: SYSTEM, text: fixText({ problems, code }), images: images.slice(-1), model: fixModel }));   // the area now
       calls.push({ model: fixModel, seconds: +r.seconds.toFixed(1), cost: r.cost, fix: true, fixing: problems });
       code = stripFences(r.text).replace(/^###.*\n/, '');
@@ -142,14 +143,16 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
       const b = await buildCheck(full, { takenIds });
       problems = b.problems;
       simSkipped = b.info?.simSkipped || null;
+      info = b.info || {};
       // a module from before the one-figure rule may hold several figures: updating it is not splitting it
       if (keepIds.length > 1) problems = problems.filter(p => !/actors in one module/.test(p));
       // an updated thing keeps its actor ids (the sim remembers friendships), unless it was renamed into
       // something else that is no longer alive (figures → "Kerzen")
       const renamed = oldName && code.match(/name:\s*['"]([^'"]+)['"]/)?.[1] !== oldName;
       if (!(renamed && !b.info.actors?.length)) for (const id of keepIds) if (!b.info.actors?.includes(id)) problems.push(`keep the actor id "${id}" (the sim remembers its friendships)`);
+      if (!problems.length && extra) problems.push(...extra(info));
     }
-    if (!problems.length) return { code: full, model, warnings: [
+    if (!problems.length) return { code: full, model, info, warnings: [
       ...(/^\/\/ parts:/m.test(code) ? [] : ['no // parts: list (a thinking aid for the model; module accepted)']),
       ...(simSkipped ? [`not run in the sim (run npm ci in generate/): ${simSkipped}`] : []),
     ] };
@@ -183,13 +186,35 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
     // until the end.
     const renders = [], waiting = [], pending = [], sent = new Set();
     let lock = Promise.resolve(), halted = false;
+    // A creature built up in the air hangs or perches on something (Sebastian: the sloth floated with its
+    // pole). Something must be above it: in its own module, written in this frame, or already in the book
+    // (its box, moved by where the viewer placed it). Otherwise it waits for the rest of the frame, then
+    // gets one fix: add what it hangs from.
+    const boxes = [];
+    let inBook = null;
+    async function bookBoxes() {
+      if (inBook) return inBook;
+      let placed = {};
+      try { placed = JSON.parse(readFileSync(join(thingsDir, 'placement.json'), 'utf8')); } catch { /* none yet */ }
+      inBook = [];
+      for (const t of existing) {
+        const b = (await buildCheck(t.code, { takenIds: [] }).catch(() => null))?.info?.box;
+        const [dx, dz] = placed[t.file] || [0, 0];
+        if (b) inBook.push({ file: t.file, min: [b.min[0] + dx, b.min[1], b.min[2] + dz], max: [b.max[0] + dx, b.max[1], b.max[2] + dz] });
+      }
+      return inBook;
+    }
+    const covered = (h, file) => [...boxes, ...(inBook || []), ...waiting.map(w => w.box).filter(Boolean)].some(b => b.file !== file && b.max[1] >= h.top - 0.3 &&
+      b.min[0] - 0.3 <= h.x && h.x <= b.max[0] + 0.3 && b.min[2] - 0.3 <= h.z && h.z <= b.max[2] + 0.3);
+    const hangingLoose = file => info => (info?.hanging || []).filter(h => !h.supported && !covered(h, file)).map(h =>
+      `actor ${h.id} is built up in the air (its top at y ${h.top}) with nothing above it to hang from: add what it hangs from (a branch on a short trunk) to this module as scenery outside its rig, over its hands, and return holds: [{ actor: '${h.id}', x: ${h.x}, z: ${h.z}, r: 0.4 }]`);
     const takenNow = old => [...existing.filter(t => t !== old).flatMap(t => t.ids), ...report.written.flatMap(w => w.ids)];
     const write = (s, last = false) => {
       const job = (async () => {
         const old = s.kind === 'UPDATE' ? existing.find(t => t.file === s.file) : null;
         if (s.kind === 'UPDATE' && !old) { report.rejected.push({ kind: s.kind, file: s.file, problems: ['no such thing to update'] }); log(`${name}: UPDATE of unknown ${s.file} ignored`); return; }
         tell({ seen: seenOf(said.seen), now: nowOf(said.seen[s.n]) });
-        const check = takenIds => finish({ body: s.body, model: MODEL, frame, images, takenIds, keepIds: old?.ids || [], oldName: old?.meta.name || null, calls: report.calls, deferHolds: !last });
+        const check = (takenIds, extra = null) => finish({ body: s.body, model: MODEL, frame, images, takenIds, keepIds: old?.ids || [], oldName: old?.meta.name || null, calls: report.calls, deferHolds: !last, extra });
         const f = await check(takenNow(old));
         const run = lock.then(() => commit(s, old, f, last, check));
         lock = run.catch(() => {});                             // one failed write must not block the next ones
@@ -205,12 +230,20 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
       // written meanwhile by a parallel section with the same actor id: check again against what is there now
       if (f.code && [...f.code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].some(x => takenNow(old).includes(x[1]))) f = await check(takenNow(old));
       const thingName = (f.code || s.body).match(/name:\s*['"]([^'"]+)['"]/)?.[1] || 'Ding';
-      if (!f.code && !last && onlyHolds(f.problems)) { waiting.push(s); return; }
+      if (!f.code && !last && onlyHolds(f.problems)) { waiting.push({ s, box: f.info?.box && { file: '(waiting)', ...f.info.box } }); return; }
+      if (f.code && (f.info?.hanging || []).some(h => !h.supported)) {
+        await bookBoxes();
+        if (hangingLoose(old?.file)(f.info).length) {
+          if (!last) { waiting.push({ s, hangs: true }); return; }   // what it hangs from may come later in this frame
+          f = await check(takenNow(old), hangingLoose(old?.file));
+        }
+      }
       if (!f.code) { report.rejected.push({ kind: s.kind, file: s.file, name: thingName, problems: f.problems }); log(`${name}: REJECTED ${s.kind} ${s.file || thingName}: ${f.problems.join('; ')}`); return; }
       const base = old ? old.file.replace(/\.js$/, '') : freeName(slug(thingName), files);
       files.add(base);
       const file = base + '.js';
       atomicWrite(join(thingsDir, file), f.code);
+      if (f.info?.box) boxes.push({ file, ...f.info.box });
       const pm = f.code.match(/paper:\s*\{\s*x:\s*([\d.]+),\s*y:\s*([\d.]+)/);
       if (pm) { paper[file] = { x: +pm[1], y: +pm[2] }; writePaper(reportsDir, paper); }
       const latency = +((Date.now() - settledAt) / 1000).toFixed(1);
@@ -277,7 +310,7 @@ Several builders make this sheet at the same time. You build only this one drawi
       halted = true;
       await Promise.allSettled(helpers);
       await Promise.allSettled(pending);
-      for (const s of waiting.splice(0)) report.rejected.push({ kind: s.kind, file: s.file, problems: ['not written: the main call failed before the creature it holds was written'] });
+      for (const { s } of waiting.splice(0)) report.rejected.push({ kind: s.kind, file: s.file, problems: ['not written: the main call failed before the creature it holds was written'] });
       if (!report.written.length) throw e;
       report.mainError = e.message;
       log(`${name}: the main call failed after ${report.written.length} thing(s) were written; not retrying: ${e.message}`);
@@ -291,7 +324,8 @@ Several builders make this sheet at the same time. You build only this one drawi
     take(sections);
     await Promise.all(helpers);
     await Promise.all(pending);
-    for (const s of waiting.splice(0)) await write(s, true);   // their creatures are written now (or never will be)
+    // hanging creatures first (what holds them, still waiting, counts as above them), then what holds them
+    for (const w of [...waiting].sort((a, b) => !!b.hangs - !!a.hangs)) { await write(w.s, true); waiting.splice(waiting.indexOf(w), 1); }
     if (!sections.length && !report.written.length) log(`${name}: nothing new (${r.seconds.toFixed(1)}s)`);
     // many removals at once is a new or moved sheet, not a child erasing: remove nothing and say so
     const removes = newSheet ? [] : sections.filter(s => s.kind === 'REMOVE');
