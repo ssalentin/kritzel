@@ -154,7 +154,8 @@ export function options(a, add, { spots, cover, spotCell, things, nearest, actor
     if (fav) {
       const c = nearest(fav.x, fav.z, a);
       if (c) {
-        add(p.hobby === 'guard' ? 1.2 : 0.4, { type: 'wander', cell: [c.x, c.y] });
+        // a guard always goes back to its favourite; a napper does when it is tired (so it reaches the rest there)
+        add(p.hobby === 'guard' || (p.hobby === 'nap' && a.energy < 0.5) ? 1.2 : 0.4, { type: 'wander', cell: [c.x, c.y] });
         if (p.hobby === 'nap' && Math.hypot(a.pos.x - fav.x, a.pos.z - fav.z) < 2.5) add(0.9, { type: 'rest', until: now() + 20 });
       }
     }
