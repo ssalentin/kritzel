@@ -35,6 +35,12 @@ test('a pi call that fails before any text goes to the Claude fallback', async (
   }
 });
 
+test('a pi that never gets ready fails the call (its caller falls back)', async () => {
+  const { piCall } = await import('./pi.mjs');
+  process.env.FAKE_PI = 'mute';
+  await assert.rejects(piCall({ system: 'S6', text: 'go', images: [], model: M, startMs: 200 }), /did not start within/);
+});
+
 test('a pi call that gives no text in time falls back too', async () => {
   process.env.FAKE_PI = 'ok';
   const { piCall } = await import('./pi.mjs');

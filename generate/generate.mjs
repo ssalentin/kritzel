@@ -132,7 +132,7 @@ export function slots(n) {
 const FIX_SLOTS = 2, fixSlot = slots(FIX_SLOTS);
 // builds of a listed sheet: through pi (DeepSeek) all at once is the point; on the Claude plan as many as the
 // old main call + helpers (4)
-const BUILD_SLOTS = +process.env.KRITZEL_BUILD_SLOTS || (isPiModel(MODEL) ? 12 : 4), buildSlot = slots(BUILD_SLOTS);
+const BUILD_SLOTS = +process.env.KRITZEL_BUILD_SLOTS || (isPiModel(MODEL) ? 8 : 4), buildSlot = slots(BUILD_SLOTS);
 const onlyHolds = problems => problems.length > 0 && problems.every(p => /^(holds|heldBy) names actor/.test(p));
 
 // deferHolds: when the only problem is a held creature not written yet, say so at once instead of
@@ -542,7 +542,7 @@ async function watch(dir, opts) {
   let last = frames.findLast(done) || null;
   if (!last && !readdirSync(opts.reportsDir).some(f => f.endsWith('.json'))) last = frames.at(-1) || null;
   log(`watching ${dir} → ${opts.thingsDir} (model ${MODEL}${isPiModel(MODEL) ? ` via pi, ${PI_FALLBACK} when pi fails` : ''}, fallback ${FALLBACK_MODEL}); handled up to ${last || '(nothing)'}`);
-  if (isPiModel(MODEL)) prewarm(MODEL, SYSTEM, 4);            // warm for the first frame: a cold pi costs ~1.3 s
+  if (isPiModel(MODEL)) prewarm(MODEL, SYSTEM, 6);            // warm for the first frame: a cold pi costs ~1.3 s, ~140 MB each
   if (isPiModel(DETECT_MODEL)) prewarm(DETECT_MODEL, DETECT_SYSTEM, 1);
   if (await poolIsStale(opts.thingsDir).catch(() => false)) { log('dialogues: the pool is for another cast: making it again'); refreshDialogues(opts); }
   // the check runs every actor through the book's sim, which needs rot-js (a generate/ dependency)
