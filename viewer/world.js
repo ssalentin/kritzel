@@ -139,20 +139,26 @@ export async function build(api, prevState = null) {
   function ensurePortable(e) {
     if (e.portable || !e.foot || e.heldBy || e.actors.length || e.holds.length) return;
     if (Math.max(e.foot.hx, e.foot.hz) * 2 > 2 || e.foot.top > 2.5) return;
+    // a house, a lamp, a sky or a pond is not carried: only things whose spots (a biscuit's food) can come along
+    if (e.light.length || e.weather.length || e.spots.some(s => s.kind !== 'food')) return;
+    let pond = false; e.box.traverse(o => { if (o.userData?.zone) pond = true; });
+    if (pond) return;
     e.portable = { kind: 'portable', name: e.meta?.name, x: e.foot.x, z: e.foot.z, carrier: null };
     e.syncAt = { x: e.foot.x, z: e.foot.z };
     e.spots.push(e.portable);
   }
   // a carried thing follows its carrier, up in the hand; a dropped one lies on the page again
+  // Its spots and obstacles come along. Returns true when it was picked up or put down (the grid is set up again).
   function followPortable(e) {
     const p = e.portable;
     const dx = p.x - e.syncAt.x, dz = p.z - e.syncAt.z;
     if (dx || dz) {
       e.box.position.x += dx; e.box.position.z += dz; e.foot.x += dx; e.foot.z += dz; e.syncAt = { x: p.x, z: p.z };
-      for (const o of e.obstacles) { o.x += dx; o.z += dz; }
+      for (const o of [...e.obstacles, ...e.spots]) if (o !== p) { o.x += dx; o.z += dz; }
     }
-    if (p.carrier) { e.box.position.y = 1.1 + (p.carrier.alt || 0); p.held = true; }
-    else if (p.held) { p.held = false; onPage(e); }
+    if (p.carrier) { e.box.position.y = 1.1 + (p.carrier.alt || 0); if (p.held) return false; p.held = true; return true; }
+    if (p.held) { p.held = false; onPage(e); return true; }
+    return false;
   }
   function shift(entry, dx, dz) {
     entry.box.position.x += dx; entry.box.position.z += dz;
@@ -306,12 +312,12 @@ export async function build(api, prevState = null) {
   }
   // where animals can go: tops of things to land or climb on, and the drawn water
   function places() {
-    env.perches = [...loaded.values()].filter(e => e.foot && !e.heldBy && e.foot.top > 0.3)
+    env.perches = [...loaded.values()].filter(e => e.foot && !e.heldBy && !e.portable?.carrier && e.foot.top > 0.3)
       .map(e => ({ x: e.foot.x, z: e.foot.z, top: e.foot.top, r: Math.min(e.foot.hx, e.foot.hz) }));
     env.water = water.zones();
   }
   // footprints characters must not stand in (a jail holds its prisoner inside, so it isn't one)
-  const blockingFeet = () => [...loaded.values()].filter(e => e.foot && !e.heldBy && !e.holds.length).map(e => e.foot);
+  const blockingFeet = () => [...loaded.values()].filter(e => e.foot && !e.heldBy && !e.holds.length && !e.portable?.carrier).map(e => e.foot);
   function refreshWorld() {
     places();
     trees.length = 0;
@@ -403,7 +409,9 @@ export async function build(api, prevState = null) {
         if (!e.update) continue;
         try { e.update(t, dt, env); } catch (err) { report('things: ' + err.message); e.update = null; }
       }
-      for (const e of loaded.values()) if (e.portable && e.foot) followPortable(e);
+      let carriedChange = false;
+      for (const e of loaded.values()) if (e.portable && e.foot && followPortable(e)) carriedChange = true;
+      if (carriedChange) refreshWorld();      // picked up or put down: the grid, perches and paths see it now
       env.actors = brain.actors?.() || [];   // living props (e.g. a tree with a face) can react to who is near
       env.night = api.mood?.night ?? 0;      // 0 day … 1 night: characters get sleepy and gather at lamps
       env.lamps = api.mood?.lamps() ?? [];
