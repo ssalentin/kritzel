@@ -3,8 +3,9 @@
 
     python3 scripts/replay_camera.py [--port N] [--fps 10] [--hand 2.5] SHEET.jpg[:HOLD_S] ...
 
-It serves scripts/camera_server.py's API on 127.0.0.1 (CAMERA_PORT, default 8766; --port 0 picks
-a free one and prints it), with one camera, video0 ("Replay"):
+It serves scripts/camera_server.py's API on 127.0.0.1, on a free port it prints (or --port /
+CAMERA_PORT; not 8766 by default, where a viewer would list it as a real camera of this computer),
+with one camera, video0 ("Replay"). Point a test stack's serve.py at it with CAMERA_PORT=<port>:
 
   GET /cameras.json, /stream/video0.mjpg, /snapshot/video0.jpg   (?small: the 960 px preview)
   GET /state.json   → {"sheet": index, "file", "phase": "hand"|"still", "since": unix time}
@@ -135,7 +136,8 @@ def handler(player):
                 player.skip.set()
                 return self.send(200, b"ok", "text/plain")
             if path == "/snapshot/video0.jpg":
-                return self.send(200, player.next(kind, -1)[0], "image/jpeg")
+                frame = player.next(kind, -1)[0]
+                return self.send(200, frame, "image/jpeg") if frame else self.send(503, b"no frame yet", "text/plain")
             if path != "/stream/video0.mjpg":
                 return self.send(404, b"not found", "text/plain")
             self.send_response(200)
@@ -158,7 +160,7 @@ def handler(player):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--port", type=int, default=int(os.environ.get("CAMERA_PORT", "8766")))
+    ap.add_argument("--port", type=int, default=int(os.environ.get("CAMERA_PORT", "0")))
     ap.add_argument("--fps", type=float, default=10)
     ap.add_argument("--hand", type=float, default=2.5, help="seconds a hand moves between two sheets")
     ap.add_argument("sheets", nargs="+", help="SHEET.jpg[:HOLD_S]")
