@@ -118,15 +118,21 @@ export const nowOf = x => (x && kid(x.den, x.the)) || null;
 export const whyOf = body => { try { const j = JSON.parse(body.match(/^KIDS:\s*(\{.*\})\s*$/m)?.[1]); return kid(j.de, j.en); } catch { return null; } };
 
 // one module: check it; on failure ask for a fix (same model, then the fallback). → { code, model } | { problems }
-// fix calls run alongside each other on a busy sheet: at most FIX_SLOTS at once (the plan is shared)
-const FIX_SLOTS = 2;
-let fixesRunning = 0;
-const fixQueue = [];
-async function fixSlot(fn) {
-  if (fixesRunning >= FIX_SLOTS) await new Promise(ok => fixQueue.push(ok));
-  fixesRunning++;
-  try { return await fn(); } finally { fixesRunning--; fixQueue.shift()?.(); }
+// at most n calls of a kind at once, the rest wait their turn (the plan is shared, and each claude is a process)
+export function slots(n) {
+  let running = 0;
+  const queue = [];
+  return async fn => {
+    if (running >= n) await new Promise(ok => queue.push(ok));
+    running++;
+    try { return await fn(); } finally { running--; queue.shift()?.(); }
+  };
 }
+// fix calls run alongside each other on a busy sheet: at most FIX_SLOTS at once
+const FIX_SLOTS = 2, fixSlot = slots(FIX_SLOTS);
+// builds of a listed sheet: through pi (DeepSeek) all at once is the point; on the Claude plan as many as the
+// old main call + helpers (4)
+const BUILD_SLOTS = +process.env.KRITZEL_BUILD_SLOTS || (isPiModel(MODEL) ? 12 : 4), buildSlot = slots(BUILD_SLOTS);
 const onlyHolds = problems => problems.length > 0 && problems.every(p => /^(holds|heldBy) names actor/.test(p));
 
 // deferHolds: when the only problem is a held creature not written yet, say so at once instead of
@@ -328,8 +334,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
     };
     // one drawing of the sheet, by its own call; checked and written like a section of the main reply.
     // From a list (detectSheet): its box and actor id are known, so it is placed and named without guessing
-    async function buildOne(k, e, { id = null, area = null } = {}) {
-      const others = said.seen.filter((_, i) => i !== k).map(x => x.de);
+    async function buildOne(k, e, { id = null, area = null, others = said.seen.filter((_, i) => i !== k).map(x => x.de) } = {}) {
       let text;
       if (area) {
         const px = (area[0] + area[2]) / 2, py = (area[1] + area[3]) / 2, [ix, iz] = islandOf(px, py);
@@ -338,7 +343,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
 
 Several builders make this sheet at the same time. You build only this one drawing: ${e.de} (${e.en}). The others (${others.join(', ')}) are built by someone else: leave them out, but keep this one's actor id different from theirs. Reply with just its one ### NEW section, no SEEN line.`;
       try {
-        const h = await oneShot({ system: SYSTEM, images, text });
+        const h = await buildSlot(() => oneShot({ system: SYSTEM, images, text }));
         report.calls.push(callOf(h, { helper: e.de }));
         const sec = parseReply(h.text).find(x => x.kind === 'NEW');
         if (!sec) { report.rejected.push({ kind: 'NEW', name: e.de, problems: ['the helper wrote no NEW section'] }); return; }
@@ -366,12 +371,11 @@ Several builders make this sheet at the same time. You build only this one drawi
       said = { seen: listed, begun: listed.length };
       report.said = listed;
       tell({ seen: seenOf(listed), now: null });
-      const ids = new Set(existing.flatMap(t => t.ids));
-      listed.forEach((e, k) => {
-        const id = freeName(slug(e.de.replace(/^(ein|eine|einen)\s+/i, '')), ids);
-        ids.add(id);
-        helpers.push(buildOne(k, e, { id, area: e.box }));
-      });
+      // every actor id is set before any build starts, so each build knows the others' ids too (a branch holds
+      // the sloth by its id, a held thing names its holder), and parallel builds never collide
+      const taken = new Set(existing.flatMap(t => t.ids));
+      const ids = listed.map(e => { const id = freeName(slug(e.de.replace(/^(ein|eine|einen)\s+/i, '')), taken); taken.add(id); return id; });
+      listed.forEach((e, k) => helpers.push(buildOne(k, e, { id: ids[k], area: e.box, others: listed.map((x, i) => i === k ? null : `${x.den} (actor id "${ids[i]}" if alive)`).filter(Boolean) })));
     } else {
       try { r = await oneShot({ system: SYSTEM, text: ask, images, onText, signal: stop.signal, timeoutMs: 6 * 60_000 }); }
       catch (e) {

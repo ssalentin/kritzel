@@ -94,5 +94,5 @@ box: around the drawing and its word, as fractions 0..1 of the image (x0, y0 top
 export function oneOfText({ ask, entry, others, place, id }) {
   return `${ask}
 
-Several builders make this sheet at the same time. You build only this one drawing: ${entry.de} (${entry.en}): ${entry.what}. It is inside the box ${JSON.stringify(entry.box)} of the image (x0, y0, x1, y1 as fractions): paper { x: ${place[2]}, y: ${place[3]} }, book x ${place[0]}, z ${place[1]}. ${others.length ? `The others (${others.join(', ')}) are built by someone else: leave them out` : 'Build only it'}${id ? `; if it is alive, its actor id is "${id}"` : ''}. Reply with just its one ### NEW section, no SEEN line.`;
+Several builders make this sheet at the same time. You build only this one drawing: ${entry.de} (${entry.en}): ${entry.what}. It is inside the box ${JSON.stringify(entry.box)} of the image (x0, y0, x1, y1 as fractions): paper { x: ${place[2]}, y: ${place[3]} }, book x ${place[0]}, z ${place[1]}. ${others.length ? `The others (${others.join(', ')}) are built by someone else: leave them out, but when this one holds, carries or is held by one of them, name that one by its actor id` : 'Build only it'}${id ? `. If this one is alive, its actor id is "${id}"` : ''}. Reply with just its one ### NEW section, no SEEN line.`;
 }
