@@ -35,6 +35,11 @@ import time
 import urllib.request
 from pathlib import Path
 
+try:                     # lining up a moved sheet takes milliseconds with numpy, seconds without
+    import numpy as np
+except ImportError:
+    np = None
+
 ROOT = Path(os.environ.get("KRITZEL_ROOT", Path(__file__).resolve().parent.parent))
 OUT = ROOT / "frames" / "settled"
 STATUS = ROOT / "frames" / "status"
@@ -200,13 +205,16 @@ def moved(thumb, d):
 def quarter(img):
     """A quarter-size (W/4 × H/4) picture: 4×4 blocks averaged."""
     w, h = W // 4, H // 4
+    if np is not None:
+        return (np.array(img, dtype=float).reshape(h, 4, w, 4).sum(axis=(1, 3)) / 16).ravel().tolist()
     return [sum(img[(4 * y + j) * W + 4 * x + i] for j in range(4) for i in range(4)) / 16 for y in range(h) for x in range(w)]
 
 
 def fit(thumb, base):
     """How the sheet turned and slid since `base` when that is more than paper_shift can follow:
     (degrees, dx, dy) with thumb at R(p - centre) + centre + d ≈ base at p. Searched coarsely on
-    quarter-size pictures, then refined at full size. Pure Python, about a second: only for big changes."""
+    quarter-size pictures, then refined at full size. A tenth of a second with numpy, about a second
+    without: only for big changes."""
     def search(img, ref, w, h, step, angles, offsets):
         # room around the picture for every candidate: the slide, plus how far a turn of up to TURN degrees
         # moves the corners (live 2026-10-17 15:47: without the turn's share the index ran off the list)
@@ -218,6 +226,18 @@ def fit(thumb, base):
         cx, cy, best = (w - 1) / 2, (h - 1) / 2, None
         pts = [(x, y) for y in range(0, h, step) for x in range(0, w, step)]
         vals = [ref[y * w + x] for x, y in pts]
+        if np is not None:
+            flat, v, xs, ys = np.array(padded), np.array(vals), np.array([q[0] for q in pts]), np.array([q[1] for q in pts])
+            for a in angles:
+                ca, sa = math.cos(math.radians(a)), math.sin(math.radians(a))
+                idx = ((np.rint(sa * (xs - cx) + ca * (ys - cy) + cy).astype(int) + pad) * pw
+                       + np.rint(ca * (xs - cx) - sa * (ys - cy) + cx).astype(int) + pad)
+                offs = np.array([dy * pw + dx for dx, dy in offsets])
+                costs = np.abs(flat[idx[None, :] + offs[:, None]] - v).sum(axis=1)
+                k = int(costs.argmin())                  # the first of equals, as the loop below
+                if best is None or costs[k] < best[0]:
+                    best = (float(costs[k]), a, *offsets[k])
+            return best
         for a in angles:
             ca, sa = math.cos(math.radians(a)), math.sin(math.radians(a))
             idx = [(round(sa * (x - cx) + ca * (y - cy) + cy) + pad) * pw + round(ca * (x - cx) - sa * (y - cy) + cx) + pad
@@ -238,9 +258,12 @@ def fit(thumb, base):
 
 def otsu(img):
     """The brightness that best splits the picture in two (paper above it, table below)."""
-    hist = [0] * 511
-    for v in img:
-        hist[min(max(round(v) + 255, 0), 510)] += 1
+    if np is not None:
+        hist = np.bincount(np.clip(np.rint(np.array(img, dtype=float)).astype(int) + 255, 0, 510), minlength=511).tolist()
+    else:
+        hist = [0] * 511
+        for v in img:
+            hist[min(max(round(v) + 255, 0), 510)] += 1
     n, total, below, below_sum, best = len(img), sum(i * k for i, k in enumerate(hist)), 0, 0, (0, 0)
     for t, k in enumerate(hist):
         below, below_sum = below + k, below_sum + t * k
@@ -255,8 +278,17 @@ def lines(img):
     """The drawing on the paper, on quarter-size blocks (True where a block holds some): sharp dark
     lines with paper-bright, mostly smooth surroundings. Not the table's grain, a sheet's edge against
     the table, or a dark device beside the paper."""
-    lo, hi = envelope(img, 2)
     paper = otsu(img)                                  # paper is brighter than this, the table darker
+    if np is not None:
+        a = np.array(img, dtype=float).reshape(H, W)
+        win = lambda m, r: np.lib.stride_tricks.sliding_window_view(np.pad(m, r, mode="edge"), (2 * r + 1, 2 * r + 1))
+        lo, hi = win(a, 2).min(axis=(2, 3)), win(a, 1).max(axis=(2, 3))     # as envelope(img, 2)
+        flat = np.pad((hi - lo < 6).astype(int), 4)
+        ones = np.pad(np.ones((H, W), int), 4)
+        sw = lambda m: np.lib.stride_tricks.sliding_window_view(m, (9, 9)).sum(axis=(2, 3))
+        ink = (hi - lo >= INK_EDGE) & (hi > paper) & (sw(flat) >= 0.4 * sw(ones))
+        return ink.reshape(H // 4, 4, W // 4, 4).any(axis=(1, 3)).ravel().tolist()
+    lo, hi = envelope(img, 2)
     flat = [int(h - l < 6) for l, h in zip(lo, hi)]
     acc = [0] * ((W + 1) * (H + 1))                    # summed-area table of the smooth pixels
     for y in range(H):
@@ -291,6 +323,26 @@ def far(thumb, base):
                 acc[(y + 1) * (w + 1) + x + 1] = acc[y * (w + 1) + x + 1] + run
         cells = [(x, y) for y in range(h) for x in range(w) if old[y * w + x]]
         enough, best = max(30 * w // (W // 4), 0.2 * len(cells)), None
+        if np is not None:
+            nr = np.pad(np.array(near, dtype=int).reshape(h, w), ((0, 1), (0, 1)))   # (a 0 to point outside at)
+            cx, cy = np.array([q[0] for q in cells], dtype=int), np.array([q[1] for q in cells], dtype=int)
+            offsets = [(dx, dy) for dx, dy in offsets
+                       if (min(w, w - dx) - max(0, -dx)) * (min(h, h - dy) - max(0, -dy)) >= OVERLAP * w * h]
+            if not offsets or not len(cells):
+                return None
+            dxs, dys = np.array([o[0] for o in offsets])[:, None], np.array([o[1] for o in offsets])[:, None]
+            X, Y = cx[None, :] + dxs, cy[None, :] + dys
+            keep = (X >= 0) & (X < w) & (Y >= 0) & (Y < h)
+            was = keep.sum(axis=1)
+            both = (nr[np.where(keep, Y, h), np.where(keep, X, w)]).sum(axis=1)
+            for k, (dx, dy) in enumerate(offsets):
+                x0, x1, y0, y1 = max(0, -dx), min(w, w - dx), max(0, -dy), min(h, h - dy)
+                X0, X1, Y0, Y1 = x0 + dx, x1 + dx, y0 + dy, y1 + dy
+                now = acc[Y1 * (w + 1) + X1] - acc[Y0 * (w + 1) + X1] - acc[Y1 * (w + 1) + X0] + acc[Y0 * (w + 1) + X0]
+                wk, bk = int(was[k]), int(both[k])
+                if wk >= enough and (best is None or bk / (wk + now - min(bk, now)) > best[0]):
+                    best = (bk / (wk + now - min(bk, now)), dx, dy)
+            return best
         for dx, dy in offsets:
             x0, x1, y0, y1 = max(0, -dx), min(w, w - dx), max(0, -dy), min(h, h - dy)
             if (x1 - x0) * (y1 - y0) < OVERLAP * w * h:
@@ -325,6 +377,24 @@ def turned(thumb, base, dx0, dy0):
     def search(angles, offsets, step):
         pts = [(x, y, base[y * W + x]) for y in range(0, H, step) for x in range(0, W, step)]
         best = None
+        if np is not None:
+            t = np.array(thumb, dtype=float)
+            xs, ys, vs = (np.array([q[k] for q in pts], dtype=float) for k in range(3))
+            for a in angles:
+                ca, sa = math.cos(math.radians(a)), math.sin(math.radians(a))
+                rx, ry = ca * (xs - cx) - sa * (ys - cy) + cx, sa * (xs - cx) + ca * (ys - cy) + cy
+                dxs, dys = np.array([o[0] for o in offsets])[:, None], np.array([o[1] for o in offsets])[:, None]
+                X, Y = np.rint(rx[None, :] + dxs).astype(int), np.rint(ry[None, :] + dys).astype(int)
+                keep = (X >= 0) & (X < W) & (Y >= 0) & (Y < H)
+                d = np.where(keep, t[np.clip(Y, 0, H - 1) * W + np.clip(X, 0, W - 1)] - vs[None, :], 0.0)
+                n = keep.sum(axis=1)
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    m = d.sum(axis=1) / n
+                    cost = np.where(keep, np.abs(d - m[:, None]), 0.0).sum(axis=1) / n
+                for k, (dx, dy) in enumerate(offsets):
+                    if n[k] > 0.5 * OVERLAP * len(pts) and (best is None or cost[k] < best[0]):
+                        best = (float(cost[k]), a, dx, dy, float(m[k]))
+            return best
         for a in angles:
             ca, sa = math.cos(math.radians(a)), math.sin(math.radians(a))
             rot = [(ca * (x - cx) - sa * (y - cy) + cx, sa * (x - cx) + ca * (y - cy) + cy, v) for x, y, v in pts]
@@ -352,6 +422,15 @@ def warp(thumb, a, d, fill=None, offset=0):
     sheet went out of view there: nothing to compare), or else the nearest edge pixel's."""
     ca, sa = math.cos(math.radians(a)), math.sin(math.radians(a))
     cx, cy, out = (W - 1) / 2, (H - 1) / 2, []
+    if np is not None:
+        ys, xs = np.mgrid[0:H, 0:W]
+        X = np.rint(ca * (xs - cx) - sa * (ys - cy) + cx + d[0]).astype(int)
+        Y = np.rint(sa * (xs - cx) + ca * (ys - cy) + cy + d[1]).astype(int)
+        got = np.array(thumb, dtype=float)[np.clip(Y, 0, H - 1) * W + np.clip(X, 0, W - 1)] - offset
+        if fill is not None:
+            inside = (X >= 0) & (X < W) & (Y >= 0) & (Y < H)
+            got = np.where(inside, got, np.array(fill, dtype=float).reshape(H, W))
+        return got.ravel().tolist()
     for y in range(H):
         for x in range(W):
             X = round(ca * (x - cx) - sa * (y - cy) + cx + d[0])
@@ -363,10 +442,10 @@ def warp(thumb, a, d, fill=None, offset=0):
     return out
 
 
-def line_up(thumb, base, baseline):
+def line_up(thumb, base, baseline, over=lambda: False):
     """The sheet in `thumb` is the one in `base`, turned (fit) or slid far, partly out of view (far):
     (degrees, dx, dy, what is new after lining up, far?) when the change after lining up is not big,
-    else None (a new sheet)."""
+    else None (a new sheet). `over()` says when the answer isn't wanted any more."""
     a, dx, dy = fit(thumb, base)
     aligned = warp(thumb, a, (dx, dy))
     diff = inky(new_marks(aligned, baseline), aligned, baseline)
@@ -374,6 +453,8 @@ def line_up(thumb, base, baseline):
         return a, dx, dy, diff, False
     # slid further, partly out of view (live 2026-10-17 15:47: a sheet pulled half off the picture was
     # taken for a new one, and everything on it was built twice): compare where it still shows
+    if over():                            # (the picture moved on meanwhile: nobody waits for this verdict)
+        return None
     pulled = far(thumb, base)
     if not pulled:
         return None
@@ -398,6 +479,7 @@ class Detector:
         self.anchor = self.still_since = self.shift = self.moved_at = self.diff = self.measured = None
         self.turn, self.fitted = 0, False    # degrees the sheet turned, and whether fit() lined it up
         self.lining, self.lined = None, {}   # the still spell being lined up in a thread, and results by spell
+        self.worker = None                   # that thread
         self.far = False                     # ...and whether far() did: the sheet slid partly out of view
         self.fit_due = False                 # a big change in this still spell that fit() should try
         self.spell = 0                       # counts still spells
@@ -424,14 +506,17 @@ class Detector:
         # lining up a sheet that turned or slid far takes seconds of pure Python: in a thread, started once
         # the big change has been still for STILL_S (a hand pausing on the paper never starts it); the
         # frame waits for its verdict, a sheet waits SHEET_S anyway
-        if self.fit_due and t - self.still_since >= STILL_S:
+        # one thread at a time (a hand resting, lifting and resting again must not stack them up and
+        # starve this loop): a newer spell waits for it, and it gives up early once its spell is over
+        if self.fit_due and t - self.still_since >= STILL_S and not (self.worker and self.worker.is_alive()):
             self.fit_due = False
             spell, base, baseline = self.spell, self.base, self.baseline
             def work():
-                self.lined[spell] = line_up(thumb, base, baseline)
+                self.lined[spell] = line_up(thumb, base, baseline, over=lambda: self.spell != spell)
             self.lining = spell
             if self.THREADED:
-                threading.Thread(target=work, daemon=True).start()
+                self.worker = threading.Thread(target=work, daemon=True)
+                self.worker.start()
             else:
                 work()
         if self.lining == self.spell:
