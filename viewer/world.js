@@ -231,6 +231,7 @@ export async function build(api, prevState = null) {
       entry.meta = m.meta; entry.at = brain ? Date.now() : 0;   // arrived while the world was running: new
       const r = (await m.build(ctx)) || {};
       if (water.ignored()) report(`things/${file}: ${water.ignored()} water piece(s) left out (at most 6 per thing)`);
+      for (const a of r.actors || []) a.file = file;           // for the sim's report of a figure that fails
       Object.assign(entry, { actors: r.actors || [], obstacles: r.obstacles || [], spots: r.spots || [], holds: r.holds || [], heldBy: r.heldBy || null, update: r.update || null, onTap: r.onTap || null,
         light: [].concat(r.light || []), weather: [].concat(r.weather || []) });
     } catch (e) { report(`things/${file}: ${e.message}`); }

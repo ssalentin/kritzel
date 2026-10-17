@@ -31,7 +31,8 @@ async function simThrows(actor) {
     const run = n => { for (let i = 0; i < n; i++) { t += 0.1; b.update(t, 0.1, {}); } };
     run(30);
     for (const s of STATES) { actor.anim = s; actor.animStart = t; actor.animUntil = t + 1; run(3); }
-    return null;
+    const [f] = b.failures();                                 // the sim skips a figure that throws; that is a failed rig too
+    return f ? { error: f.message } : null;
   } catch (e) { return { error: e.message }; }
 }
 

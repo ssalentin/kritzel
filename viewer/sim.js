@@ -464,6 +464,17 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     }
   }
 
+  // one figure's error must not freeze the others: skip that figure (it stands still), report it once
+  // (failures() lists them: the generate check rejects a rig whose figure throws here)
+  const failed = new Map();
+  function guarded(a, fn) {
+    if (failed.has(a)) return;
+    try { fn(); } catch (e) {
+      failed.set(a, e.message);
+      console.error(`${a.file ?? a.id}: ${a.id} skipped: ${e.message}`);
+    }
+  }
+
   // ---------- per-frame animation ----------
   const lerpAngle = (a, b, k) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
 
@@ -585,6 +596,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
       }
     },
     snapshot() { return Object.fromEntries(actors.map(a => [a.id, snapshotOf(a)])); },
+    failures: () => [...failed].map(([a, message]) => ({ id: a.id, file: a.file, message })),
     update(t, dt, { cover = 0, birdsLow = false, night = 0, lamps = [], weather = {}, perches = [], water = [] } = {}) {
       envNow = { perches, water };
       now = t; nightNow = night; lampsNow = lamps;
@@ -596,7 +608,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         if (R() < 0.4) say(a, line(a, 'splash'), 1.4);
       }
       acc += dt;
-      while (acc >= TICK) { acc -= TICK; const a = scheduler.next(); if (a) act(a); }   // empty world: nobody to act
+      while (acc >= TICK) { acc -= TICK; const a = scheduler.next(); if (a) guarded(a, () => act(a)); }   // empty world: nobody to act
       if (X.tick && now >= (nextTick ?? 0)) { nextTick = now + 4; X.tick(actors, api, coverNow); }
 
       // the cloud just covered the sun: everyone reacts
@@ -653,11 +665,11 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         // a dialogue is on: nobody next to the two talks over them
         if (stage && now < stage.until && p.a !== stage.a && p.a !== stage.b &&
           Math.hypot(p.a.pos.x - (stage.a.pos.x + stage.b.pos.x) / 2, p.a.pos.z - (stage.a.pos.z + stage.b.pos.z) / 2) < 3.5) continue;
-        p.a.rig.say(p.text); p.a.sayUntil = now + p.dur;
+        guarded(p.a, () => { p.a.rig.say(p.text); p.a.sayUntil = now + p.dur; });
       }
 
       separate(dt);
-      for (const a of actors) {
+      for (const a of actors) guarded(a, () => {
         if (a.sayUntil && now > a.sayUntil) { a.rig.say(''); a.sayUntil = 0; }
         let moving;
         // in a dialogue (or another moment with a partner): stay put and keep facing them until it ends
@@ -701,7 +713,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         const state = now < a.animUntil ? a.anim : moving ? 'walk' : /rest|warm/.test(a.goal?.type) ? 'sit' : 'idle';
         if (a.rig.animate) a.rig.animate(state, t, moving, a);
         else if (a.kind === 'squid') animSquid(a, state, t, moving); else animPerson(a, state, t, moving);
-      }
+      });
     },
   };
 }
