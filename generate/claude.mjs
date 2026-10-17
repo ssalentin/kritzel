@@ -84,6 +84,9 @@ function callOnce({ system, text, images, model = MODEL, effort = EFFORT, timeou
       if (res.is_error || res.subtype !== 'success') return reject(new Error(`claude -p (${model}) failed: ${String(res.result).slice(0, 300)}`));
       resolve({ text: String(res.result || ''), cost: res.total_cost_usd, seconds: (Date.now() - t0) / 1000, model });
     });
+    // claude gone before it read the prompt (crashed, killed, updating itself): its close reports the failure;
+    // unhandled, the EPIPE would take the whole watcher down
+    p.stdin.on('error', () => {});
     p.stdin.end(JSON.stringify(msg) + '\n');
   });
 }
