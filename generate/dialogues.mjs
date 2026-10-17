@@ -78,14 +78,18 @@ export function cleanWhen(w, refs, thingNames) {
   return Object.keys(out).length ? out : null;
 }
 
-// the moment, in words for the model, from frames/status/situation.json (written by the viewer's sim)
-export function momentOf(sit, newThings = []) {
+// the moment, in words for the model, from frames/status/situation.json (written by the viewer's sim). That
+// file comes from a browser (PUT /api/situation): only names of the book's figures and things get into the
+// prompt, at most 6 entries of a kind
+export function momentOf(sit, newThings = [], refs = null) {
+  const ok = x => typeof x === 'string' && x.length <= 40 && (!refs || refs.has(x.toLowerCase()));
+  const list = a => (Array.isArray(a) ? a : []).slice(0, 6);
   const parts = [];
-  for (const c of sit?.carrying || []) parts.push(`${c.who} carries ${c.what}`);
-  for (const t of sit?.thrown || []) parts.push(`${t.who} throws ${t.what}${t.to ? ` to ${t.to}` : ''}`);
+  for (const c of list(sit?.carrying)) if (ok(c?.who) && ok(c?.what)) parts.push(`${c.who} carries ${c.what}`);
+  for (const t of list(sit?.thrown)) if (ok(t?.who) && ok(t?.what)) parts.push(`${t.who} throws ${t.what}${ok(t.to) ? ` to ${t.to}` : ''}`);
   if (typeof sit?.night === 'number' && sit.night >= 0.5) parts.push('it is night');
-  for (const w of sit?.weather || []) if (WEATHER.includes(w)) parts.push(`weather: ${w}`);
-  for (const n of newThings) parts.push(`${n} just arrived in the book`);
+  for (const w of list(sit?.weather)) if (WEATHER.includes(w)) parts.push(`weather: ${w}`);
+  for (const n of list(newThings)) if (ok(n)) parts.push(`${n} just arrived in the book`);
   return parts.join('; ');
 }
 
@@ -102,7 +106,7 @@ export async function makePool({ thingsDir = join(ROOT, 'viewer', 'things'), cou
   const want = cast.filter(c => !kept[c.id]);
   const refs = new Set([...cast.flatMap(c => [c.name, c.id]), ...things.map(t => t.name)].map(x => x.toLowerCase()));
   const thingNames = new Set(things.map(t => t.name.toLowerCase()));
-  const moment = momentOf(situation, newThings);
+  const moment = momentOf(situation, newThings, refs);
   const text = `The figures in the book now (actor id, name: drawing):
 ${cast.map(c => `- ${c.id}, ${c.name}: ${c.drawing}${kept[c.id] ? ` (persona: ${JSON.stringify(kept[c.id])})` : ''}`).join('\n')}
 The things in the book (name: drawing):

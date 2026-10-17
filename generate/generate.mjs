@@ -502,7 +502,7 @@ export async function poolIsStale(thingsDir) {
 const POOL_DEBOUNCE_MS = (+process.env.KRITZEL_POOL_DEBOUNCE_S || 30) * 1000;
 const POOL_PER_HOUR = +process.env.KRITZEL_POOL_PER_HOUR || 20;
 const SITUATION = join(ROOT, 'frames', 'status', 'situation.json');   // written by the viewer's sim (PUT /api/situation)
-const pool = { calls: [], reasons: new Set(), newThings: new Set(), timer: null, busy: false };
+const pool = { calls: [], reasons: new Set(), newThings: new Set(), timer: null, busy: false, fellBack: false };
 export function wantDialogues(opts, reason, newThings = []) {
   pool.reasons.add(reason);
   for (const n of newThings) pool.newThings.add(n);
@@ -514,9 +514,11 @@ function runPool(opts) {
   if (pool.busy) return later(5000);
   const now = Date.now();
   while (pool.calls.length && now - pool.calls[0] > 3600_000) pool.calls.shift();
-  if (pool.calls.length >= POOL_PER_HOUR) {
+  // while pi fails, the calls go to the fallback on the shared Claude plan: half the cap then
+  const cap = pool.fellBack ? Math.max(1, Math.floor(POOL_PER_HOUR / 2)) : POOL_PER_HOUR;
+  if (pool.calls.length >= cap) {
     const wait = pool.calls[0] + 3600_000 - now + 1000;
-    log(`dialogues: ${POOL_PER_HOUR} calls this hour, the next (${[...pool.reasons].join(', ')}) in ${Math.round(wait / 1000)}s`);
+    log(`dialogues: ${cap} calls this hour${pool.fellBack ? ' (half: pi is failing)' : ''}, the next (${[...pool.reasons].join(', ')}) in ${Math.round(wait / 1000)}s`);
     return later(wait);
   }
   const reason = [...pool.reasons].join(', '), newThings = [...pool.newThings];
@@ -527,6 +529,7 @@ function runPool(opts) {
   import('./dialogues.mjs').then(m => m.makePool({ thingsDir: opts.thingsDir, reason, situation, newThings }))
     .then(x => {
       if (x.seconds == null) { pool.calls.pop(); return log(`dialogues: no call (${x.reason})`); }   // fewer than two figures
+      pool.fellBack = !!x.fellBack;
       log(`dialogues: call ${pool.calls.length}/${POOL_PER_HOUR} this hour (${reason}): ${x.written} dialogues, ${x.personas} new personas, ${x.seconds.toFixed(0)}s, ${x.model}${x.fellBack ? ' (pi failed)' : ''}${x.dropped ? `; dropped: ${x.dropped.join('; ')}` : ''}`);
     })
     .catch(e => log(`dialogues: ${e.message}`))
