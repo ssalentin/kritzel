@@ -206,7 +206,9 @@ def fit(thumb, base):
     (degrees, dx, dy) with thumb at R(p - centre) + centre + d ≈ base at p. Searched coarsely on
     quarter-size pictures, then refined at full size. Pure Python, about a second: only for big changes."""
     def search(img, ref, w, h, step, angles, offsets):
-        pad = REACH // (W // w) + 8                     # room around the picture for every candidate
+        # room around the picture for every candidate: the slide, plus how far a turn of up to TURN degrees
+        # moves the corners (live 2026-10-17 15:47: without the turn's share the index ran off the list)
+        pad = REACH // (W // w) + 8 + math.ceil(2 * math.sin(math.radians(TURN + 1) / 2) * math.hypot(w, h) / 2) + 2
         pw = w + 2 * pad
         padded = [0.0] * (pw * (h + 2 * pad))           # 0 = the picture's median brightness
         for y in range(h):
