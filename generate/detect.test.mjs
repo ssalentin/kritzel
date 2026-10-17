@@ -84,3 +84,17 @@ test('an empty list is an empty sheet: nothing is built', async () => {
   assert.deepEqual(files, []);
   assert.equal(r.calls.length, 1);
 });
+
+test('a drawing whose eyes are below its mouth in the image lies upside down; anything else is upright', () => {
+  const l = parseList(JSON.stringify({ things: [{ ...entry('eine Sonne', [0, 0, 1, 1]), face: 'eyes below mouth' }, { ...entry('eine Schlange', [0, 0, 1, 1]), face: 'eyes beside mouth' }, { ...entry('eine Fledermaus', [0, 0, 1, 1]), face: 'eyes below mouth', hangs: true }, { ...entry('ein Stein', [0, 0, 1, 1]), face: 'upside?' }, entry('ein Haus', [0, 0, 1, 1])] }));
+  assert.deepEqual(l.map(x => x.up), ['upside down', 'upright', 'upright', 'upright', 'upright']);   // the bat hangs: not turned
+});
+
+test('a drawing lying upside down is built from the image turned round, placed where it really is', async () => {
+  const list = JSON.stringify({ things: [{ ...entry('eine Sonne', [0.1, 0.2, 0.3, 0.4]), face: 'eyes below mouth' }] });
+  const { prompts } = await sheet(list, `### NEW\n${stone}`);
+  const p = prompts.find(x => x.includes('You build only this one drawing: eine Sonne'));
+  assert.match(p, /shown turned round/);
+  assert.match(p, /inside the box \[0\.7,0\.6,0\.9,0\.8\]/);          // the box in the turned image
+  assert.match(p, /paper \{ x: 0\.2, y: 0\.3 \}/);                    // the place on the real paper
+});
