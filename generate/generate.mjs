@@ -161,6 +161,9 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
       // something else that is no longer alive (figures → "Kerzen")
       const renamed = oldName && code.match(/name:\s*['"]([^'"]+)['"]/)?.[1] !== oldName;
       if (!(renamed && !b.info.actors?.length)) for (const id of keepIds) if (!b.info.actors?.includes(id)) problems.push(`keep the actor id "${id}" (the sim remembers its friendships)`);
+      // a house that hops and talks (live: 'Eins, zwei, drei... ich komme!'): a building or object is only an actor
+      // when a face is drawn on it
+      if (b.info.actors?.length && notAlive(code)) problems.push('it is a building or an object with no drawn face, so it is not alive: no actor (return actors: [], keep it as scenery with obstacles)');
       if (!problems.length && extra) problems.push(...extra(info));
     }
     if (!problems.length) return { code: full, model, info, warnings: [
@@ -177,6 +180,16 @@ const WORD = /^\s*(?:the |a |an )?(?:(?:hand-?written|written|scribbled|pencil|p
 export function wordOnly(code) {
   const drawing = code.match(/drawing:\s*['"]([^'"]*)['"]/)?.[1] || '', name = code.match(/name:\s*['"]([^'"]*)['"]/)?.[1] || '';
   return WORD.test(drawing) || /(?:^|[-\s])(?:wort|schriftzug|titel|text|buchstaben)$/i.test(name);
+}
+
+// a building or object (by its name) whose parts and drawing mention no face: not a figure. Flying vehicles are
+// left out on purpose: they are actors (they fly)
+const OBJECT = /(?:^|[\s-])(?:haus|house|hütte|hut|schloss|castle|turm|tower|zelt|tent|zaun|fence|tisch|table|stuhl|chair|bett|bed|lampe|lamp|kiste|box|karton|regal|shelf|brücke|bridge|mauer|wall|gefängnis|jail)(?:$|[\s-])/i;
+const FACE = /\b(?:auge|augen|eye|eyes|gesicht|face|mund|mouth|smile|smiling|lächel\w*|nase|nose)\b/i;
+export function notAlive(code) {
+  const name = code.match(/\bmeta\s*=\s*\{[^}]*?\bname:\s*['"]([^'"]+)['"]/)?.[1] || '', drawing = code.match(/drawing:\s*['"]([^'"]*)['"]/)?.[1] || '';
+  const parts = (code.match(/^\/\/ parts:.*$/gm) || []).join(' ');
+  return OBJECT.test(` ${name} `) && !FACE.test(`${drawing} ${parts}`);
 }
 
 // ---------- a new sheet: list its drawings first ----------
@@ -290,7 +303,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
     async function commit(s, old, f, last, check) {
       // written meanwhile by a parallel section with the same actor id: check again against what is there now
       if (f.code && [...f.code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].some(x => takenNow(old).includes(x[1]))) f = await check(takenNow(old));
-      const thingName = (f.code || s.body).match(/name:\s*['"]([^'"]+)['"]/)?.[1] || 'Ding';
+      let thingName = (f.code || s.body).match(/name:\s*['"]([^'"]+)['"]/)?.[1] || 'Ding';
       if (!f.code && !last && onlyHolds(f.problems)) { waiting.push({ s, box: f.info?.box && { file: '(waiting)', ...f.info.box } }); return; }
       if (f.code && (f.info?.hanging || []).some(h => !h.supported)) {
         await bookBoxes();
@@ -300,6 +313,18 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
         }
       }
       if (!f.code) { report.rejected.push({ kind: s.kind, file: s.file, name: thingName, problems: f.problems }); log(`${name}: REJECTED ${s.kind} ${s.file || thingName}: ${f.problems.join('; ')}`); return; }
+      // a NEW thing's name is unique in the book ("Strichfigur 2"): dialogues and quests name figures, and four
+      // "Strichfigur" made the dialogue writer invent speakers (live: 6 of 12 dropped)
+      if (!old) {
+        const taken = new Set([...existing.map(t => String(t.meta.name).toLowerCase()), ...report.written.map(w => w.name.toLowerCase())]);
+        if (taken.has(thingName.toLowerCase())) {
+          let n = 2;
+          while (taken.has(`${thingName} ${n}`.toLowerCase())) n++;
+          const unique = `${thingName} ${n}`, q = thingName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          f = { ...f, code: f.code.replace(new RegExp(`(name:\\s*)(['"])${q}\\2`, 'g'), (_, a, b) => `${a}${b}${unique}${b}`) };
+          thingName = unique;
+        }
+      }
       const base = old ? old.file.replace(/\.js$/, '') : freeName(slug(thingName), files);
       files.add(base);
       const file = base + '.js';
