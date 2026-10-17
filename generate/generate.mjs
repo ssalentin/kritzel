@@ -279,7 +279,8 @@ async function detectSheet({ images, existing, calls }) {
 // ---------- one settled frame ----------
 // a new sheet with more than two drawings is written by the main call and up to HELPERS parallel calls
 const HELPERS = 3, PARALLEL = process.env.KRITZEL_PARALLEL !== '0';
-export async function processFrame(frame, { thingsDir, reportsDir, box = null, previous = null, bigChange = false, render = false, newSheet = false, onProgress = () => {} }) {
+// onLater({ written }): things written after processFrame returned (a final's split parts)
+export async function processFrame(frame, { thingsDir, reportsDir, box = null, previous = null, bigChange = false, render = false, newSheet = false, onProgress = () => {}, onLater = () => {} }) {
   mkdirSync(reportsDir, { recursive: true });
   const name = basename(frame).replace(/\.\w+$/, '');
   const settledAt = statSync(frame).mtimeMs;
@@ -451,7 +452,11 @@ ${draft}`;
           const parts = [];
           for (const x of secs.slice(1)) {
             if (wordOnly(x.body)) continue;
-            const taken = [...others, ...ids, ...report.written.flatMap(w => w.ids)];
+            // finals outlive the frame: a later frame may have written meanwhile, so names and ids are checked against
+            // the things on disk at write time (review of 415f49b)
+            const onDisk = readdirSync(thingsDir).filter(f => /^[\w.-]+\.js$/.test(f));
+            const diskIds = onDisk.filter(f => f !== file).flatMap(f => { try { return [...readFileSync(join(thingsDir, f), 'utf8').matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(m => m[1]); } catch { return []; } });
+            const taken = [...new Set([...others, ...ids, ...report.written.flatMap(w => w.ids), ...diskIds])];
             const g = await finish({ body: x.body, model: MODEL, frame, images: s.images || images, takenIds: taken, keepIds: [], calls: report.calls, fixModels: [MODEL], extra: hangingLoose(null) });
             if (!g.code) { log(`${name}: a part split from ${file} failed its checks: ${g.problems.join('; ').slice(0, 160)}`); continue; }
             let partName = g.code.match(/name:\s*['"]([^'"]+)['"]/)?.[1] || 'Ding', code = g.code;
@@ -463,7 +468,7 @@ ${draft}`;
               code = code.replace(new RegExp(`(name:\\s*)(['"])${q}\\2`, 'g'), (_, a, b) => `${a}${b}${partName} ${n}${b}`);
               partName = `${partName} ${n}`;
             }
-            const base = freeName(slug(partName), files);
+            const base = freeName(slug(partName), new Set([...files, ...readdirSync(thingsDir).map(f => f.replace(/\.js$/, ''))]));
             files.add(base);
             const partFile = base + '.js';
             atomicWrite(join(thingsDir, partFile), code);
@@ -474,6 +479,8 @@ ${draft}`;
             log(`${name}: SPLIT from ${file}: WROTE ${partFile} (${partName}) by ${MODEL}`);
           }
           done({ model: MODEL, seconds: +r.seconds.toFixed(1), ...(parts.length && { split: parts }) });
+          // the watcher refreshes dialogues from what a frame wrote; these came after it returned
+          if (parts.length) try { onLater({ written: report.written.filter(w => parts.includes(w.file)) }); } catch { /* never breaks a final */ }
         } catch (e) { log(`${name}: final of ${file} failed, the draft stays: ${e.message.slice(0, 200)}`); done({ kept: 'draft', problems: [e.message.slice(0, 200)] }); }
       });
     }
@@ -823,6 +830,7 @@ async function watch(dir, opts) {
   // the check runs every actor through the book's sim, which needs rot-js (a generate/ dependency)
   try { import.meta.resolve('rot-js'); } catch { log('rot-js is missing (run npm ci in generate/): the check will not run things in the sim'); }
   const sleep = ms => new Promise(ok => setTimeout(ok, ms));
+  const later = ({ written }) => wantDialogues(opts, `split: ${written.map(w => w.name).join(', ')}`, written.map(w => w.name));
   let tries = 0, triesFor = null;           // failed attempts, and for which frame
   let archivedFor = null;                   // switch mode: the sheet whose new world is already set up
   // after a failed frame: true = try the same frame again (after a wait), false = give up on it.
@@ -866,7 +874,7 @@ async function watch(dir, opts) {
           archivedFor = newest;
           writePaper(opts.reportsDir, { _through: newest });        // a new world has no old paper positions
         }
-        const r = await processFrame(join(dir, newest), { ...opts, box: null, previous: null, newSheet: 'switch' });
+        const r = await processFrame(join(dir, newest), { ...opts, onLater: later, box: null, previous: null, newSheet: 'switch' });
         if (r.error) { status('failed', newest, r.error.slice(0, 80)); if (await retrySame(r.error, newest)) continue; last = newest; continue; }
         status(r.written.length ? 'new' : 'unclear', newest, r.written.map(w => w.name).join(', '));
         if (r.written.length) wantDialogues(opts, `new sheet: ${r.written.length} things`, r.written.map(w => w.name));
@@ -878,7 +886,7 @@ async function watch(dir, opts) {
         log(`${newest}: new sheet (add mode): building what's on it, the world stays`);
         status('building', newest);
         await movePaperAlong(dir, newest, opts);
-        const r = await processFrame(join(dir, newest), { ...opts, box: null, previous: null, newSheet: 'add' });
+        const r = await processFrame(join(dir, newest), { ...opts, onLater: later, box: null, previous: null, newSheet: 'add' });
         if (r.error) { status('failed', newest, r.error.slice(0, 80)); if (await retrySame(r.error, newest)) continue; last = newest; continue; }
         status(r.written.length ? 'new' : 'unclear', newest, r.written.map(w => w.name).join(', '));
         if (r.written.length) wantDialogues(opts, `new sheet: ${r.written.length} things`, r.written.map(w => w.name));
@@ -891,7 +899,7 @@ async function watch(dir, opts) {
       const box = side.previous && side.previous === lastGenerated ? side.changed_box : null;
       status('building', newest);
       await movePaperAlong(dir, newest, opts);
-      const r = await processFrame(join(dir, newest), { ...opts, box, bigChange: movedSince || side.reason === 'big-change', previous: lastGenerated ? join(dir, lastGenerated) : null, onProgress: status.more });
+      const r = await processFrame(join(dir, newest), { ...opts, onLater: later, box, bigChange: movedSince || side.reason === 'big-change', previous: lastGenerated ? join(dir, lastGenerated) : null, onProgress: status.more });
       const names = r.written.map(w => w.name).join(', ');
       if (r.error) status('failed', newest, r.error.slice(0, 80));
       else if (r.written.length) status(r.written.every(w => w.kind === 'UPDATE') ? 'changed' : 'new', newest, names, { made: r.written.map(w => w.made).filter(Boolean) });
