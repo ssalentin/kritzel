@@ -30,3 +30,20 @@ test('the report has the time of each stage and of each call', async () => {
     assert.equal(saved.written[0].at, t.firstWritten);
   } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a new thing whose name is in the book already gets a number, in its meta and its actor', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kritzel-names-'));
+  try {
+    for (const d of ['things', 'reports']) mkdirSync(join(dir, d));
+    const example = readFileSync(join(import.meta.dirname, 'examples', 'schnecke.js'), 'utf8');
+    writeFileSync(join(dir, 'things', 'schnecke.js'), example);
+    const frame = join(dir, '20261017-120001.jpg');
+    execFileSync('convert', ['-size', '640x480', 'xc:white', frame]);
+    writeFileSync(join(dir, 'reply.txt'), `### NEW\n${example.replace("id: 'schnecke'", "id: 'schnecke-zwei'")}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const r = await processFrame(frame, { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports'), box: [100, 100, 200, 200] });
+    assert.equal(r.written[0]?.name, 'Schnecke 2', JSON.stringify(r.rejected));
+    const code = readFileSync(join(dir, 'things', r.written[0].file), 'utf8');
+    assert.ok(!/name:\s*'Schnecke'/.test(code) && /name:\s*'Schnecke 2'/.test(code));
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
