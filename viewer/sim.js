@@ -307,6 +307,9 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     return seen;
   }
 
+  // a trace of the goal picks, for reading in a headless viewer (brain.trace()): who, goal, target, and why
+  const picks = [];
+  const tracePick = (a, g) => { picks.push({ t: +now.toFixed(1), who: a.id, goal: g.type, to: g.target?.id ?? g.target?.name ?? g.item?.name ?? (g.cell ? 'cell' : null), why: g.why ?? null }); if (picks.length > 400) picks.shift(); };
   function decide(a) {
     const opts = [];
     const add = (u, goal) => opts.push({ u: u + R() * 0.3, goal });
@@ -346,6 +349,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     }
     opts.sort((p, q) => q.u - p.u);
     a.goal = opts[0].goal;
+    tracePick(a, a.goal);
     a.goalSince = now;
     if (a.goal.type === 'rest') say(a, line(a, 'rest'), 2);
   }
@@ -579,7 +583,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
 
   return {
     addActor, removeActor,
-    actors: () => actors, byId: () => byId, spots: () => spots, weather: () => weatherNow,   // read-only views for the UI and tests
+    actors: () => actors, byId: () => byId, spots: () => spots, weather: () => weatherNow, trace: () => picks.slice(),   // read-only views for the UI and tests
     // obstacles/spots changed (a drawn thing was added, changed or removed)
     setWorld({ trees: tr, spots: sp, feet: ft = feet }) {
       feet = ft;

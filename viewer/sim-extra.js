@@ -155,15 +155,15 @@ export function options(a, add, { spots, cover, spotCell, things, nearest, actor
       const c = nearest(fav.x, fav.z, a);
       if (c) {
         // a guard always goes back to its favourite; a napper does when it is tired (so it reaches the rest there)
-        add(p.hobby === 'guard' || (p.hobby === 'nap' && a.energy < 0.5) ? 1.2 : 0.4, { type: 'wander', cell: [c.x, c.y] });
-        if (p.hobby === 'nap' && Math.hypot(a.pos.x - fav.x, a.pos.z - fav.z) < 2.5) add(0.9, { type: 'rest', until: now() + 20 });
+        add(p.hobby === 'guard' || (p.hobby === 'nap' && a.energy < 0.5) ? 1.2 : 0.4, { type: 'wander', cell: [c.x, c.y], target: fav, why: 'favourite' });
+        if (p.hobby === 'nap' && Math.hypot(a.pos.x - fav.x, a.pos.z - fav.z) < 2.5) add(0.9, { type: 'rest', until: now() + 20, why: 'nap' });
       }
     }
   }
   if (p && actors) {
     // a liked figure: a follower walks after it for a while
     const liked = actors().find(b => b !== a && !b.hidden && p.likes.some(l => l === b.name || l === b.id));
-    if (liked && p.hobby === 'follow') add(0.7, { type: 'follow', target: liked });
+    if (liked && p.hobby === 'follow') add(0.7, { type: 'follow', target: liked, why: 'liked' });
   }
 }
 
