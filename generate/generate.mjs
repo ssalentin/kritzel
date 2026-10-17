@@ -222,7 +222,9 @@ export const kindOf = s => KINDS.find(([, re]) => re.test(s))?.[0] || String(s).
 export function againInBook(listed, existing) {
   const names = new Set(existing.map(t => String(t.meta.name).toLowerCase()));
   const named = listed.filter(e => e.inBook && names.has(e.inBook.toLowerCase()));
-  const book = existing.filter(t => t.meta.paper && !t.meta.paper.stale && typeof t.meta.paper.x === 'number')
+  // stale places count too: the fit finds the sheet's move itself (stale only guards REMOVE). After the paper was taken
+  // away and put back, every place was stale and the whole sheet was built again (pipeline-capture's replay)
+  const book = existing.filter(t => t.meta.paper && typeof t.meta.paper.x === 'number')
     .map(t => ({ k: kindOf(t.meta.name), x: t.meta.paper.x, y: t.meta.paper.y }));
   const ents = listed.map(e => ({ e, k: kindOf(e.de), x: (e.box[0] + e.box[2]) / 2, y: (e.box[1] + e.box[3]) / 2 }));
   const pairs = [];
@@ -740,6 +742,16 @@ Several builders make this sheet at the same time. You build only this one drawi
   }
 }
 
+// a big change that built nothing (the paper taken away: an empty table) keeps the places from before it: they are
+// still the sheet's places when it comes back. `before` is the paper map read before movePaperAlong.
+export function keepPlacesIfNothing(reportsDir, before, r) {
+  if (r.error || r.written.length || r.removed?.length) return false;
+  const now = readPaper(reportsDir);
+  if (!Object.entries(now).some(([k, v]) => k !== '_through' && v?.stale && !before[k]?.stale)) return false;
+  writePaper(reportsDir, { ...before, _through: now._through });
+  return true;
+}
+
 // apply the sheet moves of every frame after paper._through up to `upTo`, in order (things without an
 // entry yet start from their meta.paper). The first time, there is no history to replay: start here.
 export async function movePaperAlong(dir, upTo, { thingsDir, reportsDir }) {
@@ -967,8 +979,10 @@ async function watch(dir, opts) {
       if (newSheet) {
         log(`${newest}: new sheet (add mode): building what's on it, the world stays`);
         status('building', newest);
+        const placesBefore = readPaper(opts.reportsDir);
         await movePaperAlong(dir, newest, opts);
         const r = await processFrame(join(dir, newest), { ...opts, onLater: later, box: null, previous: null, newSheet: 'add' , onProgress: status.more });
+        if (keepPlacesIfNothing(opts.reportsDir, placesBefore, r)) log(`${newest}: nothing built: the paper places stay as they were`);
         if (r.error) { status('failed', newest, r.error.slice(0, 80)); if (await retrySame(r.error, newest)) continue; last = newest; continue; }
         status(r.written.length ? 'new' : 'unclear', newest, r.written.map(w => w.name).join(', '));
         if (r.written.length) wantDialogues(opts, `new sheet: ${r.written.length} things`, r.written.map(w => w.name));
@@ -980,8 +994,10 @@ async function watch(dir, opts) {
       // frame, so a scribble that appeared in a skipped frame is still seen
       const box = side.previous && side.previous === lastGenerated ? side.changed_box : null;
       status('building', newest);
+      const placesBefore = readPaper(opts.reportsDir);
       await movePaperAlong(dir, newest, opts);
       const r = await processFrame(join(dir, newest), { ...opts, onLater: later, box, bigChange: movedSince || side.reason === 'big-change', previous: lastGenerated ? join(dir, lastGenerated) : null, onProgress: status.more });
+      if (keepPlacesIfNothing(opts.reportsDir, placesBefore, r)) log(`${newest}: nothing built: the paper places stay as they were`);
       const names = r.written.map(w => w.name).join(', ');
       if (r.error) status('failed', newest, r.error.slice(0, 80));
       else if (r.written.length) status(r.written.every(w => w.kind === 'UPDATE') ? 'changed' : 'new', newest, names, { made: r.written.map(w => w.made).filter(Boolean) });
