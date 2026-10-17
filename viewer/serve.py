@@ -325,6 +325,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                                 latest[:] = buf[start:end + 2], latest[1] + 1
                                 cond.notify()
                         buf = buf[end + 2:]
+                    if len(buf) > 8 << 20:  # no frame end in 8 MB: not a camera stream
+                        break
             except Exception:             # includes the response being closed under it
                 pass
             with cond:
