@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // A stand-in for `pi --mode rpc` in tests: FAKE_PI=ok (default) streams "Hello world" in two deltas;
-// slow streams forever until aborted; error fails the call; die exits before replying.
+// slow streams forever until aborted; error fails the call; die exits before replying; mute never gets ready.
 const mode = process.env.FAKE_PI || 'ok';
 let buf = '', n = 0;
 const out = o => process.stdout.write(JSON.stringify(o) + '\n');
@@ -11,6 +11,7 @@ process.stdin.on('data', d => {
   buf += d;
   for (let i; (i = buf.indexOf('\n')) >= 0;) {
     const c = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
+    if (c.type === 'get_state') { if (mode !== 'mute') out({ id: c.id, type: 'response', command: 'get_state', success: true, data: {} }); continue; }
     if (c.type === 'new_session') { sofar = ''; out({ type: 'response', command: 'new_session', success: true }); }
     if (c.type === 'abort') { clearInterval(timer); out({ type: 'response', command: 'abort', success: true }); end(sofar, 'aborted'); }
     if (c.type !== 'prompt') continue;

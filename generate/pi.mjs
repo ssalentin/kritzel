@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { track } from './children.mjs';
 
 export const isPiModel = model => typeof model === 'string' && model.includes('/');
-const KEEP = 12;                                   // idle processes kept per (model, system prompt)
+const KEEP = 6;                                    // idle processes kept per (model, system prompt): ~140 MB each
 const idle = new Map();                            // key → [worker]
 
 function startWorker(model, system) {
@@ -17,6 +17,10 @@ function startWorker(model, system) {
     '--no-prompt-templates', '--no-themes', '--thinking', 'off', '--model', model, '--system-prompt', system],
   { cwd: tmpdir(), stdio: ['pipe', 'pipe', 'pipe'] }));    // outside any repo
   const w = { p, model, system, onLine: null, dead: false, used: false, err: '' };
+  // ready once it answers a first command: a cold start takes ~1.3 s, several at once on a busy host 5 s and more,
+  // and that must not count against the first-text timeout
+  w.ready = new Promise(ok => { w.onLine = line => { if (line.startsWith('{"') && line.includes('"id":"ready"')) { w.onLine = null; ok(); } }; });
+  p.stdin.write(JSON.stringify({ id: 'ready', type: 'get_state' }) + '\n');
   let buf = '';
   p.stdout.on('data', d => {
     buf += d;
@@ -70,10 +74,16 @@ export function deltaOf(line) {
 // Same shape as oneShot: { text, cost, seconds, model } or, when signal aborts it, { text: sofar, aborted: true }.
 // firstTextMs: no text by then → the call fails (its caller can still try another model), so a stuck
 // provider costs seconds, not minutes.
-export function piCall({ system, text, images = [], model, timeoutMs = 3 * 60_000, firstTextMs = 20_000, onText = null, signal = null }) {
-  if (signal?.aborted) return Promise.resolve({ text: '', aborted: true, cost: null, seconds: 0, model });
+// startMs: a process not ready by then (cold, on a busy host) fails the call (killed).
+export async function piCall({ system, text, images = [], model, timeoutMs = 3 * 60_000, firstTextMs = 20_000, startMs = 30_000, onText = null, signal = null }) {
+  if (signal?.aborted) return { text: '', aborted: true, cost: null, seconds: 0, model };
   const w = take(model, system), t0 = Date.now();
   hold(w, true);
+  let startTimer;
+  const started = await Promise.race([w.ready.then(() => true), new Promise(ok => { startTimer = setTimeout(() => ok(false), startMs); w.onExit = () => ok(false); })]);
+  clearTimeout(startTimer);
+  if (!started) { w.p.kill('SIGTERM'); throw Object.assign(new Error(`pi (${model}) did not start within ${startMs / 1000}s: ${w.err.slice(-200)}`), { sofar: '' }); }
+  if (signal?.aborted) { giveBack(w); return { text: '', aborted: true, cost: null, seconds: (Date.now() - t0) / 1000, model }; }
   return new Promise((resolve, reject) => {
     let sofar = '', settled = false, aborted = false;
     const done = (fn, v, reuse) => {
