@@ -432,7 +432,7 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, ground
       case 'walk': {
         const w = ph * 9 * a.speed, s = Math.sin(w) * 0.7, c = Math.cos(w);
         T.legLx = s; T.legRx = -s; T.armLx = -s * 0.8; T.armRx = s * 0.8;
-        T.kneeL = 0.9 * Math.max(0, c); T.kneeR = 0.9 * Math.max(0, -c);
+        T.kneeL = 0.9 * Math.max(0, -c); T.kneeR = 0.9 * Math.max(0, c);   // a knee lifts while its leg swings forward (toward +z: legL.x falls)
         T.elbowL = -0.3 + 0.1 * Math.sin(w); T.elbowR = -0.3 - 0.1 * Math.sin(w);
         T.headX = 0.04 * Math.sin(2 * w);
         r.g.position.y = Math.abs(c) * 0.05;
@@ -471,10 +471,11 @@ export function create({ THREE, actors, trees, pond, spots = [], islandR, ground
     }
     const e = 1 - Math.exp(-dt * 14), to = (o, key, v) => { o[key] += (v - o[key]) * e; };
     to(r.legL.rotation, 'x', T.legLx); to(r.legR.rotation, 'x', T.legRx);
-    to(r.legL.elbow.rotation, 'x', T.kneeL); to(r.legR.elbow.rotation, 'x', T.kneeR);
+    const bend = (j, v) => { if (j.elbow) to(j.elbow.rotation, 'x', v); };   // a rig without elbows (not ctx.limb) just doesn't bend
+    bend(r.legL, T.kneeL); bend(r.legR, T.kneeR);
     to(r.armL.rotation, 'x', T.armLx); to(r.armR.rotation, 'x', T.armRx);
     to(r.armL.rotation, 'z', T.armLz); to(r.armR.rotation, 'z', T.armRz);
-    to(r.armL.elbow.rotation, 'x', T.elbowL); to(r.armR.elbow.rotation, 'x', T.elbowR);
+    bend(r.armL, T.elbowL); bend(r.armR, T.elbowR);
     to(r.head.rotation, 'x', T.headX); to(r.head.rotation, 'z', T.headZ);
   }
 
