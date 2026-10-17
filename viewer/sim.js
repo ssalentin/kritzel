@@ -439,6 +439,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         if (now > g.until || !stepAway(a, g.target)) a.goal = null;
         break;
       case 'visit': case 'fetch': case 'bring': X.visit?.(a, g, api); break;
+      case 'pick': case 'carry': case 'give': X.portable?.(a, g, api); break;
       case 'approach':
         if (g.target.hidden) { a.goal = null; break; }
         if (near(a, g.target, 0.9)) { interact(a, g.target); }   // wider margin: two bodies waiting on each other would deadlock

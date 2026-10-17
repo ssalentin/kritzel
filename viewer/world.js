@@ -135,8 +135,28 @@ export async function build(api, prevState = null) {
     for (let i = 0; i <= 12; i++) top = Math.max(top, groundY(b.min.x + (b.max.x - b.min.x) * i / 12));
     entry.box.position.y = top;
   }
+  // a small thing a figure can pick up (sim-extra.js: 'portable'): it has no figure or hold in it and fits in a hand
+  function ensurePortable(e) {
+    if (e.portable || !e.foot || e.heldBy || e.actors.length || e.holds.length) return;
+    if (Math.max(e.foot.hx, e.foot.hz) * 2 > 2 || e.foot.top > 2.5) return;
+    e.portable = { kind: 'portable', name: e.meta?.name, x: e.foot.x, z: e.foot.z, carrier: null };
+    e.syncAt = { x: e.foot.x, z: e.foot.z };
+    e.spots.push(e.portable);
+  }
+  // a carried thing follows its carrier, up in the hand; a dropped one lies on the page again
+  function followPortable(e) {
+    const p = e.portable;
+    const dx = p.x - e.syncAt.x, dz = p.z - e.syncAt.z;
+    if (dx || dz) {
+      e.box.position.x += dx; e.box.position.z += dz; e.foot.x += dx; e.foot.z += dz; e.syncAt = { x: p.x, z: p.z };
+      for (const o of e.obstacles) { o.x += dx; o.z += dz; }
+    }
+    if (p.carrier) { e.box.position.y = 1.1 + (p.carrier.alt || 0); p.held = true; }
+    else if (p.held) { p.held = false; onPage(e); }
+  }
   function shift(entry, dx, dz) {
     entry.box.position.x += dx; entry.box.position.z += dz;
+    if (entry.syncAt) { entry.syncAt.x += dx; entry.syncAt.z += dz; }
     for (const o of [...entry.obstacles, ...entry.spots, ...entry.holds]) { o.x += dx; o.z += dz; }
     for (const a of entry.actors) {
       a.start = [(a.start?.[0] ?? 0) + dx, (a.start?.[1] ?? 0) + dz];
@@ -296,7 +316,7 @@ export async function build(api, prevState = null) {
     places();
     trees.length = 0;
     const spots = [];
-    for (const e of loaded.values()) { trees.push(...e.obstacles); spots.push(...e.spots); }
+    for (const e of loaded.values()) { ensurePortable(e); trees.push(...e.obstacles); spots.push(...e.spots); }
     brain.setWorld({ trees, spots, feet: blockingFeet() });
     brain.setHolds([...loaded.values()].flatMap(e => e.holds));
     attachHeld();
@@ -332,7 +352,7 @@ export async function build(api, prevState = null) {
   for (const [file, entry, meta] of later) try { place(file, entry, meta, false); } catch (e) { report(`things/${file}: placing: ${e.message}`); }
   untangle();
   const actors = [...loaded.values()].flatMap(e => e.actors);
-  for (const e of loaded.values()) trees.push(...e.obstacles);
+  for (const e of loaded.values()) { ensurePortable(e); trees.push(...e.obstacles); }
   const spots = [...loaded.values()].flatMap(e => e.spots);
   places();
   brain = sim.create({ THREE, actors, trees, pond, spots, feet: blockingFeet(), islandR: FIT_R, ground: GROUND, groundY, states: prevState, extra, moves });
@@ -383,6 +403,7 @@ export async function build(api, prevState = null) {
         if (!e.update) continue;
         try { e.update(t, dt, env); } catch (err) { report('things: ' + err.message); e.update = null; }
       }
+      for (const e of loaded.values()) if (e.portable && e.foot) followPortable(e);
       env.actors = brain.actors?.() || [];   // living props (e.g. a tree with a face) can react to who is near
       env.night = api.mood?.night ?? 0;      // 0 day … 1 night: characters get sleepy and gather at lamps
       env.lamps = api.mood?.lamps() ?? [];

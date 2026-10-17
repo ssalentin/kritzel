@@ -41,6 +41,10 @@ export const LINES = {
   clear: { person: ['Die Sonne kommt wieder!', 'Endlich wieder hell!'], sqichy: ['Die Sonne! Blubb!'] },
   showEgg: { person: ['Schau mal, mein Ei!', 'Guck, ein Ei!'], sqichy: ['Schau, mein Ei!'] },
   found: { person: ['Oh, ein Schlüssel!', 'Hihi, ein Schlüssel!'] },
+  pick: { person: ['Oh, das nehme ich mit!', 'Das ist jetzt meins!'] },
+  give: { person: ['Magst du meins?', 'Hier, für dich!', 'Tauschen?'] },
+  thanks: { person: ['Danke!', 'Oh, toll!'] },
+  put: { person: ['Hier leg ich es ab.', 'Das lass ich hier.'] },
   open: { person: ['Ich schließ die Truhe auf!'] },
   treasure: { person: ['Ein Schatz!', 'Juhu, ein Schatz!'], sqichy: ['Blubb, ein Schatz!'] },
   startled: { person: ['Huch! Wer war das?', 'Uiii!'], sqichy: ['Blubb!'] },
@@ -93,6 +97,10 @@ export const LINES_EN = {
   clear: { person: ['The sun is back!', 'Bright again at last!'], sqichy: ['The sun! Blub!'] },
   showEgg: { person: ['Look, my egg!', 'See, an egg!'], sqichy: ['Look, my egg!'] },
   found: { person: ['Oh, a key!', 'Hehe, a key!'] },
+  pick: { person: ['Oh, I\'ll take that!', 'That\'s mine now!'] },
+  give: { person: ['Want mine?', 'Here, for you!', 'Swap?'] },
+  thanks: { person: ['Thanks!', 'Oh, nice!'] },
+  put: { person: ['I\'ll put it down here.', 'I\'ll leave it here.'] },
   open: { person: ['I\'m unlocking the chest!'] },
   treasure: { person: ['A treasure!', 'Yay, a treasure!'], sqichy: ['Blub, a treasure!'] },
   startled: { person: ['Whoa! Who was that?', 'Eeee!'], sqichy: ['Blub!'] },
@@ -113,8 +121,17 @@ export const LINES_EN = {
 const remember = (a, who, kind) => { a.memo = [...(a.memo || []), { who: who.id, kind }].slice(-4); };
 // door visits: walk to a door, step inside (hidden) for a while, then come back out
 // doors (go in to rest) and items (fetch a key for a lock): called for each candidate goal
+// small things a figure can pick up, carry about and give to a friend (who gives one back: a swap).
+// Bounded: at most CARRY_MAX carried at once, and a carrier who is gone or hidden lets it go.
+const CARRY_MAX = 3, CARRY_FOR = 25;
+const carriedBy = (spots, a) => spots().find(s => s.kind === 'portable' && s.carrier === a);
+
 export function options(a, add, { spots, cover, spotCell }) {
   for (const sp of spots()) {
+    if (sp.kind === 'portable' && sp.carrier === a) add(5, { type: 'carry', item: sp, until: null });
+    if (sp.kind === 'portable' && !sp.carrier && a.traits.curiosity > 0.3 && !carriedBy(spots, a) &&
+        spots().filter(s => s.kind === 'portable' && s.carrier).length < CARRY_MAX)
+      add(0.3 + a.traits.curiosity * 0.4, { type: 'pick', spot: sp });
     if (sp.kind === 'door' && spotCell(sp, a)) add(0.2 + (1 - a.energy) * 0.8 + (cover() > 0.5 ? 0.6 : cover() > 0.3 ? 0.25 : 0), { type: 'visit', spot: sp, cell: spotCell(sp, a), phase: 'walk' });
     if (sp.kind === 'item' && sp.carrier === a) {       // carrying a key: keep bringing it to the lock
       const lock = spots().find(l => l.kind === 'lock' && l.needs === sp.item && !l.opened);
@@ -123,6 +140,48 @@ export function options(a, add, { spots, cover, spotCell }) {
     if (sp.kind === 'item' && !sp.carrier && a.traits.curiosity > 0.3 && spots().some(l => l.kind === 'lock' && l.needs === sp.item && !l.opened))
       add(0.4 + a.traits.curiosity * 0.5, { type: 'fetch', spot: sp });
   }
+}
+
+// a portable thing: walk to it and pick it up; carry it about for a while; hand it to a friend close by
+// (who hands back what they carry, if anything: a swap); otherwise put it down where it is
+export function portable(a, g, api) {
+  const { now, step, say, line, nearest, R, busy, spots, actors } = api;
+  const it = g.item ?? g.spot;
+  const drop = () => { if (it.carrier === a) { it.carrier = null; say(a, line(a, 'put'), 1.8); } a.goal = null; };
+  if (g.type === 'pick') {
+    if (it.carrier) { a.goal = null; return; }
+    const c = nearest(it.x, it.z, a);
+    if (!c) { a.goal = null; return; }
+    if (Math.hypot(a.cell.x - c.x, a.cell.y - c.y) > 1.5) { if (!step(a, c.x, c.y)) a.goal = null; return; }
+    if (it.carrier) { a.goal = null; return; }
+    it.carrier = a; say(a, line(a, 'pick'), 2);
+    a.goal = { type: 'carry', item: it, until: now() + CARRY_FOR }; a.goalSince = now();
+    return;
+  }
+  if (it.carrier !== a || a.hidden) { if (it.carrier === a) it.carrier = null; a.goal = null; return; }
+  if (g.type === 'give') {                           // walk to the friend, then hand over (or swap)
+    const b = g.to;
+    if (b.hidden || b.goal?.type === 'give') { a.goal = { type: 'carry', item: it, until: now() + CARRY_FOR }; return; }
+    if (Math.hypot(a.cell.x - b.cell.x, a.cell.y - b.cell.y) > 1.5) { if (!step(a, b.cell.x, b.cell.y)) a.goal = { type: 'carry', item: it, until: now() + CARRY_FOR }; return; }
+    const theirs = carriedBy(spots, b);
+    it.carrier = b; if (theirs) theirs.carrier = a;      // the swap: each takes the other's
+    busy(a, b, 'talk', 2);
+    say(a, line(a, 'give'), 2); say(b, line(b, 'thanks'), 2, 0.5);
+    a.goal = theirs ? { type: 'carry', item: theirs, until: now() + CARRY_FOR } : null;
+    b.goal = { type: 'carry', item: it, until: now() + CARRY_FOR }; b.goalSince = now();
+    return;
+  }
+  // carry: wander about with it; now and then a friend close by is offered it
+  if (g.until === null) g.until = now() + CARRY_FOR;
+  if (now() > g.until) return drop();
+  const friend = actors().find(b => b !== a && !b.hidden && b.kind !== 'squid' && !carriedBy(spots, b) &&
+    Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y)) <= 2 && (b.goal?.type ?? 'idle') !== 'give');
+  if (friend && R() < 0.4) { a.goal = { type: 'give', item: it, to: friend, until: now() + 8 }; a.goalSince = now(); return; }
+  if (!g.cell || (a.cell.x === g.cell[0] && a.cell.y === g.cell[1])) {
+    const c = nearest(a.pos.x + (R() - 0.5) * 4, a.pos.z + (R() - 0.5) * 4, a);
+    g.cell = c ? [c.x, c.y] : null;
+  }
+  if (!g.cell || !step(a, g.cell[0], g.cell[1])) g.cell = null;
 }
 
 // items and locks: a curious character picks up a free item and carries it to the matching lock
@@ -370,6 +429,11 @@ function endDialogue(a, api) {
 
 export function tick(actors, { now, R, pick, line, say, rel, spots, nearest }, cover) {
   for (const a of actors) if (a.after && now() >= a.after.at) endDialogue(a, arguments[1]);
+  // portable things: a carried one is where its carrier is; a carrier who left or hid lets it go
+  for (const it of spots().filter(s => s.kind === 'portable' && s.carrier)) {
+    if (!actors.includes(it.carrier) || it.carrier.hidden || !/^(carry|give)$/.test(it.carrier.goal?.type ?? '')) it.carrier = null;   // something else took over: let go
+    else { it.x = it.carrier.pos.x; it.z = it.carrier.pos.z; }
+  }
   // items: a carried item follows its carrier; a carrier who left or hid drops it; opened locks close again
   for (const it of spots().filter(s => s.kind === 'item')) {
     it.home ??= { x: it.x, z: it.z };
