@@ -1,5 +1,8 @@
 #!/bin/sh
-# A stand-in for `claude -p` in tests: one successful result, the text of $FAKE_CLAUDE_REPLY (a file) or "from claude".
-cat >/dev/null
-node -e 'const fs = require("fs"), f = process.env.FAKE_CLAUDE_REPLY;
+# A stand-in for `claude -p` in tests: one successful result, the text of $FAKE_CLAUDE_REPLY (a file) or "from
+# claude"; a call with the drawing-list system prompt gets $FAKE_CLAUDE_LIST instead, when set.
+# $FAKE_CLAUDE_LOG, when set, gets each prompt appended (one JSON line per call).
+if [ -n "$FAKE_CLAUDE_LOG" ]; then cat >> "$FAKE_CLAUDE_LOG"; else cat >/dev/null; fi
+FAKE_ARGS="$*" node -e 'const fs = require("fs"), list = process.env.FAKE_ARGS.includes("Reply with JSON only") && process.env.FAKE_CLAUDE_LIST;
+const f = list || process.env.FAKE_CLAUDE_REPLY;
 console.log(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: f ? fs.readFileSync(f, "utf8") : "from claude", total_cost_usd: 0.01 }))'

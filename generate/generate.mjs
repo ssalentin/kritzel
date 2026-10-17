@@ -23,7 +23,7 @@ import { oneShot, MODEL, FALLBACK_MODEL, PI_FALLBACK } from './claude.mjs';
 import { isPiModel, prewarm } from './pi.mjs';
 import { live } from './children.mjs';
 import { staticCheck, buildCheck, metaOf } from './check.mjs';
-import { SYSTEM, userText, fixText } from './prompts.mjs';
+import { SYSTEM, userText, fixText, DETECT_SYSTEM, detectText, oneOfText } from './prompts.mjs';
 import { islandOf, movePaper } from './place.mjs';
 import { safeLine } from '../viewer/dialogues.js';
 
@@ -118,15 +118,21 @@ export const nowOf = x => (x && kid(x.den, x.the)) || null;
 export const whyOf = body => { try { const j = JSON.parse(body.match(/^KIDS:\s*(\{.*\})\s*$/m)?.[1]); return kid(j.de, j.en); } catch { return null; } };
 
 // one module: check it; on failure ask for a fix (same model, then the fallback). → { code, model } | { problems }
-// fix calls run alongside each other on a busy sheet: at most FIX_SLOTS at once (the plan is shared)
-const FIX_SLOTS = 2;
-let fixesRunning = 0;
-const fixQueue = [];
-async function fixSlot(fn) {
-  if (fixesRunning >= FIX_SLOTS) await new Promise(ok => fixQueue.push(ok));
-  fixesRunning++;
-  try { return await fn(); } finally { fixesRunning--; fixQueue.shift()?.(); }
+// at most n calls of a kind at once, the rest wait their turn (the plan is shared, and each claude is a process)
+export function slots(n) {
+  let running = 0;
+  const queue = [];
+  return async fn => {
+    if (running >= n) await new Promise(ok => queue.push(ok));
+    running++;
+    try { return await fn(); } finally { running--; queue.shift()?.(); }
+  };
 }
+// fix calls run alongside each other on a busy sheet: at most FIX_SLOTS at once
+const FIX_SLOTS = 2, fixSlot = slots(FIX_SLOTS);
+// builds of a listed sheet: through pi (DeepSeek) all at once is the point; on the Claude plan as many as the
+// old main call + helpers (4)
+const BUILD_SLOTS = +process.env.KRITZEL_BUILD_SLOTS || (isPiModel(MODEL) ? 12 : 4), buildSlot = slots(BUILD_SLOTS);
 const onlyHolds = problems => problems.length > 0 && problems.every(p => /^(holds|heldBy) names actor/.test(p));
 
 // deferHolds: when the only problem is a held creature not written yet, say so at once instead of
@@ -163,6 +169,34 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
     ] };
   }
   return { problems };
+}
+
+// ---------- a new sheet: list its drawings first ----------
+export const DETECT_MODEL = process.env.KRITZEL_DETECT_MODEL || MODEL;
+// → [{ box: [x0, y0, x1, y1] (image fractions), what, de, en, den, the, name_en }], [] for an empty sheet, or
+// null when the list is unusable (the caller then asks the one main call). Model text goes to the child only
+// through seenOf/nowOf (the child-safe filter) and to the builders as a description, never run.
+const str = (x, n) => typeof x === 'string' && x.trim().length > 0 && x.length <= n;
+export function parseList(text) {
+  let j;
+  try { j = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)); } catch { return null; }
+  if (!Array.isArray(j?.things)) return null;
+  const out = [];
+  for (const t of j.things.slice(0, 16)) {
+    const b = Array.isArray(t?.box) && t.box.length === 4 && t.box.every(v => typeof v === 'number' && isFinite(v)) ? t.box.map(v => Math.min(1, Math.max(0, v))) : null;
+    if (!b || b[2] <= b[0] || b[3] <= b[1] || !str(t.de, 60) || !str(t.en, 60) || !str(t.what, 300)) continue;
+    out.push({ box: b.map(v => +v.toFixed(3)), what: t.what, de: t.de, en: t.en, den: str(t.den, 60) ? t.den : t.de, the: str(t.the, 60) ? t.the : t.en, name_en: str(t.name_en, 40) ? t.name_en : t.en });
+  }
+  return out;
+}
+async function detectSheet({ images, existing, calls }) {
+  try {
+    const r = await oneShot({ system: DETECT_SYSTEM, text: detectText({ existing }), images: images.slice(-1), model: DETECT_MODEL, timeoutMs: 40_000 });
+    calls.push(callOf(r, { detect: true }));
+    const list = parseList(r.text);
+    if (!list) log(`the list of drawings is unusable, asking the main call: ${r.text.slice(0, 160)}`);
+    return list;
+  } catch (e) { log(`listing the drawings failed, asking the main call: ${e.message}`); return null; }
 }
 
 // ---------- one settled frame ----------
@@ -295,19 +329,28 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
         for (let i = said.seen.length - 1; i >= said.begun; i--) if (!claimed.has(i)) { k = i; break; }
         if (k < 0) return;
         claimed.set(k, 'helper');
-        const e = said.seen[k], others = said.seen.filter((_, i) => i !== k).map(x => x.de).join(', ');
-        try {
-          const h = await oneShot({ system: SYSTEM, images, text: `${ask}
-
-Several builders make this sheet at the same time. You build only this one drawing: ${e.de} (${e.en}). The others (${others}) are built by someone else: leave them out, but keep this one's actor id different from theirs. Reply with just its one ### NEW section, no SEEN line.` });
-          report.calls.push(callOf(h, { helper: e.de }));
-          const sec = parseReply(h.text).find(x => x.kind === 'NEW');
-          if (!sec) { report.rejected.push({ kind: 'NEW', name: e.de, problems: ['the helper wrote no NEW section'] }); continue; }
-          sec.n = k; sent.add(k);
-          write(sec);                                  // checked while this helper takes the next one
-        } catch (err) { report.rejected.push({ kind: 'NEW', name: e.de, problems: [`helper call failed: ${err.message.slice(0, 200)}`] }); }
+        await buildOne(k, said.seen[k]);
       }
     };
+    // one drawing of the sheet, by its own call; checked and written like a section of the main reply.
+    // From a list (detectSheet): its box and actor id are known, so it is placed and named without guessing
+    async function buildOne(k, e, { id = null, area = null, others = said.seen.filter((_, i) => i !== k).map(x => x.de) } = {}) {
+      let text;
+      if (area) {
+        const px = (area[0] + area[2]) / 2, py = (area[1] + area[3]) / 2, [ix, iz] = islandOf(px, py);
+        text = oneOfText({ ask, entry: e, others, id, place: [+ix.toFixed(2), +iz.toFixed(2), +px.toFixed(2), +py.toFixed(2)] });
+      } else text = `${ask}
+
+Several builders make this sheet at the same time. You build only this one drawing: ${e.de} (${e.en}). The others (${others.join(', ')}) are built by someone else: leave them out, but keep this one's actor id different from theirs. Reply with just its one ### NEW section, no SEEN line.`;
+      try {
+        const h = await buildSlot(() => oneShot({ system: SYSTEM, images, text }));
+        report.calls.push(callOf(h, { helper: e.de }));
+        const sec = parseReply(h.text).find(x => x.kind === 'NEW');
+        if (!sec) { report.rejected.push({ kind: 'NEW', name: e.de, problems: ['the helper wrote no NEW section'] }); return; }
+        sec.n = k; sent.add(k);
+        write(sec);                                  // checked while this helper takes the next one
+      } catch (err) { report.rejected.push({ kind: 'NEW', name: e.de, problems: [`helper call failed: ${err.message.slice(0, 200)}`] }); }
+    }
     const onText = text => {
       said = narrate(text);
       mark('firstText');
@@ -319,31 +362,46 @@ Several builders make this sheet at the same time. You build only this one drawi
         for (let i = 0; i < Math.min(HELPERS, said.seen.length - 1); i++) helpers.push(helper());
       take(completeSections(text));
     };
-    let r;
-    try { r = await oneShot({ system: SYSTEM, text: ask, images, onText, signal: stop.signal, timeoutMs: 6 * 60_000 }); }
-    catch (e) {
-      // the main call failed (timeout, limit, login): let what is already being written finish, start nothing
-      // new. If something got written, the frame counts as done (a retry would write it twice).
-      halted = true;
-      await Promise.allSettled(helpers);
-      await Promise.allSettled(pending);
-      for (const { s, hangs } of waiting.splice(0)) report.rejected.push({ kind: s.kind, file: s.file, problems: [`not written: the main call failed before ${hangs ? 'what it hangs from or sits on' : 'the creature it holds'} was written`] });
-      if (!report.written.length) throw e;
-      report.mainError = e.message;
-      log(`${name}: the main call failed after ${report.written.length} thing(s) were written; not retrying: ${e.message}`);
-      return report;
+    // A new sheet: a quick call lists its drawings, then each is built by its own call, all at once (no waiting
+    // for one long reply). If the list fails, the one main call (with helpers) below does it as before.
+    const listed = newSheet && PARALLEL ? await detectSheet({ images, existing, calls: report.calls }) : null;
+    if (newSheet && PARALLEL) mark('listed');
+    let sections = [], r = null;
+    if (listed) {
+      said = { seen: listed, begun: listed.length };
+      report.said = listed;
+      tell({ seen: seenOf(listed), now: null });
+      // every actor id is set before any build starts, so each build knows the others' ids too (a branch holds
+      // the sloth by its id, a held thing names its holder), and parallel builds never collide
+      const taken = new Set(existing.flatMap(t => t.ids));
+      const ids = listed.map(e => { const id = freeName(slug(e.de.replace(/^(ein|eine|einen)\s+/i, '')), taken); taken.add(id); return id; });
+      listed.forEach((e, k) => helpers.push(buildOne(k, e, { id: ids[k], area: e.box, others: listed.map((x, i) => i === k ? null : `${x.den} (actor id "${ids[i]}" if alive)`).filter(Boolean) })));
+    } else {
+      try { r = await oneShot({ system: SYSTEM, text: ask, images, onText, signal: stop.signal, timeoutMs: 6 * 60_000 }); }
+      catch (e) {
+        // the main call failed (timeout, limit, login): let what is already being written finish, start nothing
+        // new. If something got written, the frame counts as done (a retry would write it twice).
+        halted = true;
+        await Promise.allSettled(helpers);
+        await Promise.allSettled(pending);
+        for (const { s, hangs } of waiting.splice(0)) report.rejected.push({ kind: s.kind, file: s.file, problems: [`not written: the main call failed before ${hangs ? 'what it hangs from or sits on' : 'the creature it holds'} was written`] });
+        if (!report.written.length) throw e;
+        report.mainError = e.message;
+        log(`${name}: the main call failed after ${report.written.length} thing(s) were written; not retrying: ${e.message}`);
+        return report;
+      }
+      said = narrate(r.text);
+      report.said = said.seen;
+      report.calls.push(callOf(r, r.aborted ? { stopped: 'the rest went to helpers' } : {}));
+      report.reply = r.text.slice(0, 4000);
+      sections = r.aborted ? completeSections(r.text) : numbered(parseReply(r.text));
     }
-    said = narrate(r.text);
-    report.said = said.seen;
-    report.calls.push(callOf(r, r.aborted ? { stopped: 'the rest went to helpers' } : {}));
-    report.reply = r.text.slice(0, 4000);
-    const sections = r.aborted ? completeSections(r.text) : numbered(parseReply(r.text));
     take(sections);
     await Promise.all(helpers);
     await Promise.all(pending);
     // hanging creatures first (what holds them, still waiting, counts as above them), then what holds them
     for (const w of [...waiting].sort((a, b) => !!b.hangs - !!a.hangs)) { await write(w.s, true); waiting.splice(waiting.indexOf(w), 1); }
-    if (!sections.length && !report.written.length) log(`${name}: nothing new (${r.seconds.toFixed(1)}s)`);
+    if (!sections.length && !report.written.length) log(`${name}: nothing new${r ? ` (${r.seconds.toFixed(1)}s)` : ''}`);
     // many removals at once is a new or moved sheet, not a child erasing: remove nothing and say so
     const removes = newSheet ? [] : sections.filter(s => s.kind === 'REMOVE');
     for (const s of newSheet ? sections.filter(s => s.kind === 'REMOVE') : []) report.rejected.push({ kind: s.kind, file: s.file, problems: ['a new sheet only adds new things'] });
@@ -485,6 +543,7 @@ async function watch(dir, opts) {
   if (!last && !readdirSync(opts.reportsDir).some(f => f.endsWith('.json'))) last = frames.at(-1) || null;
   log(`watching ${dir} → ${opts.thingsDir} (model ${MODEL}${isPiModel(MODEL) ? ` via pi, ${PI_FALLBACK} when pi fails` : ''}, fallback ${FALLBACK_MODEL}); handled up to ${last || '(nothing)'}`);
   if (isPiModel(MODEL)) prewarm(MODEL, SYSTEM, 4);            // warm for the first frame: a cold pi costs ~1.3 s
+  if (isPiModel(DETECT_MODEL)) prewarm(DETECT_MODEL, DETECT_SYSTEM, 1);
   if (await poolIsStale(opts.thingsDir).catch(() => false)) { log('dialogues: the pool is for another cast: making it again'); refreshDialogues(opts); }
   // the check runs every actor through the book's sim, which needs rot-js (a generate/ dependency)
   try { import.meta.resolve('rot-js'); } catch { log('rot-js is missing (run npm ci in generate/): the check will not run things in the sim'); }
