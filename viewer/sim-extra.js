@@ -153,15 +153,20 @@ export function options(a, add, { spots, cover, spotCell }) {
 export function portable(a, g, api) {
   const { now, step, say, line, nearest, R, busy, spots, actors } = api;
   const it = g.item ?? g.spot;
-  const drop = () => { if (it.carrier === a) { it.carrier = null; say(a, line(a, 'put'), 1.8); } a.goal = null; };
+  const drop = () => { if (it.carrier === a) { it.carrier = null; it.carryUntil = null; say(a, line(a, 'put'), 1.8); } a.goal = null; };
   if (g.type === 'pick') {
     if (it.carrier) { a.goal = null; return; }
-    const c = nearest(it.x, it.z, a);
-    if (!c) { a.goal = null; return; }
-    if (Math.hypot(a.cell.x - c.x, a.cell.y - c.y) > 1.5) { if (!step(a, c.x, c.y)) a.goal = null; return; }
-    if (it.carrier) { a.goal = null; return; }
-    it.carrier = a; say(a, line(a, 'pick'), 2);
-    a.goal = { type: 'carry', item: it, until: now() + CARRY_FOR }; a.goalSince = now();
+    // walk until touching it, then pick it up: the carrier is at the thing, not a cell or two away
+    // (the thing's footprint keeps figures out of its middle: touching means reaching its edge)
+    if (Math.hypot(a.pos.x - it.x, a.pos.z - it.z) > 0.8 + (it.r ?? 0)) {
+      const c = nearest(it.x, it.z, a);
+      if (!c || !step(a, c.x, c.y)) a.goal = null;
+      return;
+    }
+    it.carrier = a; it.carryUntil = now() + CARRY_FOR; say(a, line(a, 'pick'), 2);
+    // a climber sitting or climbing on it comes down
+    for (const b of actors()) if (b.mv?.px !== undefined && ['up', 'sit'].includes(b.mv.phase) && Math.hypot(b.mv.px - it.x, b.mv.pz - it.z) < 0.6) b.mv.phase = 'down';
+    a.goal = { type: 'carry', item: it, until: null }; a.goalSince = now();
     return;
   }
   if (it.carrier !== a || a.hidden) { if (it.carrier === a) it.carrier = null; a.goal = null; return; }
@@ -173,13 +178,14 @@ export function portable(a, g, api) {
     it.carrier = b; if (theirs) theirs.carrier = a;      // the swap: each takes the other's
     busy(a, b, 'talk', 2);
     say(a, line(a, 'give'), 2); say(b, line(b, 'thanks'), 2, 0.5);
-    a.goal = theirs ? { type: 'carry', item: theirs, until: now() + CARRY_FOR } : null;
-    b.goal = { type: 'carry', item: it, until: now() + CARRY_FOR }; b.goalSince = now();
+    it.carryUntil = now() + CARRY_FOR; if (theirs) theirs.carryUntil = it.carryUntil;
+    a.goal = theirs ? { type: 'carry', item: theirs, until: null } : null;
+    b.goal = { type: 'carry', item: it, until: null }; b.goalSince = now();
     return;
   }
   // carry: wander about with it; now and then a friend close by is offered it
-  if (g.until === null) g.until = now() + CARRY_FOR;
-  if (now() > g.until) return drop();
+  // the carry lasts CARRY_FOR from the pick-up or hand-over, kept on the thing (goals are re-decided meanwhile)
+  if (now() > (it.carryUntil ??= now() + CARRY_FOR)) return drop();
   const friend = actors().find(b => b !== a && !b.hidden && b.kind !== 'squid' && !carriedBy(spots, b) &&
     Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y)) <= 2 && (b.goal?.type ?? 'idle') !== 'give');
   if (friend && R() < 0.4) { a.goal = { type: 'give', item: it, to: friend, until: now() + 8 }; a.goalSince = now(); return; }
@@ -199,6 +205,7 @@ const THROW_S = 1.1;
 function throwTo(a, it, to, { now, say, line }) {
   it.carrier = null;
   it.throw = { x0: it.x, z0: it.z, x1: to.pos.x, z1: to.pos.z, t0: now(), to, from: a };
+  it.carryUntil = null;           // the catcher's carry starts its own clock
   say(a, line(a, 'throw'), 1.6);
   a.goal = null;
 }
@@ -228,7 +235,7 @@ function flyPortables(spots, actors, { now, say, line, ground }) {
     it.landed = true;
     const to = th.to;
     if (actors.includes(to) && !to.hidden && Math.hypot(to.pos.x - th.x1, to.pos.z - th.z1) < 1.2 && !carriedBy(spots, to)) {
-      it.carrier = to; to.goal = { type: 'carry', item: it, until: null }; to.goalSince = now();
+      it.carrier = to; it.carryUntil = null; to.goal = { type: 'carry', item: it, until: null }; to.goalSince = now();
       say(to, line(to, 'catch'), 1.8);
     } else say(th.from, line(th.from, 'oops'), 1.6);
   }
