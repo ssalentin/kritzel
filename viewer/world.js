@@ -130,10 +130,14 @@ export async function build(api, prevState = null) {
     return best || { x, z };
   }
   // meta.paper { x, y } (0-1 of the frame) → island, the way generate places things
+  // the box the sheet's things use on the paper (set at page load from all their paper coords): it is scaled up to
+  // fill the book, front to back and left to right, with a margin. Null: the whole frame.
+  let paperBox = null;
   const fromPaper = p => {
-    // the whole frame across both pages of the book as it is now (the spine at paper x 0.5, with a margin), so a
-    // grown book spreads a sheet's things out instead of keeping them by the spine
-    return { x: Math.max(-GROUND.w / 2 + 0.7, Math.min(GROUND.w / 2 - 0.7, (p.x - 0.5) * (GROUND.w - 1.4))), z: Math.max(-GROUND.d / 2 + 0.7, Math.min(GROUND.d / 2 - 0.7, (p.y - 0.5) * (GROUND.d - 1.4))) };
+    const b = paperBox, m = 1.2;
+    const u = b ? Math.max(0, Math.min(1, (p.x - b.x0) / (b.x1 - b.x0))) : p.x;
+    const v = b ? Math.max(0, Math.min(1, (p.y - b.y0) / (b.y1 - b.y0))) : p.y;
+    return { x: Math.max(-GROUND.w / 2 + 0.7, Math.min(GROUND.w / 2 - 0.7, (u - 0.5) * (GROUND.w - 2 * m))), z: Math.max(-GROUND.d / 2 + 0.7, Math.min(GROUND.d / 2 - 0.7, (v - 0.5) * (GROUND.d - 2 * m))) };
   };
   // stand a thing on the page's curve: at the highest the page gets under all of it (flat ponds and
   // rivers included), so no part sinks under the paper. Sky things (above 1.5) and held things stay.
@@ -398,6 +402,12 @@ export async function build(api, prevState = null) {
   const later = [];
   for (const [, file] of listing.matchAll(/href="([\w.-]+\.js)"/g)) await loadThing(file, undefined, false, later);
   // everything is there now: place the new ones against all of it, then pull apart what overlaps
+  // the sheet's box: where all the things were drawn, so they fill the book (not a corner of it)
+  const ps = later.map(([, , m]) => m?.paper).filter(p => p && Number.isFinite(p.x) && Number.isFinite(p.y));
+  if (ps.length) {
+    const b = { x0: Math.min(...ps.map(p => p.x)), x1: Math.max(...ps.map(p => p.x)), y0: Math.min(...ps.map(p => p.y)), y1: Math.max(...ps.map(p => p.y)) };
+    if (b.x1 - b.x0 > 0.05 && b.y1 - b.y0 > 0.05) paperBox = b;
+  }
   for (const [file, entry, meta] of later) try { place(file, entry, meta, false); } catch (e) { report(`things/${file}: placing: ${e.message}`); }
   untangle();
   const actors = [...loaded.values()].flatMap(e => e.actors);
