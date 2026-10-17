@@ -122,3 +122,12 @@ test('the same sheet seen again: what is in the book already is not built twice,
   // named by the list itself
   assert.deepEqual(againInBook([{ de: 'ein Ding', inBook: 'Haus' }], book).map(x => x.inBook), ['Haus']);
 });
+
+test('a building or object without a drawn face is not a figure', async () => {
+  const { notAlive } = await import('./generate.mjs');
+  const m = (name, drawing, parts = '') => `${parts}\nexport const meta = { name: '${name}', drawing: '${drawing}' };`;
+  assert.equal(notAlive(m('Haus', 'a pointed house with a door, a window and smoke', '// parts: walls = a box\n// parts: door = a rectangle')), true);
+  assert.equal(notAlive(m('Haus', 'a house with eyes and a smiling mouth')), false);         // drawn alive
+  assert.equal(notAlive(m('Maus', 'a mouse')), false);
+  assert.equal(notAlive(m('Flugzeug', 'a plane')), false);                                  // flies: an actor on purpose
+});
