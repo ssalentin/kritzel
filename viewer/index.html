@@ -539,6 +539,7 @@ async function toggleLog() {
       dd.textContent = new Date(c.date).toLocaleDateString(lang() === 'de' ? 'de-DE' : 'en-GB', { weekday: 'short', day: 'numeric', month: 'long' });
       parts.push(dd, ul);
     }
+    if (c.version) { const v = document.createElement('div'); v.className = 'day'; v.textContent = '🏷 ' + c.version; parts.push(v); ul = document.createElement('ul'); parts.push(ul); }
     const li = document.createElement('li'), code = document.createElement('code');
     code.textContent = ' ' + c.commit;
     li.append(c.subject, code); ul.append(li);

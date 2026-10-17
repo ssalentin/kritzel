@@ -49,11 +49,23 @@ def version():
 def changelog(n=60):
     """What changed lately, newest first: the commits of the running checkout (merges left out)."""
     try:
+        # merges are left out, but a release tag (v0.2.0) can sit on a merge: list tags separately and attach
+        # each to the newest listed commit it contains
         out = subprocess.run(["git", "log", "--no-merges", f"-n{n}", "--format=%h%x09%cI%x09%s"], cwd=ROOT,
                              capture_output=True, text=True, timeout=3).stdout
+        tags = subprocess.run(["git", "tag", "--list", "v*", "--sort=-creatordate", "--format=%(refname:short)%09%(objectname:short)"],
+                              cwd=ROOT, capture_output=True, text=True, timeout=3).stdout
     except (OSError, subprocess.SubprocessError):
         return []
-    return [dict(zip(("commit", "date", "subject"), l.split("\t", 2))) for l in out.splitlines() if l.count("\t") >= 2]
+    items = [dict(zip(("commit", "date", "subject"), l.split("\t", 2))) for l in out.splitlines() if l.count("\t") >= 2]
+    for line in tags.splitlines():
+        tag, at = (line.split("\t") + [""])[:2]
+        for it in items:          # newest first: the first listed commit that is in the tag's history
+            r = subprocess.run(["git", "merge-base", "--is-ancestor", it["commit"], at], cwd=ROOT, capture_output=True, timeout=3)
+            if r.returncode == 0:
+                it.setdefault("version", tag)
+                break
+    return items
 CAMERA_PORT = int(os.environ.get("CAMERA_PORT", "8766"))   # where camera_server.py (or replay_camera.py) listens
 STATUS = ROOT / "frames" / "status"
 PLACEMENT_LOCK = threading.Lock()
