@@ -98,3 +98,13 @@ test('a drawing lying upside down is built from the image turned round, placed w
   assert.match(p, /inside the box \[0\.7,0\.6,0\.9,0\.8\]/);          // the box in the turned image
   assert.match(p, /paper \{ x: 0\.2, y: 0\.3 \}/);                    // the place on the real paper
 });
+
+test('a word written alone is not a thing: not listed, and a module that only shows writing is not built', async () => {
+  const { wordOnly } = await import('./generate.mjs');
+  const m = (n, d) => `export const meta = { name: '${n}', drawing: '${d}' };`;
+  assert.equal(wordOnly(m('Sqichy-Wort', 'the handwritten word "Sqichy" in blue pen')), true);
+  assert.equal(wordOnly(m('Haus', 'a house labelled Haus! with an arrow')), false);
+  assert.equal(wordOnly(m('Vogel', 'a bird with the word Vogel next to it')), false);
+  const l = parseList(JSON.stringify({ things: [{ ...entry('ein Wort', [0, 0, 0.2, 0.1]), what: 'the handwritten word Sqichy at the top' }, entry('ein Stein', [0, 0, 1, 1])] }));
+  assert.deepEqual(l.map(x => x.de), ['ein Stein']);
+});

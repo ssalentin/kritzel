@@ -171,6 +171,14 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
   return { problems };
 }
 
+// a module that only shows writing (Sebastian: "Sqichy" in 3D letters): a word alone is never a thing. By what it says
+// it is (meta.drawing and name), so a drawing with its label ("a house labelled Haus") is not caught.
+const WORD = /^\s*(?:the |a |an )?(?:(?:hand-?written|written|scribbled|pencil|pen|blue|red|black|big|small|grey|gray)\s+)*(?:word|words|text|title|name|letters|writing|signature|lettering)\b/i;
+export function wordOnly(code) {
+  const drawing = code.match(/drawing:\s*['"]([^'"]*)['"]/)?.[1] || '', name = code.match(/name:\s*['"]([^'"]*)['"]/)?.[1] || '';
+  return WORD.test(drawing) || /(?:^|[-\s])(?:wort|schriftzug|titel|text|buchstaben)$/i.test(name);
+}
+
 // ---------- a new sheet: list its drawings first ----------
 export const DETECT_MODEL = process.env.KRITZEL_DETECT_MODEL || MODEL;
 // → [{ box: [x0, y0, x1, y1] (image fractions), what, de, en, den, the, name_en }], [] for an empty sheet, or
@@ -188,6 +196,7 @@ export function parseList(text) {
   for (const t of j.things.slice(0, 16)) {
     const b = Array.isArray(t?.box) && t.box.length === 4 && t.box.every(v => typeof v === 'number' && isFinite(v)) ? t.box.map(v => Math.min(1, Math.max(0, v))) : null;
     if (!b || b[2] <= b[0] || b[3] <= b[1] || !str(t.de, 60) || !str(t.en, 60) || !str(t.what, 300)) continue;
+    if (WORD.test(t.what) || /^(?:ein|das|der)\s+(?:wort|schriftzug|titel|text)\b/i.test(t.de)) continue;   // a word alone is no drawing
     out.push({ box: b.map(v => +v.toFixed(3)), up: t.face === 'eyes below mouth' && t.hangs !== true ? 'upside down' : 'upright', what: t.what, de: t.de, en: t.en, den: str(t.den, 60) ? t.den : t.de, the: str(t.the, 60) ? t.the : t.en, name_en: str(t.name_en, 40) ? t.name_en : t.en });
   }
   return out;
@@ -264,6 +273,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
       const job = (async () => {
         const old = s.kind === 'UPDATE' ? existing.find(t => t.file === s.file) : null;
         if (s.kind === 'UPDATE' && !old) { report.rejected.push({ kind: s.kind, file: s.file, problems: ['no such thing to update'] }); log(`${name}: UPDATE of unknown ${s.file} ignored`); return; }
+        if (s.kind === 'NEW' && wordOnly(s.body)) { report.rejected.push({ kind: s.kind, problems: ['a written word alone is not a thing'] }); log(`${name}: a word alone, not built`); return; }   // no fix call: nothing to fix
         tell({ seen: seenOf(said.seen), now: nowOf(said.seen[s.n]) });
         const check = (takenIds, extra = null) => finish({ body: s.body, model: MODEL, frame, images: s.images || images, takenIds, keepIds: old?.ids || [], oldName: old?.meta.name || null, calls: report.calls, deferHolds: !last, extra });
         const f = await check(takenNow(old));
