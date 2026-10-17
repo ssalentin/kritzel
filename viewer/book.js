@@ -17,8 +17,10 @@ export function sizeFor(count) {
 // x = 0, and lifting a little at the outer edges, like an open book lying on a table. Things and
 // characters stand at groundY(x).
 export function groundY(x) {
-  const u = Math.min(1, Math.abs(x) / (BASE.w / 2));          // 0 at the spine, 1 at the outer edge (the curve keeps its shape as the book grows)
-  return 0.18 * (1 - u) ** 1.5 + 0.08 * Math.exp(-((((1 - u) * BASE.w / 2) / 0.5) ** 2)) - 0.45 * Math.exp(-((x / 0.55) ** 2));
+  // the page is scaled with the book, so the base curve is read at x / (book scale): the same height at the same place on the page
+  const xb = x * BASE.w / GROUND.w;
+  const u = Math.min(1, Math.abs(xb) / (BASE.w / 2));          // 0 at the spine, 1 at the outer edge
+  return 0.18 * (1 - u) ** 1.5 + 0.08 * Math.exp(-((((1 - u) * BASE.w / 2) / 0.5) ** 2)) - 0.45 * Math.exp(-((xb / 0.55) ** 2));
 }
 // the circle that fits on the pages, for things written for the old round island (ctx.islandR)
 export const FIT_R = Math.min(BASE.w, BASE.d) / 2;

@@ -123,7 +123,7 @@ export async function build(api, prevState = null) {
   // meta.paper { x, y } (0-1 of the frame) → island, the way generate places things
   const fromPaper = p => {
     // the whole frame onto the whole pages (with a margin): a fresh page fills where things were drawn
-    return { x: Math.max(-GROUND.w / 2 + 0.7, Math.min(GROUND.w / 2 - 0.7, (p.x - 0.5) * (GROUND.w - 1.4))), z: Math.max(-GROUND.d / 2 + 0.7, Math.min(GROUND.d / 2 - 0.7, (p.y - 0.5) * (GROUND.d - 1.4))) };
+    return { x: Math.max(-BASE.w / 2 + 0.7, Math.min(BASE.w / 2 - 0.7, (p.x - 0.5) * (BASE.w - 1.4))), z: Math.max(-BASE.d / 2 + 0.7, Math.min(BASE.d / 2 - 0.7, (p.y - 0.5) * (BASE.d - 1.4))) };
   };
   // stand a thing on the page's curve: at the highest the page gets under all of it (flat ponds and
   // rivers included), so no part sinks under the paper. Sky things (above 1.5) and held things stay.
@@ -294,6 +294,7 @@ export async function build(api, prevState = null) {
   // footprints characters must not stand in (a jail holds its prisoner inside, so it isn't one)
   const blockingFeet = () => [...loaded.values()].filter(e => e.foot && !e.heldBy && !e.holds.length).map(e => e.foot);
   function refreshWorld() {
+    for (const e of loaded.values()) onPage(e);      // the page's curve moved with the book's size
     places();
     trees.length = 0;
     const spots = [];
@@ -380,8 +381,10 @@ export async function build(api, prevState = null) {
       GROUND.w += (target.w - GROUND.w) * k; GROUND.d += (target.d - GROUND.d) * k;
       if (GROUND.w !== w0) {
         island.group.scale.set(GROUND.w / BASE.w, 1, GROUND.d / BASE.d);
-        const off = camera.position.clone().sub(controls.target).multiplyScalar(GROUND.w / w0);
-        camera.position.copy(controls.target).add(off);
+        // the camera tracks the book's size it last fitted (kept on the camera, so a rebuilt engine doesn't zoom out again)
+        const fit = GROUND.w / BASE.w;
+        if (!camera.userData.viewOffset) camera.userData.viewOffset = camera.position.clone().sub(controls.target);   // the view the book was first shown in
+        camera.position.copy(controls.target).add(camera.userData.viewOffset.clone().multiplyScalar(fit));
         if (Math.abs(GROUND.w - grownAt) > 0.25) { grownAt = GROUND.w; refreshWorld(); }
       }
       water.tick(t);
