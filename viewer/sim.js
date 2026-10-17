@@ -79,15 +79,18 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   }
   rebuildTerrain();
 
-  const nearestCell = (wx, wz, self) => {
+  // the nearest cell a figure can stand on. When no cell has room for a big body among the others, it takes the
+  // nearest passable cell (crowded, but on the ground); a cell is never null, so no one loses their place
+  const nearestCell = (wx, wz, self, crowd = true) => {
     let best = null, bd = 1e9;
     for (const [x, y] of groundCells) {
-      if (self && (!passable(self)(x, y) || actors.some(o => o !== self && o.cell && gap(x, y, o.cell.x, o.cell.y) < self.radius + o.radius))) continue;   // big bodies must fit
+      if (self && (!passable(self)(x, y) || (crowd && actors.some(o => o !== self && o.cell && gap(x, y, o.cell.x, o.cell.y) < self.radius + o.radius)))) continue;   // big bodies must fit
       const [cx, cz] = toWorld(x, y);
       const d = Math.hypot(cx - wx, cz - wz);
       if (d < bd) { bd = d; best = { x, y }; }
     }
-    return best;
+    if (!best && crowd && self) return nearestCell(wx, wz, self, false);
+    return best ?? self?.cell ?? { x: C, y: C };
   };
 
   // ---------- actors ----------
@@ -472,6 +475,8 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   // one figure's error must not freeze the others: skip that figure (it stands still), report it once
   // (failures() lists them: the generate check rejects a rig whose figure throws here)
   const failed = new Map();
+  const reported = new Set();
+  const reportOnce = (part, e) => { if (!reported.has(part)) { reported.add(part); console.error(`sim ${part} skipped: ${e.message}`, e.stack); } };
   function guarded(a, fn) {
     if (failed.has(a)) return;
     try { fn(); } catch (e) {
@@ -628,8 +633,8 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
       }
       acc += dt;
       while (acc >= TICK) { acc -= TICK; const a = scheduler.next(); if (a) guarded(a, () => act(a)); }   // empty world: nobody to act
-      X.frame?.(actors, api);                  // portable things move every frame (sim-extra.js frame)
-      if (X.tick && now >= (nextTick ?? 0)) { nextTick = now + 4; X.tick(actors, api, coverNow); }
+      try { X.frame?.(actors, api); } catch (e) { reportOnce('frame', e); }   // portable things move every frame (sim-extra.js frame)
+      if (X.tick && now >= (nextTick ?? 0)) { nextTick = now + 4; try { X.tick(actors, api, coverNow); } catch (e) { reportOnce('tick', e); } }   // one part failing must not stop the rest of the world
 
       // the cloud just covered the sun: everyone reacts
       if (cover > 0.6 && prevCover <= 0.6) {
