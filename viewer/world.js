@@ -371,7 +371,9 @@ export async function build(api, prevState = null) {
   for (const e of loaded.values()) { ensurePortable(e); if (!isHeld(e)) trees.push(...e.obstacles); }
   const spots = [...loaded.values()].flatMap(e => e.spots);
   places();
-  brain = sim.create({ THREE, actors, trees, pond, spots, feet: blockingFeet(), islandR: FIT_R, ground: GROUND, groundY, states: prevState, extra, moves });
+  // ?seed=N fixes the sim's random seed (repeatable runs; the default is the clock)
+  const seed = Number(new URLSearchParams(location.search).get('seed')) || undefined;
+  brain = sim.create({ THREE, actors, trees, pond, spots, feet: blockingFeet(), islandR: FIT_R, ground: GROUND, groundY, states: prevState, extra, moves, seed });
   brain.setHolds([...loaded.values()].flatMap(e => e.holds));
   attachHeld();
   brain.setThings(thingList());
