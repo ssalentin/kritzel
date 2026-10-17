@@ -169,7 +169,8 @@ ${want.length ? `Write personas for: ${want.map(c => c.id).join(', ')}.` : 'Ever
   for (const q of (Array.isArray(j.quests) ? j.quests : []).slice(0, wantQuests)) { const c = cleanQuest(q, refs, thingNames, describe); if (c && !quests.some(x => x.who === c.who)) quests.push({ ...c, made_at: new Date().toISOString() }); }
   const names = new Set(cast.map(c => c.name));
   // the viewer matches figures by name: an actor id written instead is put back to its name
-  const nameOf = Object.fromEntries(cast.map(c => [c.id, c.name])), named = n => nameOf[n] && !names.has(n) ? nameOf[n] : n;
+  // (any case: "Strichfigur-2" for the id strichfigur-2)
+  const nameOf = Object.fromEntries(cast.map(c => [c.id.toLowerCase(), c.name])), named = n => typeof n === 'string' && nameOf[n.toLowerCase()] && !names.has(n) ? nameOf[n.toLowerCase()] : n;
   // what is safely fixable is fixed (an unknown end becomes none, more than 6 turns are cut to 6); the rest is
   // dropped with its reason, so the log says what DeepSeek gets wrong
   const ENDS = ['stroll', 'dance', 'tag', 'look'];
