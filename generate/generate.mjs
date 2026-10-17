@@ -174,7 +174,8 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
       // solid blobs (Sebastian: 'always solid blobs'): a drawing of 4+ parts built almost all from spheres and boxes
       // gets one fix call for real silhouettes, on the first pass only: spheres are often right (a snowman, grapes, a
       // caterpillar of balls), so after a fix whatever passes the other checks is taken. Not for a draft (speed)
-      if (!problems.length) problems.push(...unlit(code, info));
+      // the glow is a look, not correctness: asked for once, then taken (a candle must not vanish over a missing glow)
+      if (!problems.length && !fixModel) problems.push(...unlit(code, info));
       if (!problems.length && !fixModel && (!DRAFT_MODEL || model === MODEL)) problems.push(...blobs(code, info));
       if (!problems.length && extra) problems.push(...extra(info));
     }
