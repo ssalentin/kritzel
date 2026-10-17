@@ -3,8 +3,8 @@
     python3 scripts/capture.py            # needs viewer/serve.py running (it proxies the camera)
 
 Reads camera.json (written by the viewer's camera picker; only kind=remote for now), watches
-that camera's MJPEG stream through the viewer's server (FPS thumbnails a second, decoded by one
-ffmpeg) and waits for the picture to settle; the full-size frame it hands on is a snapshot.
+that camera's small preview stream through the viewer's server (FPS thumbnails a second, decoded
+by one ffmpeg) and waits for the picture to settle; the full-size frame it hands on is a snapshot.
 When the settled sheet differs from the last one handed on, it writes
 
     frames/settled/<YYYYmmdd-HHMMSS>.json   first: {captured_at, camera, previous, reason,
@@ -404,7 +404,7 @@ def main():
         if stream is None:
             print(f"watching {cam[1]['name']} on {cam[1]['host']}", flush=True)
             url = cam[0]
-            stream = Stream(url[:-4] + ".mjpg")
+            stream = Stream(url[:-4] + ".mjpg?small")   # the 960 px preview is enough to watch
         px, seq = stream.next(seq)
         if px is None:
             if stream.error:

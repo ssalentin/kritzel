@@ -3,7 +3,8 @@ so the viewer always picks up the latest world.js and camera frames.
 
 Camera selection (see scripts/camera_server.py for the remote side):
   GET /api/cameras              → remote cameras found on online Tailscale peers (and this host)
-  GET /api/camera-stream/<ip>/<id>.mjpg|.jpg → that camera, proxied (same origin, works under https)
+  GET /api/camera-stream/<ip>/<id>.mjpg|.jpg → that camera, proxied (same origin, works under https);
+                                  ?small asks for the camera server's small preview
   GET/PUT /api/camera           → the chosen camera, kept in camera.json for the capture stage
   GET /api/status               → what capture and generate are doing (frames/status/*.json), for the status pill
   GET /api/status/cutout.png    → the newest drawing as a paper cut-out (written by capture)
@@ -25,6 +26,7 @@ import subprocess
 import threading
 import time
 import posixpath
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -180,7 +182,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.wfile.write(body)
         m = re.fullmatch(r"/api/camera-stream/([\d.]+)/(video\d+)\.(mjpg|jpg)", path)
         if m:
-            return self.proxy(*m.groups())
+            small = "small" in urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query, keep_blank_values=True)
+            return self.proxy(*m.groups(), small)
         if not public(path):
             return self.json({"error": "not found"}, 404)
         super().do_GET()
@@ -278,27 +281,72 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             tmp.replace(path)
         self.json(placed.get(file))
 
-    def proxy(self, ip, cam, ext):
+    def proxy(self, ip, cam, ext, small=False):
         # only cameras on this host or tailnet peers, never an arbitrary address
         if ip not in {h[1] for h in tailnet_hosts()}:
             return self.json({"error": "not a tailnet host"}, 403)
         kind = "stream" if ext == "mjpg" else "snapshot"
         try:
             # longer than the camera server's own 5 s wait for a first frame, so its reason gets through
-            upstream = urllib.request.urlopen(f"http://{ip}:{CAMERA_PORT}/{kind}/{cam}.{ext}", timeout=10)
+            upstream = urllib.request.urlopen(f"http://{ip}:{CAMERA_PORT}/{kind}/{cam}.{ext}{'?small' if small else ''}",
+                                              timeout=10)
         except urllib.error.HTTPError as e:
             return self.json({"error": e.read().decode(errors="replace")[:300] or str(e)}, 502)
         except OSError as e:
             return self.json({"error": str(e)}, 502)
         with upstream:
             self.send_response(200)
-            self.send_header("Content-Type", upstream.headers["Content-Type"])
+            self.send_header("Content-Type", upstream.headers["Content-Type"] if kind == "snapshot"
+                             else "multipart/x-mixed-replace; boundary=frame")
             self.end_headers()
             try:
-                while chunk := upstream.read1(65536):
-                    self.wfile.write(chunk)
+                if kind == "snapshot":
+                    while chunk := upstream.read1(65536):
+                        self.wfile.write(chunk)
+                else:
+                    self.relay_latest(upstream)
             except OSError:
                 pass
+
+    def relay_latest(self, upstream):
+        """Pass a camera stream on frame by frame, always the newest: when the viewer's side is
+        slower than the camera's, frames are skipped instead of piling up in buffers as lag."""
+        latest, cond, done = [None, 0], threading.Condition(), threading.Event()
+
+        def read():
+            buf = b""
+            try:
+                while not done.is_set() and (chunk := upstream.read1(65536)):
+                    buf += chunk
+                    while (end := buf.find(b"\xff\xd9")) != -1:
+                        start = buf.find(b"\xff\xd8")
+                        if 0 <= start < end:
+                            with cond:
+                                latest[:] = buf[start:end + 2], latest[1] + 1
+                                cond.notify()
+                        buf = buf[end + 2:]
+                    if len(buf) > 8 << 20:  # no frame end in 8 MB: not a camera stream
+                        break
+            except Exception:             # includes the response being closed under it
+                pass
+            with cond:
+                done.set()
+                cond.notify()
+
+        threading.Thread(target=read, daemon=True).start()
+        self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 64 << 10)
+        seq = 0
+        try:
+            while True:
+                with cond:
+                    cond.wait_for(lambda: latest[1] != seq or done.is_set(), 10)
+                    if latest[1] == seq:
+                        return            # upstream ended or went quiet
+                    frame, seq = latest
+                self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(frame))
+                self.wfile.write(frame + b"\r\n")
+        finally:
+            done.set()                    # the reader stops at its next chunk; `with upstream` closes it
 
     def log_message(self, *args):
         pass

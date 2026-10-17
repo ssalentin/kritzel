@@ -88,6 +88,9 @@ The 📷 button in the viewer opens a camera picker with a live preview:
 - **Im Netzwerk:** cameras on any online Tailscale peer that runs
   `python3 scripts/camera_server.py` (port 8766; Linux, V4L2 and ffmpeg). The viewer's
   server finds them and passes the streams through, so they work under https too.
+  The preview and the capture stage watch the small stream (`?small`: 960 px, 15 fps,
+  ~25 KB a frame), which stays live over a thin link; only the snapshot capture hands on
+  is full size. Over a slow link, frames are skipped rather than queued as lag.
 
 The choice is stored in `camera.json` at the repository root for the capture stage.
 `HOST`/`PORT` env vars change where `viewer/serve.py` listens.
