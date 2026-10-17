@@ -495,10 +495,12 @@ export async function movePaperAlong(dir, upTo, { thingsDir, reportsDir }) {
 }
 
 // the dialogue pool was made for another cast (or is missing): a restart during a pool call leaves it so
-export async function poolIsStale(thingsDir) {
+export async function poolIsStale(thingsDir) { return !!(await staleReason(thingsDir)); }
+// why the pool must be made again at start, for the log: null when it is fine
+export async function staleReason(thingsDir) {
   const { castOf } = await import('./dialogues.mjs');
   const want = [...new Set(castOf(thingsDir).map(c => c.name))].sort();
-  if (want.length < 2) return false;                            // no pool is made for fewer than two
+  if (want.length < 2) return null;                             // no pool is made for fewer than two
   let have = null;
   try { have = JSON.parse(readFileSync(join(thingsDir, 'dialogues.json'), 'utf8')); } catch { /* missing */ }
   // a pool from before personas (or missing one for a figure) is stale too: else a world whose cast did not
@@ -507,8 +509,11 @@ export async function poolIsStale(thingsDir) {
   // and one without quests (from before them), or with a quest whose figure or thing has left the book
   const { thingsOf } = await import('./dialogues.mjs');
   const here = new Set([...castOf(thingsDir).flatMap(c => [c.id, c.name]), ...thingsOf(thingsDir).map(t => t.name)].map(x => x.toLowerCase()));
-  return JSON.stringify(have?.cast) !== JSON.stringify(want) || ids.some(id => !have?.personas?.[id]) ||
-    !Array.isArray(have?.quests) || have.quests.some(q => !here.has(String(q?.who).toLowerCase()));
+  if (JSON.stringify(have?.cast) !== JSON.stringify(want)) return have ? 'pool for another cast' : 'no pool';
+  if (ids.some(id => !have?.personas?.[id])) return 'pool without personas';
+  if (!Array.isArray(have?.quests)) return 'pool without quests';
+  if (have.quests.some(q => !here.has(String(q?.who).toLowerCase()))) return 'a quest for someone who left';
+  return null;
 }
 
 // The dialogue pool (and personas) is refreshed in the background, never waited on, within a budget: a change
@@ -561,8 +566,8 @@ export function situationChanges(prev, cur) {
   for (const c of cur.carrying || []) if (!had.has(key(c))) out.push(`${c.who} carries ${c.what}`);
   const flew = new Set((prev?.thrown || []).map(key));
   for (const t of cur.thrown || []) if (!flew.has(key(t))) out.push(`${t.who} throws ${t.what}`);
-  const done = new Set(prev?.solved || []);
-  for (const w of cur.solved || []) if (typeof w === 'string' && !done.has(w)) out.push(`quest solved: ${w.slice(0, 40)}`);
+  const done = new Set((prev?.solved || []).map(x => `${x?.who}@${x?.at}`));
+  for (const x of cur.solved || []) if (typeof x?.who === 'string' && !done.has(`${x.who}@${x.at}`)) out.push(`quest solved: ${x.who.slice(0, 40)}`);
   const dark = x => typeof x?.night === 'number' && x.night >= 0.5;
   if (prev && dark(prev) !== dark(cur)) out.push(dark(cur) ? 'night falls' : 'morning');
   const w = x => [...(x?.weather || [])].sort().join(',');
@@ -607,7 +612,8 @@ async function watch(dir, opts) {
   log(`watching ${dir} → ${opts.thingsDir} (model ${MODEL}${isPiModel(MODEL) ? ` via pi, ${PI_FALLBACK} when pi fails` : ''}, fallback ${FALLBACK_MODEL}); handled up to ${last || '(nothing)'}`);
   if (isPiModel(MODEL)) prewarm(MODEL, SYSTEM, 6);            // warm for the first frame: a cold pi costs ~1.3 s, ~140 MB each
   if (isPiModel(DETECT_MODEL)) prewarm(DETECT_MODEL, DETECT_SYSTEM, 1);
-  if (await poolIsStale(opts.thingsDir).catch(() => false)) { log('dialogues: the pool is for another cast: making it again'); wantDialogues(opts, 'start: pool for another cast'); }
+  const stale = await staleReason(opts.thingsDir).catch(() => null);
+  if (stale) { log(`dialogues: ${stale}: making it again`); wantDialogues(opts, `start: ${stale}`); }
   // the sim's moment: read when the file changes (the sim writes it at most every 10 s)
   let situation = null, situationAt = 0;
   const watchSituation = () => {
