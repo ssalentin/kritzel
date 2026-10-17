@@ -11,7 +11,7 @@ Kritzel speaks English and German.</p>
 <p align="center"><sub><i>Kritzel</i> /ˈkʁɪtsl̩/, say <b>KRIT-sl</b> (rhymes with <i>pretzel</i>): German for <i>a scribble</i>.</sub></p>
 
 <p align="center">
-  <img alt="version 0.2.0" src="https://img.shields.io/badge/version-0.2.0-6aa65a">
+  <img alt="version 0.3.0" src="https://img.shields.io/badge/version-0.3.0-6aa65a">
   <img alt="German and English" src="https://img.shields.io/badge/languages-DE%20%7C%20EN-9fb4f2">
   <img alt="drawings read by Claude" src="https://img.shields.io/badge/drawings%20read%20by-Claude-d97757?logo=anthropic">
   <img alt="status: prototype" src="https://img.shields.io/badge/status-prototype-f2b38a">
