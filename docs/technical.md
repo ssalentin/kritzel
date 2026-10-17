@@ -112,7 +112,9 @@ server, reading its video stream eight times a second, and waits until the pictu
 still for 1.2 s (for a big change 8 s, such as a hand resting on the paper or one big coloured area,
 but only 3 s when the change is scattered all over the paper, as a new sheet's is). A sheet that
 was turned (up to 6°) or slid further is lined up with the last one before comparing, so straightening
-a sheet is a move (reported in `affine`), not a new sheet. For a
+a sheet is a move (reported in `affine`), not a new sheet. A sheet slid further, even partly out of view (pulled away, pushed aside),
+is recognised by its drawing where it still shows, so it is never built a second time.
+Tests: `python3 -m unittest scripts/test_capture.py`. For a
 drawing, it fetches the full-size snapshot while those 1.2 s run. When the sheet shows something new, it
 writes `frames/settled/<YYYYmmdd-HHMMSS>.json` and then the camera's frame as
 `<same>.jpg`. The JSON gives `previous` (the last frame handed on), `reason` (`drawn`, or
