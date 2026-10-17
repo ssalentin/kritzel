@@ -176,6 +176,7 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
       // caterpillar of balls), so after a fix whatever passes the other checks is taken. Not for a draft (speed)
       // the glow is a look, not correctness: asked for once, then taken (a candle must not vanish over a missing glow)
       if (!problems.length && !fixModel) problems.push(...unlit(code, info));
+      if (!problems.length && !fixModel) problems.push(...plainWater(code, info));
       if (!problems.length && !fixModel && (!DRAFT_MODEL || model === MODEL)) problems.push(...blobs(code, info));
       if (!problems.length && extra) problems.push(...extra(info));
     }
@@ -263,6 +264,15 @@ export function unlit(code, info) {
   const luminous = (LUMINOUS.test(` ${name} `) || head.test(drawing)) && !NOT_LUMINOUS.test(`${name} ${drawing}`);
   if (!luminous || (info?.lights || []).some(l => l.glows)) return [];
   return ['it is a drawing that gives light: return light ({ kind: \'sun\' | \'moon\' | \'lamp\', object3D: the glowing part, color, intensity }) with the glowing mesh (the flame, the bulb, the sun disc, the star) as object3D and an emissive material'];
+}
+
+// drawn water built by hand (grey ribbons, a blue box) instead of the engine's ctx.water, which is always real moving
+// blue water (orch: the rock's waterfall came out pale grey in 2 of 3 runs): asked once to use ctx.water
+const WATER = /\b(?:water|waterfall|river|stream|brook|pond|lake|wasser|wasserfall|fluss|bach|teich|see)\b/i;
+export function plainWater(code, info) {
+  const parts = (code.match(/^\/\/ parts:.*$/gm) || []).join(' ');
+  if (!WATER.test(parts) || (info?.waterCalls ?? 1) > 0) return [];
+  return ['its parts list has water, but it builds no ctx.water: build drawn water with the engine (ctx.water.river along the drawn strokes on a surface, ctx.water.waterfall where it falls over an edge, ctx.water.pond where it collects), never from hand-made shapes, so it is real moving blue water'];
 }
 
 // 14 of 219 archived modules: giraffes, parrots, a hippo of spheres and boxes

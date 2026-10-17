@@ -98,6 +98,7 @@ async function buildCheck(file, takenIds) {
     const ctx = await makeCtx();
     let r;
     try { r = (await m.build(ctx)) || {}; } catch (e) { return { problems: [...problems, `build(ctx) throws: ${e.message}`], info }; }
+    info.waterCalls = ctx.waterUse.calls;               // drawn water must be the engine's (generate: plainWater)
     if (ctx.waterUse.calls > 6) problems.push(`${ctx.waterUse.calls} ctx.water pieces: at most 6 per thing (the rest are left out); join them into fewer, longer pieces`);
     problems.push(...ctx.waterUse.problems);
 

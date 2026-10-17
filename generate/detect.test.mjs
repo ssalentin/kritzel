@@ -185,3 +185,11 @@ test('switch mode: the old world is archived only when the new sheet yields a th
   assert.deepEqual(Object.keys(one.paper).sort(), ['_through', 'stein-2.js', 'stein.js']);   // the old world's places stay archived
   assert.equal(one.paper._through, '20261017-120000.jpg');
 });
+
+test('drawn water built by hand instead of ctx.water is asked for once', async () => {
+  const { plainWater } = await import('./generate.mjs');
+  const code = '// parts: rock = a cliff\n// parts: water = five lines down the face\n';
+  assert.equal(plainWater(code, { waterCalls: 0 }).length, 1);
+  assert.deepEqual(plainWater(code, { waterCalls: 3 }), []);
+  assert.deepEqual(plainWater('// parts: rock = a cliff\n', { waterCalls: 0 }), []);
+});
