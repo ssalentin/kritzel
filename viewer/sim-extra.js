@@ -540,7 +540,7 @@ export function tickQuests(actors, api) {
     if (t < nextQuestAt || R() > 0.4) return;
     // only quests a figure can give, of the kinds that can be solved (help, wait); bring and visit wait for v1
     const figureOf = q => actors.find(b => !b.hidden && (b.name === q.who || b.id === q.who));
-    const list = questPool().filter(q => ['help', 'wait'].includes(q.solve.kind) && figureOf(q));
+    const list = questPool().filter(q => ['help', 'wait'].includes(q.solve.kind) && figureOf(q) && !(q.solve.kind === 'wait' && waitHolds(q.solve, api)));   // a wait that already holds is not started
     if (!list.length) { nextQuestAt = t + 30; return; }
     const q = list[Math.floor(R() * list.length)];
     const giver = figureOf(q);
