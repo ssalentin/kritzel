@@ -479,49 +479,63 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   // ---------- per-frame animation ----------
   const lerpAngle = (a, b, k) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
 
+  // each joint eases toward the angle its state asks for, so a change of state glides and the limbs keep moving:
+  // a knee lifts as its leg swings forward, the elbows bend a little, and the head nods with the steps
   function animPerson(a, state, t, moving) {
     const r = a.rig, ph = t + a.speed * 3;
-    for (const p of [r.armL, r.armR, r.legL, r.legR]) p.rotation.set(0, 0, 0);
-    r.head.rotation.set(0, 0, 0);
-    r.body.position.y = 0; r.g.position.y = 0;
     const k = (now - a.animStart);
+    const dt = Math.min(0.1, Math.max(0, t - (a.poseT ?? t))); a.poseT = t;
+    const T = { legLx: 0, legRx: 0, armLx: 0, armRx: 0, armLz: 0, armRz: 0, kneeL: 0, kneeR: 0, elbowL: 0, elbowR: 0, headX: 0, headZ: 0 };
+    r.body.position.y = 0; r.g.position.y = 0;
     switch (state) {
       case 'walk': {
-        const s = Math.sin(ph * 9 * a.speed) * 0.7;
-        r.legL.rotation.x = s; r.legR.rotation.x = -s; r.armL.rotation.x = -s * 0.8; r.armR.rotation.x = s * 0.8;
-        r.g.position.y = Math.abs(Math.cos(ph * 9 * a.speed)) * 0.05;
+        const w = ph * 9 * a.speed, s = Math.sin(w) * 0.7, c = Math.cos(w);
+        T.legLx = s; T.legRx = -s; T.armLx = -s * 0.8; T.armRx = s * 0.8;
+        T.kneeL = 0.9 * Math.max(0, -c); T.kneeR = 0.9 * Math.max(0, c);   // a knee lifts while its leg swings forward (toward +z: legL.x falls)
+        T.elbowL = -0.3 + 0.1 * Math.sin(w); T.elbowR = -0.3 - 0.1 * Math.sin(w);
+        T.headX = 0.04 * Math.sin(2 * w);
+        r.g.position.y = Math.abs(c) * 0.05;
         break;
       }
       case 'sit':
-        r.legL.rotation.x = r.legR.rotation.x = -1.5;
+        T.legLx = T.legRx = -1.5;
         r.g.position.y = -0.62 * r.g.scale.y;
-        r.head.rotation.x = 0.25 + Math.sin(t * 1.5) * 0.05;
+        T.headX = 0.25 + Math.sin(t * 1.5) * 0.05;
         break;
-      case 'wave': r.armR.rotation.z = -2.5 + Math.sin(t * 12) * 0.35; break;
+      case 'wave': T.armRz = -2.5 + Math.sin(t * 12) * 0.35; T.elbowR = -0.8; break;
       case 'talk':
-        r.armR.rotation.x = -0.9 + Math.sin(t * 5) * 0.3; r.armL.rotation.x = -0.5 + Math.sin(t * 4 + 1) * 0.2;
-        r.head.rotation.z = Math.sin(t * 3) * 0.1;
+        T.armRx = -0.9 + Math.sin(t * 5) * 0.3; T.armLx = -0.5 + Math.sin(t * 4 + 1) * 0.2; T.elbowR = -0.6;
+        T.headZ = Math.sin(t * 3) * 0.1;
         break;
       case 'scared':
-        r.armL.rotation.z = 2.4; r.armR.rotation.z = -2.4;
+        T.armLz = 2.4; T.armRz = -2.4;
         r.g.position.y = Math.sin(Math.min(1, k / 0.8) * Math.PI) * 0.5;
         r.body.position.y = Math.sin(t * 40) * 0.02;
         break;
       case 'dance':
         r.g.position.y = Math.abs(Math.sin(t * 7)) * 0.4;
-        r.armL.rotation.z = 2.6 + Math.sin(t * 7) * 0.3; r.armR.rotation.z = -2.6 - Math.sin(t * 7) * 0.3;
+        T.armLz = 2.6 + Math.sin(t * 7) * 0.3; T.armRz = -2.6 - Math.sin(t * 7) * 0.3;
+        T.elbowL = -0.5; T.elbowR = -0.5;
         break;
-      case 'highfive': r.armR.rotation.x = -2.9; break;
+      case 'highfive': T.armRx = -2.9; break;
       case 'splash':                       // a little hop into the puddle
         r.g.position.y = Math.abs(Math.sin((t - a.animStart) * 7)) * 0.25;
-        r.armL.rotation.z = 1.2; r.armR.rotation.z = -1.2;
+        T.armLz = 1.2; T.armRz = -1.2;
         break;
-      case 'yawn': r.head.rotation.x = -0.35; r.armR.rotation.x = -1.6; break;             // hand to the mouth
-      case 'stretch': r.armL.rotation.z = 2.5; r.armR.rotation.z = -2.5; r.body.position.y = 0.04; break;
-      case 'lookup': r.head.rotation.x = -0.6; break;
+      case 'yawn': T.headX = -0.35; T.armRx = -1.6; T.elbowR = -1.4; break;             // hand to the mouth
+      case 'stretch': T.armLz = 2.5; T.armRz = -2.5; r.body.position.y = 0.04; break;
+      case 'lookup': T.headX = -0.6; break;
       default:
-        r.armL.rotation.z = 0.08 + Math.sin(t * 1.6) * 0.04; r.armR.rotation.z = -0.08 - Math.sin(t * 1.6) * 0.04;
+        T.armLz = 0.08 + Math.sin(t * 1.6) * 0.04; T.armRz = -0.08 - Math.sin(t * 1.6) * 0.04;
     }
+    const e = 1 - Math.exp(-dt * 14), to = (o, key, v) => { o[key] += (v - o[key]) * e; };
+    to(r.legL.rotation, 'x', T.legLx); to(r.legR.rotation, 'x', T.legRx);
+    const bend = (j, v) => { if (j.elbow) to(j.elbow.rotation, 'x', v); };   // a rig without elbows (not ctx.limb) just doesn't bend
+    bend(r.legL, T.kneeL); bend(r.legR, T.kneeR);
+    to(r.armL.rotation, 'x', T.armLx); to(r.armR.rotation, 'x', T.armRx);
+    to(r.armL.rotation, 'z', T.armLz); to(r.armR.rotation, 'z', T.armRz);
+    bend(r.armL, T.elbowL); bend(r.armR, T.elbowR);
+    to(r.head.rotation, 'x', T.headX); to(r.head.rotation, 'z', T.headZ);
   }
 
   function animSquid(a, state, t, moving) {
