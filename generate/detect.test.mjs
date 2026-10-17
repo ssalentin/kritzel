@@ -117,3 +117,22 @@ test('a building or object without a drawn face is not a figure', async () => {
   assert.equal(notAlive(m('Maus', 'a mouse')), false);
   assert.equal(notAlive(m('Flugzeug', 'a plane')), false);                                  // flies: an actor on purpose
 });
+
+test('the same sheet seen again: what is in the book already is not built twice, by kind and place', async () => {
+  const { againInBook } = await import('./generate.mjs');
+  const t = (name, x, y) => ({ meta: { name, paper: { x, y } } });
+  // the book from 154656 (its paper places), and 154727 as listed: the sheet shifted, turned and smaller, plus 3 birds
+  const book = [t('Haus', 0.66, 0.33), t('Strichfigur', 0.325, 0.545), t('Maus', 0.28, 0.6), t('Sonne', 0.48, 0.22), t('Strichfigur', 0.42, 0.47),
+    t('Strichfigur', 0.37, 0.56), t('Wolke', 0.52, 0.22)];
+  const e = (de, x, y) => ({ de, box: [x - 0.02, y - 0.02, x + 0.02, y + 0.02] });
+  const list = [e('eine Maus', 0.81, 0.65), e('ein Mann', 0.86, 0.59), e('ein Kind', 0.9, 0.58), e('eine Wolke', 0.94, 0.34), e('eine Sonne', 0.95, 0.46),
+    e('ein Mensch', 0.96, 0.53), e('ein Vogel', 0.86, 0.38), e('ein Vogel', 0.91, 0.41), e('ein Vogel', 0.88, 0.29)];
+  const again = againInBook(list, book);
+  assert.deepEqual(list.filter(x => !again.includes(x)).map(x => x.de), ['ein Vogel', 'ein Vogel', 'ein Vogel']);
+  // review's case: a NEW sheet of familiar kinds (3 birds and a house) next to a book of 4 birds, 2 figures, a sun
+  const birds = [t('Vogel', 0.2, 0.2), t('Vogel', 0.3, 0.25), t('Vogel', 0.4, 0.2), t('Vogel', 0.5, 0.25), t('Strichfigur', 0.3, 0.7), t('Strichfigur', 0.6, 0.7), t('Sonne', 0.8, 0.15)];
+  const fresh = [e('ein Vogel', 0.6, 0.3), e('ein Vogel', 0.7, 0.35), e('ein Vogel', 0.8, 0.3), e('ein Haus', 0.4, 0.6)];
+  assert.deepEqual(againInBook(fresh, birds), []);
+  // named by the list itself
+  assert.deepEqual(againInBook([{ de: 'ein Ding', box: [0, 0, 1, 1], inBook: 'Haus' }], book).map(x => x.inBook), ['Haus']);
+});

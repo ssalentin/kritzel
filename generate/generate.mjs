@@ -192,6 +192,49 @@ export function notAlive(code) {
   return OBJECT.test(` ${name} `) && !FACE.test(`${drawing} ${parts}`);
 }
 
+// what kind of drawing a name or description is, roughly: the same stick figure is "Strichfigur" on one frame and
+// "ein Mensch" on the next, so the same sheet seen again is matched by kind, not by exact name
+const KINDS = [['figure', /strich|person|mensch|mann|männchen|maennchen|kind|junge|mädchen|maedchen|figur|frau/i], ['bird', /vogel|bird/i],
+  ['sun', /sonne|sun/i], ['cloud', /wolke|cloud/i], ['house', /haus|house/i], ['tree', /baum|tree/i], ['flower', /blume|flower/i],
+  ['cat', /katze|kätzchen|cat/i], ['dog', /hund|dog/i], ['mouse', /maus|mouse/i], ['fish', /fisch|fish/i]];
+export const kindOf = s => KINDS.find(([, re]) => re.test(s))?.[0] || String(s).toLowerCase().replace(/^(ein|eine|einen|der|die|das|a|an|the)\s+/, '').split(/\s+/)[0];
+// list entries that are things already in the book: the ones the list names (inBook), and those that match a book
+// thing by kind AND place. The sheet may have moved and turned (live 154727: shifted, turned, scaled), so the place
+// match fits one similarity (shift, turn, scale) from two same-kind pairs and keeps the fit that lines up the most
+// (each entry within 0.12 of an unmatched same-kind book thing). It is the same sheet only when that fit matches 3
+// or more entries of 2 or more kinds, and at least 60% of the list: a new sheet of familiar things (3 birds again)
+// does not line up with the old one.
+export function againInBook(listed, existing) {
+  const names = new Set(existing.map(t => String(t.meta.name).toLowerCase()));
+  const named = listed.filter(e => e.inBook && names.has(e.inBook.toLowerCase()));
+  const book = existing.filter(t => t.meta.paper && !t.meta.paper.stale && typeof t.meta.paper.x === 'number')
+    .map(t => ({ k: kindOf(t.meta.name), x: t.meta.paper.x, y: t.meta.paper.y }));
+  const ents = listed.map(e => ({ e, k: kindOf(e.de), x: (e.box[0] + e.box[2]) / 2, y: (e.box[1] + e.box[3]) / 2 }));
+  const pairs = [];
+  for (const q of ents) for (const p of book) if (p.k === q.k) pairs.push([p, q]);
+  let best = [];
+  const tries = pairs.length > 60 ? pairs.slice(0, 60) : pairs;              // enough for a sheet; bounded work
+  for (const [p1, q1] of tries) for (const [p2, q2] of tries) {
+    if (p1 === p2 || q1 === q2) continue;
+    const dx = p2.x - p1.x, dy = p2.y - p1.y, d2 = dx * dx + dy * dy;
+    if (d2 < 0.0025) continue;                                               // too close to fix a turn
+    // s = (q2 - q1) / (p2 - p1) as complex numbers; t = q1 - s p1
+    const ex = q2.x - q1.x, ey = q2.y - q1.y;
+    const sr = (ex * dx + ey * dy) / d2, si = (ey * dx - ex * dy) / d2, scale = Math.hypot(sr, si);
+    if (scale < 0.5 || scale > 2) continue;
+    const tx = q1.x - (sr * p1.x - si * p1.y), ty = q1.y - (si * p1.x + sr * p1.y);
+    const free = new Set(book), got = [];
+    for (const q of ents) {
+      let hit = null, near = 0.12;
+      for (const p of free) if (p.k === q.k) { const d = Math.hypot(sr * p.x - si * p.y + tx - q.x, si * p.x + sr * p.y + ty - q.y); if (d < near) { near = d; hit = p; } }
+      if (hit) { free.delete(hit); got.push(q); }
+    }
+    if (got.length > best.length) best = got;
+  }
+  const same = best.length >= 3 && new Set(best.map(q => q.k)).size >= 2 && best.length >= 0.6 * listed.length;
+  return [...new Set([...named, ...(same ? best.map(q => q.e) : [])])];
+}
+
 // ---------- a new sheet: list its drawings first ----------
 export const DETECT_MODEL = process.env.KRITZEL_DETECT_MODEL || MODEL;
 // → [{ box: [x0, y0, x1, y1] (image fractions), what, de, en, den, the, name_en }], [] for an empty sheet, or
@@ -210,7 +253,7 @@ export function parseList(text) {
     const b = Array.isArray(t?.box) && t.box.length === 4 && t.box.every(v => typeof v === 'number' && isFinite(v)) ? t.box.map(v => Math.min(1, Math.max(0, v))) : null;
     if (!b || b[2] <= b[0] || b[3] <= b[1] || !str(t.de, 60) || !str(t.en, 60) || !str(t.what, 300)) continue;
     if (WORD.test(t.what) || /^(?:ein|das|der)\s+(?:wort|schriftzug|titel|text)\b/i.test(t.de)) continue;   // a word alone is no drawing
-    out.push({ box: b.map(v => +v.toFixed(3)), up: t.face === 'eyes below mouth' && t.hangs !== true ? 'upside down' : 'upright', what: t.what, de: t.de, en: t.en, den: str(t.den, 60) ? t.den : t.de, the: str(t.the, 60) ? t.the : t.en, name_en: str(t.name_en, 40) ? t.name_en : t.en });
+    out.push({ ...(str(t.in_book, 60) && { inBook: t.in_book }), box: b.map(v => +v.toFixed(3)), up: t.face === 'eyes below mouth' && t.hangs !== true ? 'upside down' : 'upright', what: t.what, de: t.de, en: t.en, den: str(t.den, 60) ? t.den : t.de, the: str(t.the, 60) ? t.the : t.en, name_en: str(t.name_en, 40) ? t.name_en : t.en });
   }
   return out;
 }
@@ -411,6 +454,16 @@ Several builders make this sheet at the same time. You build only this one drawi
     const listed = newSheet && PARALLEL ? await detectSheet({ images, existing, calls: report.calls }) : null;
     if (newSheet && PARALLEL) mark('listed');
     let sections = [], r = null;
+    // the same sheet seen again (moved far, so capture says new sheet): what the list says is in the book already
+    // is not built a second time (Sebastian: 6 things doubled at 154727). Only in add mode: switch starts empty.
+    if (listed && newSheet === 'add') {
+      const again = againInBook(listed, existing);
+      if (again.length) {
+        report.alreadyInBook = again.map(e => e.inBook || e.de);
+        log(`${name}: ${again.length} of ${listed.length} drawings are in the book already (${report.alreadyInBook.join(', ')}): not built again`);
+        listed.splice(0, listed.length, ...listed.filter(e => !again.includes(e)));
+      }
+    }
     if (listed) {
       said = { seen: listed, begun: listed.length };
       report.said = listed;
