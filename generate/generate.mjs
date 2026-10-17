@@ -330,8 +330,9 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
     writeFileSync(join(reportsDir, name + '.json'), JSON.stringify(report, null, 1));
   };
   try {
-    const paper = readPaper(reportsDir);
-    // switch mode: the new world starts empty (the old one is archived before the first write)
+    // switch mode: the new world starts empty (the old one is archived before the first write), with no old paper
+    // places either: the first write must not bring the old map (and its _through) back (review of 191fb91)
+    const paper = newSheet === 'switch' ? { _through: basename(frame) } : readPaper(reportsDir);
     const existing = newSheet === 'switch' ? [] : await readThings(thingsDir, paper);
     mark('things');
     const { image, before, area, place, height } = cropOf(frame, box, previous);

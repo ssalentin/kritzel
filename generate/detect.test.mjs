@@ -163,6 +163,7 @@ test('switch mode: the old world is archived only when the new sheet yields a th
     const dir = mkdtempSync(join(tmpdir(), 'kritzel-switch-'));
     for (const d of ['things', 'reports']) mkdirSync(join(dir, d));
     writeFileSync(join(dir, 'things', 'alt.js'), `export const meta = { name: 'Alt', drawing: 'x' };\nexport function build() { return { actors: [] }; }`);
+    writeFileSync(join(dir, 'reports', 'paper.json'), JSON.stringify({ _through: '20261016-100000.jpg', 'alt.js': { x: 0.5, y: 0.5 } }));
     const frame = join(dir, '20261017-120000.jpg');
     execFileSync('convert', ['-size', '640x480', 'xc:white', frame]);
     writeFileSync(join(dir, 'list.txt'), list);
@@ -172,7 +173,7 @@ test('switch mode: the old world is archived only when the new sheet yields a th
     try {
       const r = await processFrame(frame, { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports'), newSheet: 'switch',
         beforeFirstWrite: () => { calls.push(readdirSync(join(dir, 'things')).filter(f => f.endsWith('.js'))); rmSync(join(dir, 'things', 'alt.js')); } });
-      return { r, calls, files: readdirSync(join(dir, 'things')).filter(f => f.endsWith('.js')) };
+      return { r, calls, files: readdirSync(join(dir, 'things')).filter(f => f.endsWith('.js')), paper: JSON.parse(readFileSync(join(dir, 'reports', 'paper.json'), 'utf8')) };
     } finally { delete process.env.FAKE_CLAUDE_LIST; delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
   };
   const empty = await run('{"things": []}');
@@ -181,4 +182,6 @@ test('switch mode: the old world is archived only when the new sheet yields a th
   const one = await run(JSON.stringify({ things: [entry('ein Stein', [0.1, 0.4, 0.3, 0.6]), entry('ein grauer Stein', [0.6, 0.4, 0.8, 0.6])] }));
   assert.deepEqual(one.calls, [['alt.js']]);                             // once, before the first thing was written
   assert.deepEqual(one.files.sort(), ['stein.js', 'stein-2.js'].sort());  // names are unique in the new world, not against the old
+  assert.deepEqual(Object.keys(one.paper).sort(), ['_through', 'stein-2.js', 'stein.js']);   // the old world's places stay archived
+  assert.equal(one.paper._through, '20261017-120000.jpg');
 });
