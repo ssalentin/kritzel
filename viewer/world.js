@@ -13,11 +13,14 @@ export async function build(api, prevState = null) {
 
   // shared look: soft pastel low-poly materials (flat shaded unless asked otherwise)
   const mat = (color, opts = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.7, flatShading: true, ...opts });
+  // a limb hangs from its pivot: an upper segment, then an elbow (knee) at the middle that bends. pivot.elbow is where the
+  // lower segment and the hand or foot hang from (ball/shoe positions are measured from the elbow: y - len/2)
   const limb = (len, r, m) => {
-    const pivot = new THREE.Group();
-    const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(r, len - 2 * r, 6, 12), m);
-    mesh.position.y = -len / 2;
-    pivot.add(mesh);
+    const pivot = new THREE.Group(), elbow = new THREE.Group();
+    const seg = () => { const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(r, len / 2 - 2 * r, 6, 12), m); mesh.position.y = -len / 4; return mesh; };
+    elbow.position.y = -len / 2;
+    pivot.add(seg(), elbow); elbow.add(seg());
+    pivot.elbow = elbow;
     return pivot;
   };
   const rand = (s => () => (s = (s * 16807) % 2147483647) / 2147483647)(7);

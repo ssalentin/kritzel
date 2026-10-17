@@ -71,14 +71,15 @@ export function makeCharacters({ THREE, world, mat, limb, bubble, shadowAll }) {
       const p = limb(0.7, 0.062, skin);
       const sleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.085, 0.16, 4, 10), shirt);
       sleeve.position.y = -0.12;
-      p.add(sleeve, ball(0.08, skin, 0, -0.7, 0, 12, 8));
+      p.add(sleeve);
+      p.elbow.add(ball(0.08, skin, 0, -0.35, 0, 12, 8));
       return p;
     };
     const leg = () => {
       const p = limb(0.85, 0.09, pants);
-      const shoe = ball(0.11, shoeM, 0, -0.82, 0.06, 14, 10);
+      const shoe = ball(0.11, shoeM, 0, -0.395, 0.06, 14, 10);
       shoe.scale.set(1, 0.6, 1.5);
-      p.add(shoe);
+      p.elbow.add(shoe);
       return p;
     };
     const armL = arm(), armR = arm();
