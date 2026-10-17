@@ -138,7 +138,7 @@ camera.position.set(16, 8.5, 20);       // the whole open book in the first view
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 0.6, 0);
 controls.enableDamping = true;
-controls.maxPolarAngle = Math.PI * 0.62;
+controls.maxPolarAngle = Math.PI * 0.44;    // never below the pages: the view stays above the book (Sebastian, 2026-10-17)
 controls.minDistance = 6;
 controls.maxDistance = 40;
 controls.autoRotate = true;
