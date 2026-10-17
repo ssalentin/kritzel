@@ -485,9 +485,6 @@ export async function movePaperAlong(dir, upTo, { thingsDir, reportsDir }) {
   writePaper(reportsDir, paper);
 }
 
-// the cast changed: refresh the pool of generated dialogues in the background (never waited on);
-// if it changes again meanwhile, one more round follows
-let poolBusy = false, poolAgain = false;
 // the dialogue pool was made for another cast (or is missing): a restart during a pool call leaves it so
 export async function poolIsStale(thingsDir) {
   const { castOf } = await import('./dialogues.mjs');
@@ -498,13 +495,58 @@ export async function poolIsStale(thingsDir) {
   return JSON.stringify(have) !== JSON.stringify(want);
 }
 
-function refreshDialogues(opts) {
-  if (poolBusy) { poolAgain = true; return; }
-  poolBusy = true;
-  import('./dialogues.mjs').then(m => m.makePool({ thingsDir: opts.thingsDir }))
-    .then(x => log(`dialogues: ${x.written} for the new cast${x.seconds ? ` (${x.seconds.toFixed(0)}s, ${x.model})` : ''}`))
+// The dialogue pool (and personas) is refreshed in the background, never waited on, within a budget: a change
+// (the cast, or the moment in the sim's situation feed) waits POOL_DEBOUNCE for more to come, then one call
+// covers them all; at most POOL_PER_HOUR calls in any hour (more wait for the window). Each call is logged
+// with its reasons and its count this hour.
+const POOL_DEBOUNCE_MS = (+process.env.KRITZEL_POOL_DEBOUNCE_S || 30) * 1000;
+const POOL_PER_HOUR = +process.env.KRITZEL_POOL_PER_HOUR || 20;
+const SITUATION = join(ROOT, 'frames', 'status', 'situation.json');   // written by the viewer's sim (PUT /api/situation)
+const pool = { calls: [], reasons: new Set(), newThings: new Set(), timer: null, busy: false };
+export function wantDialogues(opts, reason, newThings = []) {
+  pool.reasons.add(reason);
+  for (const n of newThings) pool.newThings.add(n);
+  if (!pool.timer) { pool.timer = setTimeout(() => runPool(opts), POOL_DEBOUNCE_MS); pool.timer.unref?.(); }
+}
+function runPool(opts) {
+  pool.timer = null;
+  const later = ms => { pool.timer = setTimeout(() => runPool(opts), ms); pool.timer.unref?.(); };
+  if (pool.busy) return later(5000);
+  const now = Date.now();
+  while (pool.calls.length && now - pool.calls[0] > 3600_000) pool.calls.shift();
+  if (pool.calls.length >= POOL_PER_HOUR) {
+    const wait = pool.calls[0] + 3600_000 - now + 1000;
+    log(`dialogues: ${POOL_PER_HOUR} calls this hour, the next (${[...pool.reasons].join(', ')}) in ${Math.round(wait / 1000)}s`);
+    return later(wait);
+  }
+  const reason = [...pool.reasons].join(', '), newThings = [...pool.newThings];
+  pool.reasons.clear(); pool.newThings.clear();
+  let situation = null;
+  try { situation = JSON.parse(readFileSync(SITUATION, 'utf8')); } catch { /* no feed yet: the cast alone */ }
+  pool.busy = true; pool.calls.push(now);
+  import('./dialogues.mjs').then(m => m.makePool({ thingsDir: opts.thingsDir, reason, situation, newThings }))
+    .then(x => {
+      if (x.seconds == null) { pool.calls.pop(); return log(`dialogues: no call (${x.reason})`); }   // fewer than two figures
+      log(`dialogues: call ${pool.calls.length}/${POOL_PER_HOUR} this hour (${reason}): ${x.written} dialogues, ${x.personas} new personas, ${x.seconds.toFixed(0)}s, ${x.model}${x.fellBack ? ' (pi failed)' : ''}${x.dropped ? `; dropped: ${x.dropped.join('; ')}` : ''}`);
+    })
     .catch(e => log(`dialogues: ${e.message}`))
-    .finally(() => { poolBusy = false; if (poolAgain) { poolAgain = false; refreshDialogues(opts); } });
+    .finally(() => { pool.busy = false; });
+}
+
+// what changed in the sim's moment that the pool can't cover yet: someone starts carrying or throwing a thing,
+// night falls or ends, the weather changes. (Putting a thing down or day-to-night jitter is not a reason.)
+export function situationChanges(prev, cur) {
+  if (!cur) return [];
+  const out = [], key = x => `${x.who}:${x.what}`;
+  const had = new Set((prev?.carrying || []).map(key));
+  for (const c of cur.carrying || []) if (!had.has(key(c))) out.push(`${c.who} carries ${c.what}`);
+  const flew = new Set((prev?.thrown || []).map(key));
+  for (const t of cur.thrown || []) if (!flew.has(key(t))) out.push(`${t.who} throws ${t.what}`);
+  const dark = x => typeof x?.night === 'number' && x.night >= 0.5;
+  if (prev && dark(prev) !== dark(cur)) out.push(dark(cur) ? 'night falls' : 'morning');
+  const w = x => [...(x?.weather || [])].sort().join(',');
+  if (prev && w(prev) !== w(cur)) out.push(w(cur) ? `weather: ${w(cur)}` : 'the weather clears');
+  return out;
 }
 
 // 'add' (default: new drawings join the world) or 'switch' (a new sheet starts a new world)
@@ -544,7 +586,20 @@ async function watch(dir, opts) {
   log(`watching ${dir} → ${opts.thingsDir} (model ${MODEL}${isPiModel(MODEL) ? ` via pi, ${PI_FALLBACK} when pi fails` : ''}, fallback ${FALLBACK_MODEL}); handled up to ${last || '(nothing)'}`);
   if (isPiModel(MODEL)) prewarm(MODEL, SYSTEM, 6);            // warm for the first frame: a cold pi costs ~1.3 s, ~140 MB each
   if (isPiModel(DETECT_MODEL)) prewarm(DETECT_MODEL, DETECT_SYSTEM, 1);
-  if (await poolIsStale(opts.thingsDir).catch(() => false)) { log('dialogues: the pool is for another cast: making it again'); refreshDialogues(opts); }
+  if (await poolIsStale(opts.thingsDir).catch(() => false)) { log('dialogues: the pool is for another cast: making it again'); wantDialogues(opts, 'start: pool for another cast'); }
+  // the sim's moment: read when the file changes (the sim writes it at most every 10 s)
+  let situation = null, situationAt = 0;
+  const watchSituation = () => {
+    let at = 0;
+    try { at = statSync(SITUATION).mtimeMs; } catch { return; }
+    if (at === situationAt) return;
+    situationAt = at;
+    let cur = null;
+    try { cur = JSON.parse(readFileSync(SITUATION, 'utf8')); } catch { return; }
+    const why = situationChanges(situation, cur);
+    situation = cur;
+    if (why.length) wantDialogues(opts, why.join(', '));
+  };
   // the check runs every actor through the book's sim, which needs rot-js (a generate/ dependency)
   try { import.meta.resolve('rot-js'); } catch { log('rot-js is missing (run npm ci in generate/): the check will not run things in the sim'); }
   const sleep = ms => new Promise(ok => setTimeout(ok, ms));
@@ -594,6 +649,7 @@ async function watch(dir, opts) {
         const r = await processFrame(join(dir, newest), { ...opts, box: null, previous: null, newSheet: 'switch' });
         if (r.error) { status('failed', newest, r.error.slice(0, 80)); if (await retrySame(r.error, newest)) continue; last = newest; continue; }
         status(r.written.length ? 'new' : 'unclear', newest, r.written.map(w => w.name).join(', '));
+        if (r.written.length) wantDialogues(opts, `new sheet: ${r.written.length} things`, r.written.map(w => w.name));
         last = lastGenerated = newest; movedSince = false; tries = 0;
         continue;
       }
@@ -605,6 +661,7 @@ async function watch(dir, opts) {
         const r = await processFrame(join(dir, newest), { ...opts, box: null, previous: null, newSheet: 'add' });
         if (r.error) { status('failed', newest, r.error.slice(0, 80)); if (await retrySame(r.error, newest)) continue; last = newest; continue; }
         status(r.written.length ? 'new' : 'unclear', newest, r.written.map(w => w.name).join(', '));
+        if (r.written.length) wantDialogues(opts, `new sheet: ${r.written.length} things`, r.written.map(w => w.name));
         last = lastGenerated = newest; movedSince = false; tries = 0;
         continue;
       }
@@ -619,11 +676,14 @@ async function watch(dir, opts) {
       if (r.error) status('failed', newest, r.error.slice(0, 80));
       else if (r.written.length) status(r.written.every(w => w.kind === 'UPDATE') ? 'changed' : 'new', newest, names, { made: r.written.map(w => w.made).filter(Boolean) });
       else status(r.removed.length ? 'changed' : 'unclear', newest, r.removed.length ? 'removed' : '', r.why ? { why: r.why } : {});
-      if (!r.error && (r.written.length || r.removed.length)) refreshDialogues(opts);
+      if (!r.error && (r.written.length || r.removed.length))
+        wantDialogues(opts, [...r.written.map(w => `${w.kind === 'UPDATE' ? 'changed' : 'new'} ${w.name}`), ...r.removed.map(x => `removed ${x.file}`)].join(', '),
+          r.written.filter(w => w.kind === 'NEW').map(w => w.name));
       if (!r.error) { last = lastGenerated = newest; tries = 0; movedSince = false; continue; }
       if (await retrySame(r.error, newest)) continue;
       last = newest;
     }
+    watchSituation();
     await sleep(300);
   }
 }
