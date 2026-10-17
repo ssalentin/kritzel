@@ -208,6 +208,11 @@ test('a branch or pole in a rig is flagged, a long body is not', async () => {
   assert.ok(!(await buildCheck(rig(pencil))).problems.some(p => p.includes('pole or branch')));
   const wing = rig(bar).replace("move: 'climb'", "move: 'fly'");          // a plane's wing high up is no branch
   assert.ok(!(await buildCheck(wing)).problems.some(p => p.includes('pole or branch')));
+  const perch = thing(`const g = new ctx.THREE.Group();                         // a bird carrying its perch below it
+    const p = new ctx.THREE.Mesh(new ctx.THREE.CylinderGeometry(0.05, 0.05, 1.8), ctx.mat(2)); p.rotation.z = Math.PI / 2; p.position.y = 0.9; g.add(p);
+    const b = new ctx.THREE.Mesh(new ctx.THREE.SphereGeometry(0.3), ctx.mat(1)); b.position.y = 1.25; g.add(b); ctx.world.add(g);
+    return { actors: [{ id: 'a1', name: 'Vogel', move: 'fly', rig: { kind: 'vogel', g, say() {}, animate() {} } }] };`);
+  assert.ok((await buildCheck(perch)).problems.some(p => p.includes('pole or branch')));
 });
 
 test('a rig that throws in the book\'s sim is caught (live 2026-10-17: person rig without limbs)', async () => {
