@@ -50,6 +50,7 @@ VIEWER = os.environ.get("VIEWER", "http://127.0.0.1:8765")
 W, H = 320, 180          # compare at this size: averages away sensor noise, keeps pencil lines
 PIXEL = 20               # brightness step (0-255) that counts as a changed pixel
 NEW_PX = 15              # changed pixels that count: vs the still picture = movement, vs the last sheet = new
+SNAP_DIFF = 200          # a full snapshot this far from the preview is another picture, not resampling
 INK_R = 2                # new ink must be this far (thumb px) from ink already there
 SLIDE = 8                # how far (thumb px, ×6 at 1080p) the paper may slide and still be the same sheet
 INK_EDGE, INK_SHARE = 25, 0.25   # local contrast that is ink, not shade; share of a change that must be inky
@@ -157,7 +158,7 @@ def paper(rgb):
     if not rgb:
         return None
     bw, bh, means, flat = blocks(rgb)
-    seen, best = set(), []
+    seen, parts = set(), []
     for i in range(bw * bh):
         if not flat[i] or i in seen:
             continue
@@ -170,30 +171,61 @@ def paper(rgb):
                 if flat[k] and k not in seen and all(abs(means[j][c] - means[k][c]) <= COLOUR_DIFF for c in range(3)):
                     seen.add(k)
                     todo.append(k)
-        if len(part) > len(best):
-            best = part
-    if len(best) < PAPER_SHARE * bw * bh:
+        parts.append(part)
+    best, colour = None, None
+    for part in sorted(parts, key=len, reverse=True):
+        if len(part) < PAPER_SHARE * bw * bh:
+            continue
+        xs, ys = [i % bw for i in part], [i // bw for i in part]
+        if (max(xs) - min(xs) + 1) < 0.25 * bw or (max(ys) - min(ys) + 1) < 0.25 * bh:
+            continue
+        if len(part) < PAPER_FILL * (max(xs) - min(xs) + 1) * (max(ys) - min(ys) + 1):
+            continue
+        col = [statistics.median(means[i][c] for i in part) for c in range(3)]
+        if wood(col):
+            continue                         # the brown table itself, not a sheet lying on it
+        best, colour = part, col
+        break
+    if best is None:
         return None
     xs, ys = [i % bw for i in best], [i // bw for i in best]
-    if (max(xs) - min(xs) + 1) < 0.25 * bw or (max(ys) - min(ys) + 1) < 0.25 * bh:
-        return None
-    if len(best) < PAPER_FILL * (max(xs) - min(xs) + 1) * (max(ys) - min(ys) + 1):
-        return None
-    colour = [statistics.median(means[i][c] for i in best) for c in range(3)]
+    edge = [i for i in range(bw * bh) if i % bw in (0, bw - 1) or i // bw in (0, bh - 1)]
+    woods = [means[i] for i in edge if wood(means[i])]
+    table = [statistics.median(c[d] for c in woods) for d in range(3)] if len(woods) >= 3 else None
     mask = [False] * (bw * bh)
     for i in best:
         mask[i] = True
-    return {"w": bw, "h": bh, "mask": mask, "colour": colour, "area": len(best) * PAPER_BLOCK * PAPER_BLOCK}
+    return {"w": bw, "h": bh, "mask": mask, "colour": colour, "area": len(best) * PAPER_BLOCK * PAPER_BLOCK,
+            "box": (min(xs), min(ys), max(xs), max(ys)), "table": table}
+
+
+def hue(r, g, b):
+    """Hue in degrees (0 = red, 60 = yellow) for a colour."""
+    mx, mn, d = max(r, g, b), min(r, g, b), max(r, g, b) - min(r, g, b)
+    if d == 0:
+        return 0
+    if mx == r:
+        return 60 * ((g - b) / d % 6)
+    if mx == g:
+        return 60 * (2 + (b - r) / d)
+    return 60 * (4 + (r - g) / d)
+
+
+def wood(colour):
+    """Warm brown, like the table: not white, blue or yellow paper."""
+    r, g, b = colour
+    mx, mn = max(colour), min(colour)
+    return 5 <= hue(r, g, b) <= 34 and (mx - mn) >= 0.15 * max(1, mx) and mx >= 40
 
 
 def skin(r, g, b):
     """A warm red-orange pixel: skin, not grey paper or yellow paper (which is around hue 44)."""
     mx, mn = max(r, g, b), min(r, g, b)
     d = mx - mn
-    if mx < 45 or d < 18 or not (r > g >= b) or (g - b) > 0.5 * (r - b):
+    if mx < 45 or d < max(18, 0.18 * mx) or not (r > g >= b) or (g - b) > 0.5 * (r - b):
         return False
-    hue = 60 * (g - b) / d                  # r is the largest channel, so hue lies between 0 and 60
-    return 2 <= hue <= 38
+    h = 60 * (g - b) / d                    # r is the largest channel, so hue lies between 0 and 60
+    return 2 <= h <= 38
 
 
 def smooth_rgb(rgb, x, y, r=1, step=24):
@@ -226,8 +258,12 @@ def blobs(mask, w, h):
     return out
 
 
-def hand(rgb, sheet):
-    """A skin-coloured blob lying on (or touching the edge of) the sheet."""
+def hand(rgb, sheet, base=None):
+    """A skin-coloured blob lying on (or touching the edge of) the sheet.
+
+    With `base` (the last settled picture), most of the blob must be new: the wooden table is
+    warm and smooth too, but it was already there. Without a base, the blob's middle must be on
+    the sheet, which keeps a table edge out."""
     if not rgb:
         return False
     bw, bh = sheet["w"], sheet["h"]
@@ -246,8 +282,26 @@ def hand(rgb, sheet):
     skin_mask = [skin(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]) and smooth_rgb(rgb, i % CW, i // CW)
                  and near[at(i)]
                  for i in range(CW * CH)]
+    x0, y0, x1, y1 = sheet["box"]
     for part in blobs(skin_mask, CW, CH):
         if len(part) < max(24, HAND_SHARE * CW * CH) or len(part) > 0.5 * sheet["area"]:
+            continue
+        tableish = False
+        if sheet["table"]:
+            col = [statistics.median(rgb[i * 3 + c] for i in part) for c in range(3)]
+            edge = any(i % CW < 2 or i % CW >= CW - 2 or i // CW < 2 or i // CW >= CH - 2 for i in part)
+            tableish = max(abs(col[c] - sheet["table"][c]) for c in range(3)) <= 45
+            if tableish and (edge or base is None):
+                continue                     # the table's own wood, not a hand on the sheet
+        # a hand resting on the sheet has its middle on the sheet; the table beside the sheet
+        # touches its border but its middle stays outside
+        cx = sum(i % CW for i in part) / len(part) / PAPER_BLOCK
+        cy = sum(i // CW for i in part) / len(part) / PAPER_BLOCK
+        if base is not None and len(base) == len(rgb):
+            changed = sum(1 for i in part if max(abs(rgb[i * 3 + c] - base[i * 3 + c]) for c in range(3)) > 30)
+            if changed < (0.5 if tableish else 0.3) * len(part):
+                continue
+        elif not (x0 <= cx <= x1 + 1 and y0 <= cy <= y1 + 1):
             continue
         inside = sum(1 for i in part if touch[at(i)])
         if inside >= HAND_ON_PAPER * len(part):
@@ -255,12 +309,12 @@ def hand(rgb, sheet):
     return False
 
 
-def look(rgb):
+def look(rgb, base=None):
     """What the settled picture holds: "paper", "hand" (a hand still on it), or "no-paper"."""
     sheet = paper(rgb)
     if sheet is None:
         return "no-paper"
-    return "hand" if hand(rgb, sheet) else "paper"
+    return "hand" if hand(rgb, sheet, base) else "paper"
 
 
 class Stream:
@@ -651,14 +705,17 @@ class Detector:
         self.spell = 0                       # counts still spells
         self.patchy = None                   # (diff, scattered?) for the diff it was worked out for
         self.held = None                     # still spell a hand or an empty table keeps from settling
+        self.changed = 0                     # pixels that moved when this still spell began
 
     def feed(self, thumb, t):
-        if self.anchor is None or len(new_marks(thumb, self.anchor)) >= NEW_PX:
+        marks = W * H if self.anchor is None else len(new_marks(thumb, self.anchor))
+        if self.anchor is None or marks >= NEW_PX:
             if self.anchor is not None:
                 self.moved_at = t
             self.anchor, self.still_since, self.shift, self.diff, self.turn = envelope(thumb, 1), t, None, None, 0
             self.fitted = self.far = False
             self.held = None
+            self.changed = marks
             self.spell += 1
             return None
         if t - self.still_since < EARLY_S:
@@ -722,6 +779,7 @@ class Detector:
         self.prev = (self.base, self.baseline)
         self.base, self.baseline, self.still_since, self.shift, self.diff, self.turn = thumb, envelope(thumb), t, (0, 0), [], 0
         self.fitted = self.far = False
+        self.changed = 0
         return ("big-change" if big else "drawn"), diff
 
     def hold(self):
@@ -733,7 +791,8 @@ class Detector:
 
     def candidate(self):
         """The still spell whose settled picture should be checked for a hand or for paper, if any."""
-        return self.spell if self.diff and len(self.diff) >= NEW_PX and not self.holding() else None
+        return self.spell if (not self.holding()
+                              and ((self.diff and len(self.diff) >= NEW_PX) or self.changed >= BIG * W * H)) else None
 
     def scattered(self):
         """The change is spread over many patches, the biggest under SCATTER of it, and over most of the
@@ -781,7 +840,7 @@ class Detector:
         """The last emit didn't happen after all: back to the sheet before it, wait for stillness again."""
         self.base, self.baseline = self.prev
         self.anchor, self.still_since, self.shift, self.diff, self.turn, self.fitted = None, t, None, None, 0, False
-        self.far, self.held = False, None
+        self.far, self.held, self.changed = False, None, 0
 
 
 def box(diff, size):
@@ -981,16 +1040,19 @@ def main():
     done = sorted(OUT.glob("*.jpg"))
     previous = done[-1].name if done else None
     det = Detector(small(done[-1].read_bytes()) if done else None)
+    base_rgb = colour(done[-1].read_bytes()) if done else None
     status, stream, url, seq, checked, cam, early = Status(), None, None, 0, 0, None, None
-    held, seen_spell = None, 0
+    held, held_spell = None, 0
     while True:
         if time.monotonic() - checked > 1:   # the picker may switch cameras at any time
             checked, cam = time.monotonic(), camera()
             if cam is None or cam[0] != url:
+                if url is not None:
+                    base_rgb = None              # another camera's picture is no base for this one
                 if stream:
                     stream.stop()
                 stream, url, seq, det.anchor = None, cam and cam[0], 0, None
-                early, held = None, None
+                early, held, held_spell = None, None, 0
         if cam is None:                       # none chosen (or no camera.json): wait, and say so
             status.set("no-camera")
             time.sleep(0.5)
@@ -1014,26 +1076,28 @@ def main():
             continue
         t = time.monotonic()
         got = det.feed(centred(px), t)
-        if det.spell != seen_spell:
-            seen_spell, held = det.spell, None
+        if held and det.spell == held_spell:
+            det.hold()                       # a hand or an empty table still holds this spell
         spell = det.candidate()
-        if spell and (early is None or early.spell != spell):
+        if spell and (early is None or (early.spell != spell and early.checked)):
             early = Snapshot(url, spell)      # settled for EARLY_S: fetch it while the still time runs
         # once that picture is here, is a hand still on the paper, or is there no paper at all?
-        if early and early.spell == det.spell and not early.checked and early.ready():
+        if early and not early.checked and early.ready():
             early.checked = True
             try:
                 _, _, snap, rgb = early.get()
             except OSError as e:
                 print(f"camera snapshot: {e}", file=sys.stderr, flush=True)
                 snap = rgb = None
-            if snap and rgb and len(new_marks(snap, det.anchor)) < NEW_PX:
-                found = look(rgb)
+            if rgb:
+                found = look(rgb, base_rgb)
                 if found != "paper":
                     det.hold()
-                    held = found
-            elif snap:
-                early = None                  # not the still picture after all: look again
+                    held, held_spell = found, det.spell
+                elif early.spell == det.spell:
+                    held = None               # this settled picture has paper and no hand
+            if early.spell != det.spell:
+                early = None                  # a newer still spell: look at that one next
         if held:
             held_status(status, held)
             continue
@@ -1050,20 +1114,21 @@ def main():
             print(f"camera snapshot: {e}", file=sys.stderr, flush=True)
             det.undo(t)                       # don't lose the drawing: let it settle and try again
             continue
-        if not snap or len(new_marks(snap, det.anchor)) >= NEW_PX:
+        if not snap or len(new_marks(snap, det.anchor)) >= SNAP_DIFF:
             # the snapshot isn't the picture that settled (a hand came back): let it settle again
             print("snapshot differs from the settled picture; waiting again", file=sys.stderr, flush=True)
             det.undo(t)
             early, held = None, None
             continue
-        found = look(rgb) if rgb else "paper"
+        found = look(rgb, base_rgb) if rgb else "paper"
         if found != "paper":
             det.hold()
-            shot.checked, held = True, found
+            shot.checked, held, held_spell = True, found, det.spell
             early = shot
             held_status(status, held)
             continue
         previous = hand_on(data, size, *got, cam[1], previous, det.measured if previous else None)
+        base_rgb = rgb
         meta = json.loads((OUT / previous.replace(".jpg", ".json")).read_text())
         try:
             cut = cutout(data, meta["changed_box"], size, STATUS / "cutout.png", got[1])

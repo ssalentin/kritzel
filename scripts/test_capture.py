@@ -185,6 +185,17 @@ class Detector(unittest.TestCase):
         # the hand lifts: a new drawing can settle
         self.assertIsNotNone(self.run_still(det, sheet(seed=8, x0=40, y0=20, x1=280, y1=160), seconds=10))
 
+    def test_a_smooth_hand_movement_starts_a_paper_check_without_ink(self):
+        # live #7: a skin-coloured hand on the drawing has no sharp new ink, so new_marks alone
+        # gives no diff; the colour check must still get a chance to see it
+        base = sheet()
+        smooth = [v + (i % W) * 40 / W for i, v in enumerate(base)]
+        det = c.Detector(base)
+        det.feed(smooth, 0)
+        for t in (0.35, 0.5):
+            det.feed(smooth, t)
+        self.assertIsNotNone(det.candidate())
+
 
 class Paper(unittest.TestCase):
     def test_yellow_and_blue_sheets_are_both_found(self):
@@ -196,7 +207,12 @@ class Paper(unittest.TestCase):
         self.assertEqual(c.look(rgb_table()), "no-paper")
 
     def test_a_hand_on_the_sheet_is_a_hand(self):
-        self.assertEqual(c.look(rgb_hand(rgb_sheet())), "hand")
+        clean = rgb_sheet()
+        self.assertEqual(c.look(rgb_hand(clean.copy()), clean), "hand")
+
+    def test_the_table_already_in_the_last_picture_is_not_a_hand(self):
+        clean = rgb_sheet()
+        self.assertEqual(c.look(clean, clean), "paper")
 
     def test_a_hand_beside_the_sheet_is_not_on_it(self):
         img = rgb_sheet(x0=14)
