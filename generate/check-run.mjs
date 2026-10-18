@@ -6,6 +6,8 @@
 // The module runs in this process, so a hostile one could fake this output. That is why the
 // sandbox, not this result, is what protects the host.
 import * as THREE from 'three';
+import { footprintOf, isPortable } from '../viewer/portable.js';     // the viewer's own carry rule (GitHub #25)
+import { BASE } from '../viewer/book.js';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { registerHooks } from 'node:module';
@@ -230,6 +232,13 @@ async function buildCheck(file, takenIds) {
     // light (the engine's light contract): one object or a list of { kind, object3D, color, intensity, range, flicker }
     const lights = r.light == null ? [] : [].concat(r.light);
     info.lights = lights.map(l => ({ kind: l?.kind, glows: !!l?.object3D?.isObject3D }));   // a luminous drawing must have one
+    // could a figure pick it up? the viewer decides by the same rule (portable.js); the quest writer asks for 'bring'
+    {
+      const foot = footprintOf(ctx.world, THREE, 0.3 * BASE.w * BASE.d);
+      let pond = false; ctx.world.traverse(o => { if (o.userData?.zone) pond = true; });
+      info.portable = !!foot && isPortable({ hx: foot.hx, hz: foot.hz, top: foot.top, lightKinds: lights.map(l => l?.kind), weather: [].concat(r.weather ?? []).length,
+        spotKinds: [].concat(r.spots ?? []).map(sp => sp?.kind), actors: [].concat(r.actors ?? []).length, holds: [].concat(r.holds ?? []).length, heldBy: !!r.heldBy, pond });
+    }
     for (const l of lights) {
       if (!['sun', 'moon', 'lamp'].includes(l?.kind)) { problems.push(`light.kind must be 'sun', 'moon' or 'lamp' (got ${JSON.stringify(l?.kind)})`); continue; }
       if (l.object3D != null && !l.object3D.isObject3D) problems.push(`${l.kind} light: object3D must be a mesh or group of this thing`);

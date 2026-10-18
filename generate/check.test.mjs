@@ -236,3 +236,18 @@ test('a creature built up in the air is supported by what is above it or under i
   assert.equal((await hanging(up(seat))).supported, true);
   assert.equal((await hanging(up(branch))).supported, true);
 });
+
+test('the check says whether a figure could carry the thing, by the viewer\'s own rule (viewer/portable.js)', async () => {
+  const { isPortable } = await import('../viewer/portable.js');
+  assert.equal(isPortable({ hx: 0.4, hz: 0.4, top: 0.8 }), true);
+  assert.equal(isPortable({ hx: 1.65, hz: 1, top: 1 }), false);                                  // the 3.3-wide gummy box
+  assert.equal(isPortable({ hx: 0.4, hz: 0.4, top: 0.8, lightKinds: ['lamp'] }), true);         // a hand lamp rides along
+  assert.equal(isPortable({ hx: 0.4, hz: 0.4, top: 0.8, lightKinds: ['sun'] }), false);
+  assert.equal(isPortable({ hx: 0.4, hz: 0.4, top: 0.8, actors: 1 }), false);
+  assert.equal(isPortable({ hx: 0.4, hz: 0.4, top: 0.8, spotKinds: ['door'] }), false);
+  const small = `export const meta = { name: 'Stein', drawing: 'a stone' };
+export function build(ctx) { const { THREE, world, mat } = ctx; const g = new THREE.Group(); g.add(new THREE.Mesh(new THREE.DodecahedronGeometry(0.4), mat(0x999999))); g.position.y = 0.4; world.add(g); return { actors: [] }; }`;
+  const big = small.replace("'Stein'", "'Haus'").replace('DodecahedronGeometry(0.4)', 'BoxGeometry(3, 3, 3)').replace('g.position.y = 0.4', 'g.position.y = 1.5');
+  assert.equal((await buildCheck(small, { takenIds: [] })).info.portable, true);
+  assert.equal((await buildCheck(big, { takenIds: [] })).info.portable, false);
+});
