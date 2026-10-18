@@ -63,8 +63,9 @@ export async function build(api, prevState = null) {
   // a second viewer puts it in the same place. Things that were there before keep their place.
   // Once the file exists, a thing without an entry is new even if no viewer saw it arrive.
   let placed = {}, tracking = false;
-  // no file yet (404) is a world with no placements: everything is new and goes by its paper place
-  try { const r = await fetch('things/placement.json', { cache: 'no-store' }); if (r.ok) placed = await r.json() || {}; if (r.ok || r.status === 404) tracking = true; } catch {}
+  // no file yet (404) on the live viewer is a world with no placements: everything is new and goes by its paper
+  // place. An archived world has no file and must not write to the live one, so it doesn't track
+  try { const r = await fetch('things/placement.json', { cache: 'no-store' }); if (r.ok) placed = await r.json() || {}; if (r.ok || (r.status === 404 && location.pathname.startsWith('/viewer/'))) tracking = true; } catch {}
   // the first viewer to save a spot wins: if another one was quicker, take its spot
   const savePlace = async (file, d, force = false) => {
     if (d) placed[file] = d; else delete placed[file];
