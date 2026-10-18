@@ -825,6 +825,7 @@ export async function staleReason(thingsDir) {
   const here = new Set([...castOf(thingsDir).flatMap(c => [c.id, c.name]), ...thingsOf(thingsDir).map(t => t.name)].map(x => x.toLowerCase()));
   if (JSON.stringify(have?.cast) !== JSON.stringify(want)) return have ? 'pool for another cast' : 'no pool';
   if (ids.some(id => !have?.personas?.[id])) return 'pool without personas';
+  if (ids.some(id => !Array.isArray(have.personas[id].acts))) return 'pool without acts';
   if (!Array.isArray(have?.quests)) return 'pool without quests';
   if (have.quests.some(q => !here.has(String(q?.who).toLowerCase()))) return 'a quest for someone who left';
   return null;
