@@ -6,11 +6,11 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 process.env.PATH = join(import.meta.dirname, 'test-bin') + ':' + process.env.PATH;
-Object.assign(process.env, { KRITZEL_DRAFT_MODEL: 'claude-haiku-5-5', KRITZEL_MODEL: 'claude-sonnet-5-5' });
+Object.assign(process.env, { KRITZEL_DRAFT_MODEL: 'claude-haiku-5-5', KRITZEL_MODEL: 'claude-sonnet-5-5', KRITZEL_FINAL_RETRY_S: '0.3' });
 const { processFrame } = await import('./generate.mjs');
 const example = readFileSync(join(import.meta.dirname, 'examples', 'schnecke.js'), 'utf8');
 
-async function run({ final, slow = null, meanwhile = null, onLater = () => {} }) {
+async function run({ final, slow = null, meanwhile = null, onLater = () => {}, after = 0 }) {
   const dir = mkdtempSync(join(tmpdir(), 'kritzel-two-'));
   for (const d of ['things', 'reports']) mkdirSync(join(dir, d));
   const frame = join(dir, '20261017-120000.jpg');
@@ -24,6 +24,7 @@ async function run({ final, slow = null, meanwhile = null, onLater = () => {} })
     const draft = readFileSync(join(dir, 'things', r.written[0].file), 'utf8');
     if (meanwhile) meanwhile(join(dir, 'things', r.written[0].file));
     await r.finalsDone;
+    if (after) await new Promise(ok => setTimeout(ok, after));                // a retried final comes later
     const saved = JSON.parse(readFileSync(join(dir, 'reports', '20261017-120000.json'), 'utf8'));
     return { r, saved, draft, now: readFileSync(join(dir, 'things', r.written[0].file), 'utf8'), files: readdirSync(join(dir, 'things')) };
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -44,10 +45,11 @@ test('the final replaces the draft in its file, keeping its name and actor id', 
   assert.equal(r.written[0].model, 'claude-haiku-5-5');
 });
 
-test('a final that fails its checks leaves the draft', async () => {
-  const { saved, draft, now } = await run({ final: 'export const meta = { name: "x" };' });
-  assert.equal(now, draft);
-  assert.equal(saved.finals[0].kept, 'draft');
+test('a final that fails is tried once more; failing again, the draft stands as a plain thing', async () => {
+  const { saved, draft, now } = await run({ final: 'export const meta = { name: "x" };', after: 1500 });
+  assert.deepEqual(saved.finals.map(f => [f.kept, f.attempt]), [['draft', 1], ['draft', 2]]);
+  assert.match(draft, /draft: true/);
+  assert.equal(now, draft.replace(' draft: true,', ''));                   // never 'unfinished' for good
 });
 
 test('a thing changed meanwhile keeps the change: the stale final is dropped', async () => {
