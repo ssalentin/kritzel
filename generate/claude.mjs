@@ -1,5 +1,5 @@
 // One headless model call: `claude -p` on this host's existing Claude Code login, or (a model id with a provider
-// prefix, e.g. KRITZEL_MODEL=deepseek/deepseek-v4-flash) a warm pi process, see pi.mjs.
+// prefix, e.g. KRITZEL_MODEL=deepseek/deepseek-flash) a warm pi process, see pi.mjs.
 // One shot, no agent loop: the image goes inline (stream-json input), all tools are off and
 // the default system prompt is replaced. (--bare would be shorter but ignores the OAuth login.)
 // A camera frame is input from strangers; with no tools the reply is just text we check.
@@ -13,7 +13,7 @@ export const MODEL = process.env.KRITZEL_MODEL || 'claude-sonnet-5-5';
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const EFFORT = EFFORTS.includes(process.env.KRITZEL_EFFORT) ? process.env.KRITZEL_EFFORT : 'low';
 export const FALLBACK_MODEL = process.env.KRITZEL_FALLBACK_MODEL || 'claude-opus-5-5';
-// a model through pi ("deepseek/deepseek-v4-flash") that fails before its first text: this Claude model takes the call
+// a model through pi ("deepseek/deepseek-flash") that fails before its first text: this Claude model takes the call
 export const PI_FALLBACK = process.env.KRITZEL_PI_FALLBACK || 'claude-sonnet-5-5';
 
 // images: JPEG Buffers, in order. Returns { text, cost, seconds, model }.

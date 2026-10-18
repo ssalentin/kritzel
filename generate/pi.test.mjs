@@ -74,3 +74,12 @@ test('a claude that dies before reading its prompt fails the call, not the proce
     await assert.rejects(oneShot({ system: 'S', text: 'x'.repeat(4_000_000), images: [], model: 'claude-sonnet-5-5' }, 1), /without a result/);
   } finally { process.env.PATH = path; rmSync(bin, { recursive: true, force: true }); }
 });
+
+test('a pi model that does not take images is not asked about one: the call goes to the Claude fallback', async () => {
+  process.env.FAKE_PI = 'ok';
+  const r = await oneShot({ system: 'S7', text: 'what is drawn?', images: [img], model: 'fake/blind' });
+  assert.equal(r.model, 'claude-sonnet-5-5');
+  assert.match(r.fellBack, /does not take images/);
+  const ok = await oneShot({ system: 'S7', text: 'hi', images: [], model: 'fake/blind' });   // text only: fine
+  assert.match(ok.text, /Hello/);
+});

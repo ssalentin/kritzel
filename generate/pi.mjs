@@ -3,8 +3,8 @@
 // and stays warm between calls: a cold start costs ~1.3 s, a warm call answers its first text after ~1 s.
 // No tools, no extensions, skills or context files: like `claude -p` here, the reply is just text we check.
 //
-// A model id with a provider prefix ("deepseek/deepseek-v4-flash") goes through pi; see oneShot in claude.mjs.
-import { spawn } from 'node:child_process';
+// A model id with a provider prefix ("deepseek/deepseek-flash") goes through pi; see oneShot in claude.mjs.
+import { spawn, execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { track } from './children.mjs';
 
@@ -60,6 +60,23 @@ export function prewarm(model, system, n) {
   idle.set(keyOf(model, system), l);
 }
 
+// Does pi send images to this model? pi drops them for a model it lists without image input, and the model then
+// answers blind (10-18: pi 1.3.0 renamed DeepSeek's model to deepseek/deepseek-flash, and deepseek-v4-flash now
+// matched a text-only one: every draft said 'the image was omitted'). Asked once per model from pi --list-models:
+// the line whose provider and model are exactly this id, its last column.
+const seeing = new Map();
+export function sees(model) {
+  if (!seeing.has(model)) seeing.set(model, new Promise(ok => {
+    const [provider, ...rest] = model.split('/'), id = rest.join('/');
+    execFile('pi', ['--list-models', id], { timeout: 20_000 }, (err, out) => {
+      if (err) return ok(false);
+      const row = String(out).split('\n').map(l => l.trim().split(/\s+/)).find(c => c[0] === provider && c[1] === id);
+      ok(!!row && row.at(-1) === 'yes');
+    });
+  }));
+  return seeing.get(model);
+}
+
 // the text of one text_delta event: every update repeats the full reply so far ("partial"), so a long reply
 // would cost a JSON.parse of megabytes. Fast path for pi's key order; any other message_update is parsed whole
 // (if a pi update reorders the keys, the stream gets slower, not lost)
@@ -77,6 +94,8 @@ export function deltaOf(line) {
 // startMs: a process not ready by then (cold, on a busy host) fails the call (killed).
 export async function piCall({ system, text, images = [], model, timeoutMs = 3 * 60_000, firstTextMs = 20_000, startMs = 30_000, onText = null, signal = null }) {
   if (signal?.aborted) return { text: '', aborted: true, cost: null, seconds: 0, model };
+  // a model that can't see gets no image call (the caller falls back to Claude), rather than answering blind
+  if (images.length && !(await sees(model))) throw Object.assign(new Error(`pi (${model}) does not take images (pi --list-models): check the model id`), { sofar: '' });
   const w = take(model, system), t0 = Date.now();
   hold(w, true);
   let startTimer;

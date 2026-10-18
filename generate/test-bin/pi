@@ -2,6 +2,13 @@
 // A stand-in for `pi --mode rpc` in tests: FAKE_PI=ok (default) streams "Hello world" in two deltas;
 // slow streams forever until aborted; error fails the call; die exits before replying; mute never gets ready.
 const mode = process.env.FAKE_PI || 'ok';
+// --list-models: the fake provider's models, one that sees and one that doesn't
+if (process.argv.includes('--list-models')) {
+  console.log('provider  model  context  max-out  thinking  images');
+  console.log('fake      model  1M       384K     no        yes');
+  console.log('fake      blind  1M       384K     no        no');
+  process.exit(0);
+}
 let buf = '', n = 0;
 const out = o => process.stdout.write(JSON.stringify(o) + '\n');
 const delta = (d, so) => out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: d, partial: { content: [{ type: 'text', text: so }] } } });

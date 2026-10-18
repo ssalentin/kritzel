@@ -15,7 +15,7 @@ import { safeDialogue, safeLine } from '../viewer/dialogues.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // the cheap fast model through pi (as live generation), Haiku when pi fails
-export const POOL_MODEL = process.env.KRITZEL_DIALOGUE_MODEL || 'deepseek/deepseek-v4-flash';
+export const POOL_MODEL = process.env.KRITZEL_DIALOGUE_MODEL || 'deepseek/deepseek-flash';
 export const POOL_FALLBACK = process.env.KRITZEL_DIALOGUE_FALLBACK || 'claude-haiku-5-5';
 // the most dialogues kept in the pool: many pairs meet, and each dialogue plays once per page load
 const POOL_MAX = 36;
