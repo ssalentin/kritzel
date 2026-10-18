@@ -679,7 +679,7 @@ function foldBox(box, delay = 0) {
 }
 function foldAway(boxes) {
   boxes.forEach((b, i) => { if (b) foldBox(b, i * 0.12); });
-  return new Promise(ok => setTimeout(ok, 1000 + boxes.length * 120));
+  return new Promise(ok => setTimeout(ok, 1300 + boxes.length * 120));
 }
 function stepFolds(now) {
   for (let i = folding.length - 1; i >= 0; i--) {          // a finished fold is dropped (its mesh may be gone by then)
