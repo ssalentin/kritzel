@@ -782,7 +782,8 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         if (a.acting) { const g = a.rig.g; g.rotation.y -= a.acting.ry; g.rotation.x = 0; g.rotation.z = 0; g.position.y = a.acting.py; g.scale.copy(a.acting.scale); a.acting = null; }
         a.rig.g.rotation.y = lerpAngle(a.rig.g.rotation.y, a.face, Math.min(1, dt * 8));
         const anim = now < a.animUntil ? a.anim : null;
-        const state = anim ? (ACT_STATE[anim] ?? anim) : moving ? 'walk' : /rest|warm/.test(a.goal?.type) ? 'sit' : 'idle';
+        // a rig only ever gets a state of its contract: an act without one of those stands 'idle' and ACT_MOTION moves it
+        const state = anim ? (ACT_STATE[anim] ?? (ACT_MOTION[anim] ? 'idle' : anim)) : moving ? 'walk' : /rest|warm/.test(a.goal?.type) ? 'sit' : 'idle';
         if (a.rig.animate) a.rig.animate(state, t, moving, a);
         else if (a.kind === 'squid') animSquid(a, state, t, moving); else animPerson(a, state, t, moving);
         if (anim && ACT_MOTION[anim]) {

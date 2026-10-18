@@ -638,7 +638,7 @@ function tickActs(actors, api, cover) {
     if (act.near) { const w = where(act.near); if (!w || Math.hypot(w.x - a.pos.x, w.z - a.pos.z) > 3.5) return false; }
     if (act.when === 'night') return night() > 0.5;
     if (act.when === 'sun') return night() < 0.3 && cover < 0.3;
-    if (act.when === 'rain') return (weather() || []).includes('rain');
+    if (act.when === 'rain') return weather()?.rain === true;           // weather() is an object (sim.js weatherNow)
     return true;                          // 'near' alone is the `near` check above
   };
   const calm = a => a.kind !== 'squid' && !a.hidden && !a.goal?.type?.match(/chase|flee|visit|fetch|bring|give|circle/) && a.fear < 0.2 && now() >= a.busyUntil && !a.after;
