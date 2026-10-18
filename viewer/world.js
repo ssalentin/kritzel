@@ -63,7 +63,9 @@ export async function build(api, prevState = null) {
   // a second viewer puts it in the same place. Things that were there before keep their place.
   // Once the file exists, a thing without an entry is new even if no viewer saw it arrive.
   let placed = {}, tracking = false;
-  try { const r = await fetch('things/placement.json', { cache: 'no-store' }); if (r.ok) { placed = await r.json() || {}; tracking = true; } } catch {}
+  // no file yet (404) on the live viewer is a world with no placements: everything is new and goes by its paper
+  // place. An archived world has no file and must not write to the live one, so it doesn't track
+  try { const r = await fetch('things/placement.json', { cache: 'no-store' }); if (r.ok) placed = await r.json() || {}; if (r.ok || (r.status === 404 && location.pathname.startsWith('/viewer/'))) tracking = true; } catch {}
   // the first viewer to save a spot wins: if another one was quicker, take its spot
   const savePlace = async (file, d, force = false) => {
     if (d) placed[file] = d; else delete placed[file];
@@ -106,27 +108,38 @@ export async function build(api, prevState = null) {
   // the free spot nearest to (x, z) for `shape` (a radius, or a footprint to move): on the island,
   // off other things, their obstacles, the characters and spots promised to drawings still being
   // built. If nothing is entirely free, the spot where it overlaps least.
+  // a free spot for a shape near (x, z), the sheet's place for it: close to there, clear of everything,
+  // and away from its neighbours where the book has room. Things spread over the pages instead of piling up
+  // where the sheet's drawings happened to be.
   function freeSpot(x, z, shape, except = null) {
     const busy = [...(api.reserved?.() || [])];
     for (const [f, e] of loaded) if (f !== except && !e.heldBy) { if (e.foot) busy.push(e.foot); busy.push(...e.obstacles); }   // held: in a hand
     for (const a of brain?.actors?.() || []) busy.push({ x: a.pos.x, z: a.pos.z, r: 0.45 });
     const at = (cx, cz) => typeof shape === 'number' ? { x: cx, z: cz, r: shape } : { ...shape, x: cx, z: cz };
     let best = null, bestCost = Infinity;
-    for (let ring = 0; ring <= 30; ring++) {
+    for (let ring = 0; ring <= 14; ring++) {
       const d = ring * 0.35, n = Math.max(1, Math.round(2 * Math.PI * d / 0.35));
       for (let i = 0; i < n; i++) {
         const a = i / n * Math.PI * 2 + ring, s = at(x + Math.cos(a) * d, z + Math.sin(a) * d);
-        const cost = offGround(s) * 4 + busy.reduce((c, o) => c + depth(s, o, 0.15), 0);
-        if (cost === 0) return { x: s.x, z: s.z };
+        const off = offGround(s) * 4;
+        // overlaps are forbidden; neighbours within about a step cost a little, so free room is taken first
+        let hard = 0, near = 0;
+        for (const o of busy) { hard += depth(s, o, 0.15); near += depth(s, o, 1.2); }
+        const cost = off + hard * 4 + near * 0.5 + Math.hypot(s.x - x, s.z - z) * 0.3;
         if (cost < bestCost - 1e-6) { bestCost = cost; best = { x: s.x, z: s.z }; }
       }
     }
     return best || { x, z };
   }
   // meta.paper { x, y } (0-1 of the frame) → island, the way generate places things
+  // the box the sheet's things use on the paper (set at page load from all their paper coords): it is scaled up to
+  // fill the book, front to back and left to right, with a margin. Null: the whole frame.
+  let paperBox = null;
   const fromPaper = p => {
-    // the whole frame onto the whole pages (with a margin): a fresh page fills where things were drawn
-    return { x: Math.max(-BASE.w / 2 + 0.7, Math.min(BASE.w / 2 - 0.7, (p.x - 0.5) * (BASE.w - 1.4))), z: Math.max(-BASE.d / 2 + 0.7, Math.min(BASE.d / 2 - 0.7, (p.y - 0.5) * (BASE.d - 1.4))) };
+    const b = paperBox, m = 1.2;
+    const u = b ? Math.max(0, Math.min(1, (p.x - b.x0) / (b.x1 - b.x0))) : p.x;
+    const v = b ? Math.max(0, Math.min(1, (p.y - b.y0) / (b.y1 - b.y0))) : p.y;
+    return { x: Math.max(-GROUND.w / 2 + 0.7, Math.min(GROUND.w / 2 - 0.7, (u - 0.5) * (GROUND.w - 2 * m))), z: Math.max(-GROUND.d / 2 + 0.7, Math.min(GROUND.d / 2 - 0.7, (v - 0.5) * (GROUND.d - 2 * m))) };
   };
   // stand a thing on the page's curve: at the highest the page gets under all of it (flat ponds and
   // rivers included), so no part sinks under the paper. Sky things (above 1.5) and held things stay.
@@ -391,6 +404,12 @@ export async function build(api, prevState = null) {
   const later = [];
   for (const [, file] of listing.matchAll(/href="([\w.-]+\.js)"/g)) await loadThing(file, undefined, false, later);
   // everything is there now: place the new ones against all of it, then pull apart what overlaps
+  // the sheet's box: where all the things were drawn, so they fill the book (not a corner of it)
+  const ps = later.map(([, , m]) => m?.paper).filter(p => p && Number.isFinite(p.x) && Number.isFinite(p.y));
+  if (ps.length) {
+    const b = { x0: Math.min(...ps.map(p => p.x)), x1: Math.max(...ps.map(p => p.x)), y0: Math.min(...ps.map(p => p.y)), y1: Math.max(...ps.map(p => p.y)) };
+    if (b.x1 - b.x0 > 0.05 && b.y1 - b.y0 > 0.05) paperBox = b;
+  }
   for (const [file, entry, meta] of later) try { place(file, entry, meta, false); } catch (e) { report(`things/${file}: placing: ${e.message}`); }
   untangle();
   const actors = [...loaded.values()].flatMap(e => e.actors);
