@@ -385,7 +385,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   // what extra interactions get: the sim's helpers, so they stay generic
   const stageFor = (a, b, until) => { stage = { a, b, until }; };
   const talking = () => (stage && now < stage.until + DIALOGUE_GAP ? stage : null);   // one dialogue at a time, with a pause between
-  const api = { ground, weather: () => weatherNow, stage: stageFor, talking, things: () => thingsNow, night: () => nightNow, lamps: () => lampsNow, byId: () => byId, busy, say, line, bond, now: () => now, R, pick, rel, actors: () => actors, nearest: nearestCell, step: stepToward, pass: passable, spots: () => spots, spotCell, cover: () => coverNow, seen: (x, y) => { const c = new Set(); fov.compute(x, y, 12, (cx, cy) => c.add(cx + ',' + cy)); return c; } };
+  const api = { ground, weather: () => weatherNow, stage: stageFor, talking, things: () => thingsNow, night: () => nightNow, lamps: () => lampsNow, byId: () => byId, busy, say, line, bond, now: () => now, R, pick, rel, actors: () => actors, nearest: nearestCell, step: stepToward, pass: passable, spots: () => spots, spotCell, cover: () => coverNow, trace: tracePick, seen: (x, y) => { const c = new Set(); fov.compute(x, y, 12, (cx, cy) => c.add(cx + ',' + cy)); return c; } };
   const INT = Object.fromEntries(Object.entries(X.INTERACTIONS || {}).map(([k, f]) => [k, (a, b) => f(a, b, api)]));
 
   function interact(a, b) {
@@ -504,6 +504,24 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   // ---------- per-frame animation ----------
   const lerpAngle = (a, b, k) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
 
+  // signature acts (sim-extra.js tickActs) on any rig: the rig gets a state it knows where one fits (a wave, a
+  // dance, a hop into a puddle), and the whole figure moves on top (a spin, a bow, a roar's swell), so a drawn
+  // rig that animates only walk and talk still shows its act. k runs 0→1 over the act.
+  const ACT_STATE = { 'wave-big': 'wave', 'dance-solo': 'dance', splash: 'splash', snack: 'yawn', 'sing-notes': 'talk' };
+  const ACT_MOTION = {
+    spin: (g, k) => { g.rotation.y += k * Math.PI * 4; },                                   // two turns, in place
+    hop: (g, k) => { g.position.y += Math.abs(Math.sin(k * Math.PI * 3)) * 0.5; },            // three hops
+    bow: (g, k) => { g.rotation.x = Math.sin(k * Math.PI) * 0.7; },                           // down and up again
+    'wave-big': (g, k) => { g.position.y += Math.abs(Math.sin(k * Math.PI * 2)) * 0.15; },
+    splash: (g, k) => { g.position.y += Math.abs(Math.sin(k * Math.PI * 2)) * 0.25; },        // a hop, for a rig without one
+    roar: (g, k) => { const s = 1 + Math.sin(k * Math.PI) * 0.3; g.scale.multiplyScalar(s); g.rotation.x = -Math.sin(k * Math.PI) * 0.25; },
+    'sing-notes': (g, k) => { g.position.y += Math.abs(Math.sin(k * Math.PI * 4)) * 0.08; g.rotation.z = Math.sin(k * Math.PI * 4) * 0.12; },
+    sparkle: (g, k) => { g.scale.multiplyScalar(1 + Math.abs(Math.sin(k * Math.PI * 6)) * 0.1); g.rotation.y += Math.sin(k * Math.PI * 2) * 0.5; },
+    'sun-burst': (g, k) => { g.scale.multiplyScalar(1 + Math.sin(k * Math.PI) * 0.4); g.rotation.y += k * Math.PI * 2; },
+    juggle: (g, k) => { g.position.y += Math.abs(Math.sin(k * Math.PI * 6)) * 0.12; g.rotation.z = Math.sin(k * Math.PI * 6) * 0.06; },
+    'dance-solo': (g, k) => { g.rotation.y += Math.sin(k * Math.PI * 3) * 0.6; },
+    snack: (g, k) => { g.rotation.x = 0.15 + Math.sin(k * Math.PI * 5) * 0.05; },
+  };
   // each joint eases toward the angle its state asks for, so a change of state glides and the limbs keep moving:
   // a knee lifts as its leg swings forward, the elbows bend a little, and the head nods with the steps
   function animPerson(a, state, t, moving) {
@@ -760,10 +778,19 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         if (a.lift) a.lift.position.y = groundY(a.pos.x) + a.alt + (j < 0.6 ? Math.sin(j / 0.6 * Math.PI) * 0.6 : 0);
         a.rig.g.position.x = a.pos.x;
         a.rig.g.position.z = a.pos.z;
+        // an act turns, tilts or swells the whole rig on top of its pose; undone before the next frame's easing
+        if (a.acting) { const g = a.rig.g; g.rotation.y -= a.acting.ry; g.rotation.x = 0; g.rotation.z = 0; g.position.y = a.acting.py; g.scale.copy(a.acting.scale); a.acting = null; }
         a.rig.g.rotation.y = lerpAngle(a.rig.g.rotation.y, a.face, Math.min(1, dt * 8));
-        const state = now < a.animUntil ? a.anim : moving ? 'walk' : /rest|warm/.test(a.goal?.type) ? 'sit' : 'idle';
+        const anim = now < a.animUntil ? a.anim : null;
+        // a rig only ever gets a state of its contract: an act without one of those stands 'idle' and ACT_MOTION moves it
+        const state = anim ? (ACT_STATE[anim] ?? (ACT_MOTION[anim] ? 'idle' : anim)) : moving ? 'walk' : /rest|warm/.test(a.goal?.type) ? 'sit' : 'idle';
         if (a.rig.animate) a.rig.animate(state, t, moving, a);
         else if (a.kind === 'squid') animSquid(a, state, t, moving); else animPerson(a, state, t, moving);
+        if (anim && ACT_MOTION[anim]) {
+          const g = a.rig.g, ry = g.rotation.y, py = g.position.y, scale = g.scale.clone(), k = Math.min(1, (now - a.animStart) / Math.max(0.1, a.animUntil - a.animStart));
+          ACT_MOTION[anim](g, k);
+          a.acting = { ry: g.rotation.y - ry, py, scale };
+        }
       });
     },
   };
