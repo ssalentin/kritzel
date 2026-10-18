@@ -86,3 +86,14 @@ export function build(ctx) {
   assert.deepEqual(later.written.map(w => w.file), ['stein-2.js']);      // the watcher hears of it (dialogues)
   assert.equal(later.written[0].name, 'Stein 2');                        // a later frame's Stein is on disk: the part is Stein 2
 });
+
+test('the draft is asked for as an honest sketch; its final gets the plain question', async () => {
+  const log = join(mkdtempSync(join(tmpdir(), 'kritzel-log-')), 'prompts.jsonl');
+  process.env.FAKE_CLAUDE_LOG = log;
+  try {
+    await run({ final: example });
+    const prompts = readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l).message.content.at(-1).text);
+    assert.match(prompts[0], /honest sketch/);                          // the draft (first call)
+    assert.ok(prompts.slice(1).every(p => !/honest sketch/.test(p)));     // the final
+  } finally { delete process.env.FAKE_CLAUDE_LOG; }
+});

@@ -108,3 +108,7 @@ export function oneOfText({ ask, entry, others, place, id }) {
 
 Several builders make this sheet at the same time. You build only this one drawing: ${entry.de} (${entry.en}): ${entry.what}. It is inside the box ${JSON.stringify(entry.box)} of the image (x0, y0, x1, y1 as fractions): paper { x: ${place[2]}, y: ${place[3]} }, book x ${place[0]}, z ${place[1]}. ${others.length ? `The others (${others.join(', ')}) are built by someone else: leave them out, but when this one holds, carries or is held by one of them, name that one by its actor id` : 'Build only it'}${id ? `. If this one is alive, its actor id is "${id}"` : ''}. Reply with just its one ### NEW section, no SEEN line.`;
 }
+
+// Two stages: the draft is shown only until the final model's build replaces it (10-30 s). It must read as unfinished,
+// never as a wrong finished thing (10-18: a draft hill was a big black dome for a minute)
+export const DRAFT_NOTE = `This is a quick draft that a better build replaces in a few seconds: build an honest sketch, deliberately simple and unmistakably unfinished: the drawn silhouette in a few plain shapes at the right size and place, in paper white or light pencil grey (no dark or black fills, no dark domes or ground patches), a face only if one is clearly drawn, no decoration and no extra detail. Keep the actor, its move and its lines as the rules say.`;
