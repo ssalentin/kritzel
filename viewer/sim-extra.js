@@ -213,16 +213,20 @@ export function portable(a, g, api) {
   // carry: wander about with it; now and then a friend close by is offered it
   // the carry lasts CARRY_FOR from the pick-up or hand-over, kept on the thing (goals are re-decided meanwhile)
   if (now() > (it.carryUntil ??= now() + CARRY_FOR)) return drop();
-  // (a friend who carries something too can swap: the give hands theirs back)
-  const friend = actors().find(b => b !== a && !b.hidden && b.kind !== 'squid' &&
-    Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y)) <= 2 && (b.goal?.type ?? 'idle') !== 'give');
-  if (friend && R() < 0.4) { a.goal = { type: 'give', item: it, to: friend, until: now() + 8 }; a.goalSince = now(); return; }
-  // a throw: a friend a few cells off; it flies in an arc and lands, and is caught if they are still there
-  const far = actors().find(b => b !== a && !b.hidden && b.kind !== 'squid' && !carriedBy(spots, b) && (b.goal?.type ?? 'idle') !== 'give' &&
-    Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y)) >= 3 && Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y)) <= 6);
-  if (far && R() < 0.05) { throwTo(a, it, far, api); return; }   // about one throw a minute, not one every half minute
+  // on a quest (tickQuests sets g.dest: a figure or a place) it is carried there and offered to nobody on the way
+  if (!g.dest) {
+    // (a friend who carries something too can swap: the give hands theirs back)
+    const friend = actors().find(b => b !== a && !b.hidden && b.kind !== 'squid' &&
+      Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y)) <= 2 && (b.goal?.type ?? 'idle') !== 'give');
+    if (friend && R() < 0.4) { a.goal = { type: 'give', item: it, to: friend, until: now() + 8 }; a.goalSince = now(); return; }
+    // a throw: a friend a few cells off; it flies in an arc and lands, and is caught if they are still there
+    const far = actors().find(b => b !== a && !b.hidden && b.kind !== 'squid' && !carriedBy(spots, b) && (b.goal?.type ?? 'idle') !== 'give' &&
+      Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y)) >= 3 && Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y)) <= 6);
+    if (far && R() < 0.05) { throwTo(a, it, far, api); return; }   // about one throw a minute, not one every half minute
+  }
   if (!g.cell || (a.cell.x === g.cell[0] && a.cell.y === g.cell[1])) {
-    const c = nearest(a.pos.x + (R() - 0.5) * 4, a.pos.z + (R() - 0.5) * 4, a);
+    const d = g.dest?.pos ?? g.dest;
+    const c = d ? nearest(d.x, d.z, a) : nearest(a.pos.x + (R() - 0.5) * 4, a.pos.z + (R() - 0.5) * 4, a);
     g.cell = c ? [c.x, c.y] : null;
   }
   if (!g.cell || !step(a, g.cell[0], g.cell[1])) g.cell = null;
@@ -546,7 +550,8 @@ function endDialogue(a, api) {
 // A quest starts at random after a cooldown: its giver says the start line, figures nearby notice and say a notice
 // line, and two helpers come to the giver. It is solved when two helpers stand at the giver (help), or when the
 // weather is right (wait: rain, or sun with no rain at night's low); then the giver and helpers say the solved and
-// thanks lines. A quest nobody solves ends gently after a time limit. Other kinds (bring, visit) end on the limit in v1.
+// thanks lines. A bring is solved when a helper has fetched the thing to the giver, a visit when the giver stands at the
+// place. A thing can have a quest too: the figures around it speak for it. A quest nobody solves ends after a time limit.
 const QUEST_LIMIT_S = 90, QUEST_COOLDOWN = [120, 240];
 let activeQuest = null, nextQuestAt = 0;
 const questCooldown = now => now + QUEST_COOLDOWN[0] + Math.random() * (QUEST_COOLDOWN[1] - QUEST_COOLDOWN[0]);
@@ -563,21 +568,29 @@ export function solvedQuests() {
   return solvedLog.filter(e => nowS - e.at < 600).slice(-8).map(e => ({ who: String(e.who).slice(0, 80), at: e.at }));
 }
 export function tickQuests(actors, api) {
-  const { now, R, say, busy, weather, night } = api;
+  const { now, R, say, busy, nearest, spots, things } = api;
   const t = now();
+  // the giver: a figure (it speaks), or a drawn thing (the figures around it speak for it: a sad sun can't)
+  const figureOf = ref => actors.find(b => !b.hidden && (b.name === ref || b.id === ref)) || null;
+  const thingOf = ref => things().find(x => x.name === ref || x.file === ref) || null;
+  const within = (p, q, r) => Math.hypot(p.x - q.x, p.z - q.z) < r;
+  const reachOf = target => target.pos ? 2.5 : 3.5;                     // a thing's footprint keeps figures off its middle
+  const freeThing = what => spots().find(s => s.kind === 'portable' && !s.carrier && !s.throw && (what == null || s.name === what)) || null;
   if (!activeQuest) {
     if (t < nextQuestAt || R() > 0.4) return;
-    // only quests a figure can give, of the kinds that can be solved (help, wait); bring and visit wait for v1
-    const figureOf = q => actors.find(b => !b.hidden && (b.name === q.who || b.id === q.who));
-    const list = questPool().filter(q => ['help', 'wait'].includes(q.solve.kind) && figureOf(q) && !(q.solve.kind === 'wait' && waitHolds(q.solve, api)));   // a wait that already holds is not started
+    // a quest the book can run now: its giver is here; a bring has a free thing to bring (any small one when the
+    // quest names none), a visit has its place, a wait has a condition that does not hold yet
+    const can = q => (figureOf(q.who) || thingOf(q.who)) && (q.solve.kind !== 'bring' || freeThing(q.solve.what)) &&
+      (q.solve.kind !== 'visit' || thingOf(q.solve.at)) && !(q.solve.kind === 'wait' && waitHolds(q.solve, api));
+    const list = questPool().filter(can);
     if (!list.length) { nextQuestAt = t + 30; return; }
     const q = list[Math.floor(R() * list.length)];
-    const giver = figureOf(q);
-    if (giver.goal?.type === 'chase' || giver.goal?.type === 'flee') { nextQuestAt = t + 10; return; }
-    activeQuest = { q, giver, since: t, helpers: [], waitHeld: waitHolds(q.solve, api) };
-    say(giver, questLine(q.start), 3.2);
-    busy(giver, null, 'talk', 3);
-    const near = actors.filter(b => b !== giver && !b.hidden && b.kind !== 'squid' && Math.hypot(b.pos.x - giver.pos.x, b.pos.z - giver.pos.z) < 8);
+    const giver = figureOf(q.who), thing = giver ? null : thingOf(q.who), at = giver ? giver.pos : thing;
+    if (giver && (giver.goal?.type === 'chase' || giver.goal?.type === 'flee')) { nextQuestAt = t + 10; return; }
+    activeQuest = { q, giver, thing, since: t, helpers: [], waitHeld: waitHolds(q.solve, api),
+      item: q.solve.kind === 'bring' ? freeThing(q.solve.what) : null, place: q.solve.kind === 'visit' ? thingOf(q.solve.at) : null };
+    if (giver) { say(giver, questLine(q.start), 3.2); busy(giver, null, 'talk', 3); }
+    const near = actors.filter(b => b !== giver && !b.hidden && b.kind !== 'squid' && within(b.pos, at, 8));
     near.slice(0, 4).forEach((b, i) => {
       const n = q.lines?.notice;
       if (!n) return;
@@ -585,27 +598,73 @@ export function tickQuests(actors, api) {
       say(b, questLine({ de: n.de?.[k] ?? n.de?.[0], en: n.en?.[k] ?? n.en?.[0] }), 2.4, 0.6 + i * 0.5);
     });
     // helpers: the ones who like the giver come first, then the nearest
-    const liked = near.filter(b => personaOf(b.id)?.likes?.includes(giver.name) || personaOf(b.id)?.likes?.includes(giver.id));
-    const helpers = [...liked, ...near.filter(b => !liked.includes(b))].slice(0, 3);
-    activeQuest.helpers = helpers;
-    helpers.forEach(h => { h.goal = { type: 'approach', target: giver }; h.goalSince = t; });
+    const liked = near.filter(b => personaOf(b.id)?.likes?.includes(q.who) || (giver && personaOf(b.id)?.likes?.includes(giver.id)));
+    activeQuest.helpers = [...liked, ...near.filter(b => !liked.includes(b))].slice(0, 3);
+    steerQuest(activeQuest, api);
     return;
   }
-  const aq = activeQuest, { q, giver } = aq;
+  const aq = activeQuest, { q, giver } = aq, at = giver ? giver.pos : aq.thing;
   const endQuest = solved => { if (solved) solvedLog.push({ who: q.who, at: Date.now() / 1000 }); activeQuest = null; nextQuestAt = questCooldown(t); return solved; };
-  if (giver.hidden || !actors.includes(giver)) return endQuest(false);
+  if (giver ? (giver.hidden || !actors.includes(giver)) : !thingOf(q.who)) return endQuest(false);
   if (t - aq.since > QUEST_LIMIT_S) return endQuest(false);
-  const w = weather() || {};
-  const here = aq.helpers.filter(h => !h.hidden && Math.hypot(h.pos.x - giver.pos.x, h.pos.z - giver.pos.z) < 2.5);
+  const here = aq.helpers.filter(h => !h.hidden && within(h.pos, at, reachOf(giver || aq.thing)));
   let solved = false;
   if (q.solve.kind === 'help' && here.length >= 2) solved = true;
   // a wait quest is solved when its condition comes true: one already true at the start does not count
   if (q.solve.kind === 'wait' && aq.waitHeld && !waitHolds(q.solve, api)) aq.waitHeld = false;   // it went away: a later change counts
   if (q.solve.kind === 'wait' && !aq.waitHeld && waitHolds(q.solve, api)) solved = true;
-  if (!solved) return;
-  say(giver, questLine(q.lines?.solved), 3.2);
-  here.forEach((h, i) => say(h, questLine(q.lines?.thanks), 2.4, 0.8 + i * 0.4));
+  // bring: the thing is in the giver's hands, or (a thing's quest) set down at the thing by whoever carried it there
+  if (q.solve.kind === 'bring') {
+    const it = aq.item, c = it.carrier;
+    if (giver && c === giver) solved = true;
+    else if (!giver && c && within(c.pos, aq.thing, reachOf(aq.thing))) { it.carrier = null; it.carryUntil = null; c.goal = null; solved = true; }
+  }
+  // visit: the giver stands at the place (a thing's quest: one of the helpers does)
+  if (q.solve.kind === 'visit') {
+    const visitors = giver ? [giver] : aq.helpers;
+    if (visitors.some(v => !v.hidden && within(v.pos, aq.place, reachOf(aq.place)))) solved = true;
+  }
+  if (!solved) { steerQuest(aq, api); return; }
+  if (giver) say(giver, questLine(q.lines?.solved), 3.2);
+  const thanked = q.solve.kind === 'bring' && aq.item.carrier !== giver ? aq.helpers.filter(h => !h.hidden) : here;
+  thanked.forEach((h, i) => say(h, questLine(q.lines?.thanks), 2.4, 0.8 + i * 0.4));
   endQuest(true);
+}
+// every tick, while a quest runs: the helpers (and the giver, for a visit) are kept on it, since goals are re-decided
+// every 15 s otherwise. A helper who first reaches the quest says a help line once.
+function steerQuest(aq, api) {
+  const { now, R, say, nearest } = api, { q, giver, thing, helpers, item, place } = aq, t = now(), at = giver ? giver.pos : thing;
+  const busyNow = b => b.hidden || /chase|flee/.test(b.goal?.type ?? '') || t < b.busyUntil;
+  const onQuest = b => b.goal?.why === 'quest' || /approach|pick|give/.test(b.goal?.type ?? '') || (b.goal?.type === 'carry' && b.goal.dest);
+  const goTo = (b, p) => { const c = nearest(p.x, p.z, b); if (c) { b.goal = { type: 'wander', cell: [c.x, c.y], why: 'quest' }; b.goalSince = t; } };
+  const come = b => { if (busyNow(b) || onQuest(b)) return; if (giver) { b.goal = { type: 'approach', target: giver }; b.goalSince = t; } else goTo(b, thing); };
+  const within = (p, q, r) => Math.hypot(p.x - q.x, p.z - q.z) < r;
+  for (const h of helpers) if (!h.hidden && h.saidHelp !== aq && within(h.pos, at, 3.5) && q.lines?.help) {
+    h.saidHelp = aq; const n = q.lines.help, k = Math.floor(R() * (n.de?.length || 1));
+    say(h, questLine({ de: n.de?.[k], en: n.en?.[k] }), 2.2, 0.3);
+  }
+  if (q.solve.kind === 'bring') {
+    const it = item, c = it.carrier;
+    if (c && c !== giver && !helpers.includes(c)) helpers.push(c);                    // whoever picked it up is on the quest now
+    if (c && c !== giver) {
+      it.carryUntil = t + 60;                                                           // it is not put down on the way
+      const close = giver && within(c.pos, giver.pos, (c.radius ?? 0.4) + (giver.radius ?? 0.4) + 0.6);
+      if (close) { if (c.goal?.type !== 'give') { c.goal = { type: 'give', item: it, to: giver, until: t + 30 }; c.goalSince = t; } }
+      else if (c.goal?.type !== 'carry' || !c.goal.dest) { c.goal = { type: 'carry', item: it, until: null, dest: giver || thing }; c.goalSince = t; }
+    } else if (!c && !it.throw) {
+      const free = helpers.filter(h => !busyNow(h) && h !== giver);
+      const h = free.sort((p, q) => Math.hypot(p.pos.x - it.x, p.pos.z - it.z) - Math.hypot(q.pos.x - it.x, q.pos.z - it.z))[0];
+      if (h && !(h.goal?.type === 'pick' && h.goal.spot === it)) { h.goal = { type: 'pick', spot: it }; h.goalSince = t; }
+    }
+    for (const h of helpers) if (h !== c) come(h);
+    return;
+  }
+  if (q.solve.kind === 'visit') {
+    if (giver) { if (!busyNow(giver) && !within(giver.pos, place, 2.5) && giver.goal?.why !== 'quest') goTo(giver, place); for (const h of helpers) come(h); }
+    else for (const h of helpers) if (!busyNow(h) && h.goal?.why !== 'quest') goTo(h, place);
+    return;
+  }
+  for (const h of helpers) come(h);           // help, wait: everyone gathers at the giver
 }
 
 // ---------- signature acts (dialogues.json personas[id].acts): what only this figure does ----------
