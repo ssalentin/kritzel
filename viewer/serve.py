@@ -46,8 +46,24 @@ def version():
     except (OSError, subprocess.SubprocessError):
         c = ""
     return {"version": v, "commit": c}
+CHANGELOG_CACHE = {}      # HEAD sha -> items: the tag walk below costs seconds on a big checkout, the answer changes only with HEAD
+
+
 def changelog(n=60):
     """What changed lately, newest first: the commits of the running checkout (merges left out)."""
+    try:
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, timeout=3).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        head = ""
+    if head and head in CHANGELOG_CACHE:
+        return CHANGELOG_CACHE[head]
+    items = changelog_walk(n)
+    if head and items:
+        CHANGELOG_CACHE.clear(); CHANGELOG_CACHE[head] = items
+    return items
+
+
+def changelog_walk(n):
     try:
         # merges are left out, but a release tag (v0.2.0) can sit on a merge: list tags separately and attach
         # each to the newest listed commit it contains

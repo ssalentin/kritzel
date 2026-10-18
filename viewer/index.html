@@ -38,7 +38,8 @@
   @keyframes arrive { 0% { opacity: 0; transform: translate(-50%, 10px) scale(.6); } 12% { opacity: 1; transform: translate(-50%, 0) scale(1.08); }
     20% { transform: translate(-50%, 0) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -12px) scale(1); } }
   #hint { position: fixed; left: 16px; bottom: 12px; opacity: .6; color: var(--ink); font-size: 13px; pointer-events: none; }
-  #ver button { pointer-events: auto; border: 0; background: none; padding: 0 0 0 4px; font: inherit; color: inherit; cursor: pointer; text-decoration: underline dotted; }
+  #ver button { pointer-events: auto; border: 0; background: none; padding: 6px 8px; margin: -6px -8px -6px -4px; border-radius: 8px; font: inherit; color: inherit; cursor: pointer; }
+  #ver button:hover, #ver button:focus-visible { background: rgba(255,255,255,.5); text-decoration: underline dotted; }
   #log { position: fixed; left: 16px; bottom: 38px; width: min(420px, calc(100vw - 32px)); max-height: 55vh; overflow: auto;
     background: rgba(255,255,255,.95); color: #1d2a30; border-radius: 14px; box-shadow: 0 8px 28px rgba(0,0,0,.2); padding: 12px 16px; font: 13px/1.4 system-ui, sans-serif; z-index: 20; }
   #log h3 { margin: 0 0 6px; font-size: 15px; }
@@ -541,19 +542,29 @@ import('./sound.js?v=' + Date.now()).then(m => {
 // version in the hint line: which build of Kritzel this page runs
 fetch('/api/version', { cache: 'no-store' }).then(r => r.json())
   .then(v => {
+    // the whole version label is the button (the small scroll alone was easy to miss)
     const ver = document.getElementById('ver'), btn = document.createElement('button');
-    ver.textContent = `· Kritzel v${v.version}${v.commit ? ' (' + v.commit + ')' : ''}`;
-    btn.type = 'button'; btn.textContent = '📜'; btn.title = t('whatsNew'); btn.setAttribute('aria-label', t('whatsNew'));
+    btn.type = 'button'; btn.textContent = `Kritzel v${v.version}${v.commit ? ' (' + v.commit + ')' : ''} 📜`;
+    btn.title = t('whatsNew'); btn.setAttribute('aria-label', t('whatsNew'));
     btn.addEventListener('click', e => { e.stopPropagation(); toggleLog(); });
-    ver.append(btn);
+    btn.addEventListener('pointerdown', e => e.stopPropagation());   // not a tap on the world
+    ver.replaceChildren('· ', btn);
   }).catch(() => {});
 // "what's new": the latest changes (the running checkout's commits), opened from the button next to the version
 const logEl = document.getElementById('log');
+let logItems = null, logAt = 0, logLoading = false;
 async function toggleLog() {
   if (!logEl.hidden) { logEl.hidden = true; return; }
-  let items = [];
-  try { items = await (await fetch('/api/changelog', { cache: 'no-store' })).json(); } catch {}
+  if (logLoading) return;                          // a second tap while the list loads is not a close
   const h = document.createElement('h3'); h.textContent = t('whatsNew');
+  if (!logItems || performance.now() - logAt > 60000) {
+    logEl.replaceChildren(h, '…'); logEl.hidden = false;    // open at once, fill when the server answers
+    logLoading = true;
+    try { logItems = await (await fetch('/api/changelog', { cache: 'no-store' })).json(); logAt = performance.now(); } catch { logItems = logItems || []; }
+    logLoading = false;
+    if (logEl.hidden) return;                        // closed meanwhile
+  }
+  const items = logItems;
   const parts = [h];
   let day = '', ul = null;
   for (const c of items) {
