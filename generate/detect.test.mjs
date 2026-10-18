@@ -213,3 +213,22 @@ test('paper taken away and put back: the places are kept, and the same sheet is 
     assert.equal(keepPlacesIfNothing(dir, before, { written: [{}], removed: [] }), false);   // something built: a new sheet
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('the same sheet put back moved: the places move with it by the fitted transform', async () => {
+  const { againInBook, keepPlacesIfNothing } = await import('./generate.mjs');
+  const t = (name, x, y) => ({ meta: { name, paper: { x, y, stale: true } } });
+  const book = [t('Haus', 0.6, 0.3), t('Strichfigur', 0.3, 0.5), t('Maus', 0.25, 0.6), t('Sonne', 0.45, 0.2), t('Wolke', 0.5, 0.25)];
+  const e = (de, x, y) => ({ de, box: [x - 0.02, y - 0.02, x + 0.02, y + 0.02] });
+  const shifted = [e('ein Haus', 0.7, 0.4), e('ein Mann', 0.4, 0.6), e('eine Maus', 0.35, 0.7), e('eine Sonne', 0.55, 0.3), e('eine Wolke', 0.6, 0.35)];
+  const again = againInBook(shifted, book);
+  assert.equal(again.length, 5);
+  assert.ok(Math.abs(again.fit.tx - 0.1) < 0.01 && Math.abs(again.fit.ty - 0.1) < 0.01);
+  const dir = mkdtempSync(join(tmpdir(), 'kritzel-paper-'));
+  try {
+    writeFileSync(join(dir, 'paper.json'), JSON.stringify({ _through: 'b', 'haus.js': { x: 0.6, y: 0.3, stale: true } }));
+    keepPlacesIfNothing(dir, { _through: 'a', 'haus.js': { x: 0.6, y: 0.3 } }, { written: [], removed: [], sheetFit: again.fit });
+    const p = JSON.parse(readFileSync(join(dir, 'paper.json'), 'utf8'));
+    assert.ok(Math.abs(p['haus.js'].x - 0.7) < 0.01 && Math.abs(p['haus.js'].y - 0.4) < 0.01 && !p['haus.js'].stale);
+    assert.equal(p._through, 'b');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

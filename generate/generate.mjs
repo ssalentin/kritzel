@@ -229,7 +229,7 @@ export function againInBook(listed, existing) {
   const ents = listed.map(e => ({ e, k: kindOf(e.de), x: (e.box[0] + e.box[2]) / 2, y: (e.box[1] + e.box[3]) / 2 }));
   const pairs = [];
   for (const q of ents) for (const p of book) if (p.k === q.k) pairs.push([p, q]);
-  let best = [];
+  let best = [], bestFit = null;
   const tries = pairs.length > 60 ? pairs.slice(0, 60) : pairs;              // enough for a sheet; bounded work
   for (const [p1, q1] of tries) for (const [p2, q2] of tries) {
     if (p1 === p2 || q1 === q2) continue;
@@ -246,12 +246,13 @@ export function againInBook(listed, existing) {
       for (const p of free) if (p.k === q.k) { const d = Math.hypot(sr * p.x - si * p.y + tx - q.x, si * p.x + sr * p.y + ty - q.y); if (d < near) { near = d; hit = p; } }
       if (hit) { free.delete(hit); got.push(q); }
     }
-    if (got.length > best.length) best = got;
+    if (got.length > best.length) { best = got; bestFit = { sr, si, tx, ty }; }
   }
   const same = best.length >= 3 && new Set(best.map(q => q.k)).size >= 2 && best.length >= 0.6 * listed.length;
   // the list's in_book counts only when the places agree it is the same sheet: it knows the book's things only by
   // their descriptions, so a new 'bird with spread wings' can come back as the book's Vogel
-  return same ? [...new Set([...named, ...best.map(q => q.e)])] : [];
+  // the fit goes along: when the same sheet came back moved, the paper places move with it (keepPlacesIfNothing)
+  return Object.defineProperty(same ? [...new Set([...named, ...best.map(q => q.e)])] : [], 'fit', { value: same ? bestFit : null });
 }
 
 // a drawing that gives light (by its name or what it shows) must declare light with its glowing part as object3D, so the
@@ -641,6 +642,7 @@ Several builders make this sheet at the same time. You build only this one drawi
     // is not built a second time (Sebastian: 6 things doubled at 154727). Only in add mode: switch starts empty.
     if (listed && newSheet === 'add') {
       const again = againInBook(listed, existing);
+      if (again.fit) report.sheetFit = again.fit;
       if (again.length) {
         report.alreadyInBook = again.map(e => e.inBook || e.de);
         log(`${name}: ${again.length} of ${listed.length} drawings are in the book already (${report.alreadyInBook.join(', ')}): not built again`);
@@ -744,11 +746,18 @@ Several builders make this sheet at the same time. You build only this one drawi
 
 // a big change that built nothing (the paper taken away: an empty table) keeps the places from before it: they are
 // still the sheet's places when it comes back. `before` is the paper map read before movePaperAlong.
+// When the list matched it as the same sheet moved (report.sheetFit), the places move by that fit instead: they are
+// where the sheet lies now, so REMOVE and UPDATE match against where things really are (review of 68ef9af).
 export function keepPlacesIfNothing(reportsDir, before, r) {
   if (r.error || r.written.length || r.removed?.length) return false;
   const now = readPaper(reportsDir);
   if (!Object.entries(now).some(([k, v]) => k !== '_through' && v?.stale && !before[k]?.stale)) return false;
-  writePaper(reportsDir, { ...before, _through: now._through });
+  const f = r.sheetFit, moved = {};
+  for (const [k, v] of Object.entries(before)) {
+    if (k === '_through' || !f || typeof v?.x !== 'number') { moved[k] = v; continue; }
+    moved[k] = { ...v, x: +(f.sr * v.x - f.si * v.y + f.tx).toFixed(3), y: +(f.si * v.x + f.sr * v.y + f.ty).toFixed(3) };
+  }
+  writePaper(reportsDir, { ...moved, _through: now._through });
   return true;
 }
 
