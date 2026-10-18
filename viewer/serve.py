@@ -337,8 +337,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             try:
                 placed = json.loads(path.read_text())
             except (OSError, ValueError):
-                # first placement in this world: everything already standing stays where it is
-                placed = {f.name: [0, 0] for f in things.glob("*.js") if f.name != file}
+                # first placement in this world: nothing is placed yet. The viewer places every thing of a world
+                # without a placement.json by its paper place, so the others must not be pinned at [0, 0] here
+                placed = {}
             placed = {f: v for f, v in placed.items() if (things / f).exists() or f == file}   # gone things free their name
             if d is None:
                 placed.pop(file, None)
