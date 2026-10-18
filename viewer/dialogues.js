@@ -120,6 +120,19 @@ const played = new Set();                  // played dialogues, by content (the 
 const contentKey = d => JSON.stringify(d.turns);
 // the figures' personalities (dialogues.json personas, keyed by actor id); refs are names or ids, resolved by the sim
 export const HOBBIES = ['collect', 'guard', 'nap', 'follow', 'wander'];
+// signature acts (GitHub #26): the repertoire the sim can show, agreed with generate/dialogues.mjs (ACTS there)
+export const ACTS = ['spin', 'hop', 'bow', 'wave-big', 'roar', 'sing-notes', 'sparkle', 'sun-burst', 'splash', 'juggle', 'dance-solo', 'snack'];
+const ACT_WHEN = ['night', 'sun', 'rain', 'near'];
+// an act: { id, de, en, when?, near?, effect? }; anything else in it is dropped, a bad one is left out
+export function safeAct(x) {
+  if (!x || !ACTS.includes(x.id) || typeof x.de !== 'string' || typeof x.en !== 'string' || !x.de.trim() || !x.en.trim()) return null;
+  return {
+    id: x.id, de: x.de.slice(0, 80), en: x.en.slice(0, 80),
+    ...(ACT_WHEN.includes(x.when) && { when: x.when }),
+    ...(typeof x.near === 'string' && x.near && { near: x.near }),
+    ...(ACTS.includes(x.effect) && { effect: x.effect }),
+  };
+}
 export function safePersona(p) {
   return p && typeof p === 'object' && HOBBIES.includes(p.hobby) &&
     (p.favourite === null || typeof p.favourite === 'string') &&
@@ -128,6 +141,7 @@ export function safePersona(p) {
       likes: p.likes.filter(x => typeof x === 'string').slice(0, 3),
       fears: p.fears.filter(x => typeof x === 'string').slice(0, 2),
       hobby: p.hobby,
+      acts: (Array.isArray(p.acts) ? p.acts.map(safeAct).filter(Boolean) : []).slice(0, 3),
     } : null;
 }
 export const personaOf = id => personas[id] || null;

@@ -241,6 +241,8 @@ function throwTo(a, it, to, { now, say, line }) {
 // or hid lets it go; a thing in the air moves along its arc and lands, and a friend still near catches it
 export function frame(actors, api) {
   const { now, say, line, ground, spots } = api;
+  // an act's effect lands a beat after the act (tickActs set it), not at the next 4 s tick
+  for (const b of actors) if (b.reply && now() >= b.reply.at) { perform(b, b.reply.act, api, b.reply.dur); api.trace?.(b, { type: 'act', target: { name: b.reply.act }, why: 'effect' }); b.reply = null; }
   for (const it of spots().filter(s => s.kind === 'portable' && s.carrier)) {
     if (!actors.includes(it.carrier) || it.carrier.hidden) { it.carrier = null; continue; }   // gone or hidden: let go
     // a brief talk or greeting keeps it; a goal that stays something else for over a second lets it go
@@ -606,9 +608,67 @@ export function tickQuests(actors, api) {
   endQuest(true);
 }
 
+// ---------- signature acts (dialogues.json personas[id].acts): what only this figure does ----------
+// Now and then a calm figure performs one of its 2-3 acts (a roar, a spin, a bow...) and says its line. An act with
+// a `when` waits for that moment (night, sun, rain) or for its `near` thing or figure to be close; one with an
+// `effect` makes the figures close by answer with that act. One act at a time in the world, with a pause between,
+// so they read as moments and not as a fidget. sim.js shows the act on any rig (ACT_MOTION there).
+const ACT_DUR = { spin: 2.2, hop: 1.8, bow: 2.2, 'wave-big': 2.2, roar: 2.4, 'sing-notes': 2.8, sparkle: 2.4, 'sun-burst': 2.6, splash: 1.8, juggle: 2.8, 'dance-solo': 3.2, snack: 2.6 };
+const ACT_GAP = 10;                       // seconds between any two acts in the world
+const ACT_REST = [45, 90];                // a figure's own pause between its acts
+let lastActAt = -ACT_GAP;
+const actLine = act => (lang() === 'en' ? act.en : act.de) || '';
+function perform(a, id, api, dur = ACT_DUR[id] ?? 2) {
+  const { now } = api;
+  a.anim = id; a.animStart = now(); a.animUntil = a.busyUntil = now() + dur;
+  if (a.goal && !/visit|fetch|bring|carry/.test(a.goal.type)) { a.goal = { type: 'idle', until: now() + dur }; a.goalSince = now(); }
+}
+function tickActs(actors, api, cover) {
+  const { now, R, say, things, night, weather } = api;
+  if (now() < lastActAt + ACT_GAP) return;
+  if (actors.filter(o => o.sayUntil > now()).length >= 2) return;   // the act's line needs a free bubble (sim.js BUBBLES_MAX)
+  // where a named thing or figure is (an act's `near`); null when it isn't in the book
+  const where = ref => {
+    const t = things().find(t => t.file === ref || t.name === ref);
+    if (t) return { x: t.x, z: t.z };
+    const f = actors.find(x => !x.hidden && (x.name === ref || x.id === ref));
+    return f ? { x: f.pos.x, z: f.pos.z } : null;
+  };
+  const fits = (a, act) => {
+    if (act.near) { const w = where(act.near); if (!w || Math.hypot(w.x - a.pos.x, w.z - a.pos.z) > 3.5) return false; }
+    if (act.when === 'night') return night() > 0.5;
+    if (act.when === 'sun') return night() < 0.3 && cover < 0.3;
+    if (act.when === 'rain') return (weather() || []).includes('rain');
+    return true;                          // 'near' alone is the `near` check above
+  };
+  const calm = a => a.kind !== 'squid' && !a.hidden && !a.goal?.type?.match(/chase|flee|visit|fetch|bring|give|circle/) && a.fear < 0.2 && now() >= a.busyUntil && !a.after;
+  for (const a of actors) {
+    const acts = personaOf(a.id)?.acts;
+    if (!acts?.length) continue;
+    a.actAt ??= now() + 20 + R() * 25;    // the first act comes soon after the world starts, not at once
+    if (now() < a.actAt || !calm(a)) continue;
+    const can = acts.filter(act => fits(a, act));
+    if (!can.length || R() > 0.5) continue;
+    const act = can[Math.floor(R() * can.length)];
+    perform(a, act.id, api);
+    say(a, actLine(act), ACT_DUR[act.id] ?? 2);
+    api.trace?.(a, { type: 'act', target: { name: act.id }, why: act.when ?? (act.near ? 'near' : null) });
+    lastActAt = now(); a.actAt = now() + ACT_REST[0] + R() * (ACT_REST[1] - ACT_REST[0]);
+    // the figures close by answer with the effect (a roar makes them hop), a beat later and without a line
+    if (act.effect) for (const b of actors) if (b !== a && calm(b) && Math.hypot(b.pos.x - a.pos.x, b.pos.z - a.pos.z) < 4.5) {
+      b.face = Math.atan2(a.pos.x - b.pos.x, a.pos.z - b.pos.z);
+      const delay = 0.4 + R() * 0.6, dur = ACT_DUR[act.effect] ?? 2;
+      b.busyUntil = now() + delay + dur;
+      b.reply = { act: act.effect, at: now() + delay, dur };
+    }
+    break;                                // one act at a time
+  }
+}
+
 export function tick(actors, { now, R, pick, line, say, rel, spots, nearest, ground }, cover) {
   for (const a of actors) if (a.after && now() >= a.after.at) endDialogue(a, arguments[1]);
   tickQuests(actors, arguments[1]);
+  tickActs(actors, arguments[1], cover);
   // items: a carried item follows its carrier; a carrier who left or hid drops it; opened locks close again
   for (const it of spots().filter(s => s.kind === 'item')) {
     it.home ??= { x: it.x, z: it.z };
