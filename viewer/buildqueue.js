@@ -4,10 +4,12 @@
 import { t, lang } from './i18n.js';
 
 const FADE_S = 4;                        // a finished row stays this long, then goes
+const VANISH_S = 3;                      // the whole list goes this long after the last build ends
 const WORD = { listed: 'buildWait', building: 'buildNow', draft: 'buildAlmost', done: 'buildDone', failed: 'buildFail' };
 
 export function createBuildQueue(el) {
   const doneAt = new Map();              // row key → when it was first seen finished
+  let busyUntil = 0;                     // the last time a thing was still being built (or waiting)
   const say = x => typeof x === 'string' ? x : x?.[lang()] || x?.de || '';
 
   return {
@@ -24,15 +26,18 @@ export function createBuildQueue(el) {
         shown.push({ name: say(th.name), state: th.state, key });
       }
       for (const k of [...doneAt.keys()]) if (!things.some(th => JSON.stringify(th.name) + (th.file || '') === k)) doneAt.delete(k);
-      el.hidden = shown.length === 0;
-      if (el.hidden) { el.replaceChildren(); return; }
+      if (shown.some(r => r.state === 'listed' || r.state === 'building' || r.state === 'draft')) busyUntil = now;
+      const gone = shown.length === 0 || now - busyUntil > VANISH_S && shown.every(r => r.state === 'done' || r.state === 'failed');
+      el.hidden = gone;
+      if (gone) { el.replaceChildren(); return; }
       el.replaceChildren(...shown.map(r => {
         const row = document.createElement('div');
         row.className = 'row'; row.dataset.state = r.state;
+        const dot = document.createElement('i'); dot.className = 'dot';        // a small progress dot: it beats while a thing is in the works
         const name = document.createElement('span'), label = document.createElement('span');
         name.className = 'name'; name.textContent = r.name;
         label.className = 'label'; label.textContent = t(WORD[r.state] || 'buildWait');
-        row.append(name, label);
+        row.append(dot, name, label);
         return row;
       }));
     },

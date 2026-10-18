@@ -46,10 +46,15 @@
   #log li { margin: 2px 0; } #log ul { margin: 0; padding-left: 18px; } #log code { color: #889; font-size: 11px; }
   /* the build queue, top left: which things are being built (buildqueue.js) */
   #bq { position: fixed; left: 16px; top: 60px; max-width: min(320px, calc(100vw - 32px)); box-sizing: border-box; padding: 6px 4px; z-index: 4;
-    background: #fffc; border-radius: 12px; box-shadow: 0 4px 14px #0002; }
+    background: #fff8e6; border-radius: 4px 10px 6px 12px; box-shadow: 0 1px 0 #d9c9a3, 0 6px 14px #0002; transform: rotate(-1deg); }
+  #bq::before { content: ''; position: absolute; top: -7px; left: 14px; width: 42px; height: 12px; background: #f2dfa6aa; transform: rotate(3deg); }
   #bq[hidden] { display: none; }
   #bq .row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 5px 10px; transition: opacity 1s; }
   #bq .row[data-state=done] { opacity: .75; }
+  #bq .dot { flex: none; align-self: center; width: 9px; height: 9px; border-radius: 50%; background: #c9b98f; }
+  #bq .row[data-state=building] .dot { background: #e0a020; animation: pulse .8s ease-in-out infinite alternate; }
+  #bq .row[data-state=done] .dot { background: #3a9d5d; }
+  #bq .row[data-state=failed] .dot { background: #d0443a; }
   #bq .name { font-size: 17px; font-weight: 600; color: #1d2a30; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   #bq .label { font-size: 14px; color: #5a4a2a; white-space: nowrap; flex: none; }
   @media (max-width: 560px) { #bq { top: 12px; left: 12px; max-width: calc(100vw - 24px); } #bq .name { font-size: 15px; } }
