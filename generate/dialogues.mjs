@@ -57,11 +57,15 @@ export function thingsOf(thingsDir) {
 // the shape agreed with studio.world (the sim reads it): personas keyed by actor id; refs are a thing's or
 // figure's meta.name (or an actor id); hobby is one the sim acts on; when only with keys the sim evaluates
 export const HOBBIES = ['collect', 'guard', 'nap', 'follow', 'wander'];
+// signature acts (GitHub #26): 2-3 per figure from the engine's repertoire, agreed with studio.world
+export const ACTS = ['spin', 'hop', 'bow', 'wave-big', 'roar', 'sing-notes', 'sparkle', 'sun-burst', 'splash', 'juggle', 'dance-solo', 'snack'];
+const ACT_WHEN = ['night', 'sun', 'rain', 'near'];
 const WEATHER = ['rain', 'snow', 'rainbow', 'lightning'];
 
 const SYSTEM = `You write the characters of Kritzel, a living pop-up book of figures children drew on paper: who each one is, and short dialogues between them.
-Reply with JSON only: { "personas": { <actor id>: { "favourite": <name> or null, "likes": [<name>, ...], "fears": [<name>, ...], "hobby": "collect" | "guard" | "nap" | "follow" | "wander", "lines": { "de": [...], "en": [...] } } }, "quests": [ <quest>, ... ], "dialogues": [ { "between": [nameA, nameB], "when": { ... } (optional), "end": "stroll" | "dance" | "tag" | "look" | null, "turns": [ { "who": nameA or nameB, "de": German line, "en": English line } ] } ] }.
+Reply with JSON only: { "personas": { <actor id>: { "favourite": <name> or null, "likes": [<name>, ...], "fears": [<name>, ...], "hobby": "collect" | "guard" | "nap" | "follow" | "wander", "lines": { "de": [...], "en": [...] }, "acts": [ { "id": <act name, e.g. "roar": never a number>, "de": line, "en": line, "when": "night" | "sun" | "rain" | "near" (optional), "near": <name> (optional), "effect": <act> (optional) } ] } }, "quests": [ <quest>, ... ], "dialogues": [ { "between": [nameA, nameB], "when": { ... } (optional), "end": "stroll" | "dance" | "tag" | "look" | null, "turns": [ { "who": nameA or nameB, "de": German line, "en": English line } ] } ] }.
 Personas: only for the figures asked for. Build each from what its drawing shows and from the things and figures around it in the book: its favourite place or thing (the centre of its attention), up to 3 it likes, up to 2 it is a little afraid of (gently: a cat and water, a mouse and the cat), a hobby (collect: picks up small things; guard: stays by its favourite; nap: rests at its favourite; follow: walks after one it likes; wander: roams), and 2 or 3 typical lines, the same in German and English. Every <name> is exactly one of the names listed.
+Acts: 2 or 3 signature acts per figure asked for, things only this figure would do, from what it is and how it is drawn (the shark circles and snaps: roar; the sun's warm ray burst: sun-burst; a top-hat man lifts his hat: bow; a bird sings: sing-notes), each one of ${ACTS.join(', ')}, with the one short line it says while doing it (German and English); give different figures different acts where you can. "when" and "near" only when the act fits a moment or a thing or figure nearby.
 Quests: only as many as asked for, each one a figure has, of kind ${QUEST_KINDS.join(' or ')}. A quest is a little world event a figure has, and everyone nearby notices, talks about it and helps: { "who": <name or actor id of the figure or thing that has it>, "title": { "de", "en" }, "start": { "de", "en" } (its first line, e.g. "Aua, mein Zahn!"), "solve": { "kind": "help" | "bring" | "visit" | "wait", "what": <name of a thing in the book> (bring only; null for any small thing; never a thing that is not in the book), "at": <name of a thing> (visit only), "when": "night" | "sun" | "rain" (wait only) }, "helpers": [<name>, ...] (up to 3, who would help first: those who like it), "effect": "dim" (optional, only when the sun or a sky thing is sad and its light should dim until it is cheered up), "lines": { "notice": { "de": [2-3], "en": [2-3] } (what the others say when they notice, e.g. "Was hat der Hai denn?"), "help": { "de": [2-3], "en": [2-3] } (what the helpers say), "solved": { "de", "en" }, "thanks": { "de", "en" } } }. Kind and gentle: a lost thing, a wish, a sad mood that cheering up fixes, nothing scary.
 Dialogues: 3 to 5 turns, the two take turns, every line answers the one before, and together they make a tiny scene that fits these two: their personas, their drawings, and the moment. "when" says when a dialogue fits, only with these keys: "near": <name> (they talk about a thing or figure next to them), "carrying": true (one of them carries something), "night": 0 to 1 (fits from this darkness on), "weather": "rain" | "snow" | "rainbow" | "lightning", "new": <name of a thing> (it just arrived in the book). A "when" names one moment only (one key), so it fits as soon as that moment comes. No "when" means any time; most dialogues have none. Lines are short (at most 60 characters), warm, playful and right for small children: no violence, no insults, nothing scary beyond a friendly "boo". German first, natural for children; "en" is short child-friendly English, not a word-for-word copy. In "between" and "who" use the figures' names (not their actor ids). They all live on the open pages of a big pop-up book: when a line mentions where they are, it is the book or its pages, never an island.`;
 
@@ -73,7 +77,21 @@ export function cleanPersona(p, refs) {
   const lines = lang => (Array.isArray(p.lines?.[lang]) ? p.lines[lang] : []).filter(l => safeLine(l, lang)).slice(0, 3);
   const de = lines('de'), en = lines('en'), n = Math.min(de.length, en.length);
   return { favourite: ref(p.favourite), likes: list(p.likes, 3), fears: list(p.fears, 2), hobby: HOBBIES.includes(p.hobby) ? p.hobby : 'wander',
-    lines: { de: de.slice(0, n), en: en.slice(0, n) } };
+    lines: { de: de.slice(0, n), en: en.slice(0, n) }, acts: cleanActs(p.acts, refs) };
+}
+// 2-3 acts the sim can run: a repertoire id, its line in both languages through safeLine, when/near/effect only as agreed
+export function cleanActs(a, refs) {
+  const out = [], seen = new Set();
+  for (let x of Array.isArray(a) ? a : []) {
+    // DeepSeek numbered its acts (id 1, 2, 3) and put the act into effect: then the effect is the act
+    if (x && !ACTS.includes(x.id) && ACTS.includes(x.effect)) { const { effect, ...rest } = x; x = { ...rest, id: effect }; }
+    if (!x || !ACTS.includes(x.id) || seen.has(x.id) || !safeLine(x.de, 'de') || !safeLine(x.en, 'en') || x.de.length > 60 || x.en.length > 60) continue;
+    seen.add(x.id);
+    out.push({ id: x.id, de: x.de, en: x.en, ...(ACT_WHEN.includes(x.when) && { when: x.when }),
+      ...(typeof x.near === 'string' && refs.has(x.near.toLowerCase()) && { near: x.near }), ...(ACTS.includes(x.effect) && { effect: x.effect }) });
+    if (out.length === 3) break;
+  }
+  return out;
 }
 export function cleanWhen(w, refs, thingNames) {
   if (!w || typeof w !== 'object') return null;
@@ -141,6 +159,8 @@ export async function makePool({ thingsDir = join(ROOT, 'viewer', 'things'), cou
   const ids = new Set(cast.map(c => c.id));
   const kept = Object.fromEntries(Object.entries(old.personas || {}).filter(([id]) => ids.has(id)));
   const want = cast.filter(c => !kept[c.id]);
+  // kept personas from before acts get only their acts (the rest of the persona stays as it is)
+  const wantActs = cast.filter(c => kept[c.id] && !Array.isArray(kept[c.id].acts));
   const refs = new Set([...cast.flatMap(c => [c.name, c.id]), ...things.map(t => t.name)].map(x => x.toLowerCase()));
   const thingNames = new Set(things.map(t => t.name.toLowerCase()));
   const moment = momentOf(situation, newThings, refs);
@@ -161,9 +181,10 @@ ${cast.map(c => `- ${c.id}, ${c.name}: ${c.drawing}${kept[c.id] ? ` (persona: ${
 The things in the book (name: drawing):
 ${things.map(t => `- ${t.name}: ${t.drawing}`).join('\n') || '(none)'}
 ${moment ? `Right now: ${moment}.\n` : ''}
-${want.length ? `Write personas for: ${want.map(c => c.id).join(', ')}.` : 'Every figure has its persona: write "personas": {}.'} ${wantQuests ? `Write ${wantQuests} quest${wantQuests > 1 ? 's' : ''}${keptQuests.length ? ` (not for ${keptQuests.map(q => q.who).join(', ')}, who have one)` : ''}.` : 'Write "quests": [].'} Write ${count} dialogues, spread over different pairs${moment ? ', at most 4 of them for this moment (with a matching "when"), the rest for any time' : ''}.`;
+${want.length ? `Write personas for: ${want.map(c => c.id).join(', ')}.` : ''}${wantActs.length ? ` Write only "acts" for: ${wantActs.map(c => c.id).join(', ')} (as personas: { <id>: { "acts": [...] } }).` : ''}${!want.length && !wantActs.length ? 'Every figure has its persona: write "personas": {}.' : ''} ${wantQuests ? `Write ${wantQuests} quest${wantQuests > 1 ? 's' : ''}${keptQuests.length ? ` (not for ${keptQuests.map(q => q.who).join(', ')}, who have one)` : ''}.` : 'Write "quests": [].'} Write ${count} dialogues, spread over different pairs${moment ? ', at most 4 of them for this moment (with a matching "when"), the rest for any time' : ''}.`;
   const t0 = Date.now();
   const r = await oneShot({ system: SYSTEM, text, images: [], model, fallback: POOL_FALLBACK, effort: 'low' });
+  if (process.env.KRITZEL_POOL_RAW) try { writeFileSync(process.env.KRITZEL_POOL_RAW, r.text); } catch { /* debugging only */ }   // the model's reply, to see what was dropped
   let j = {};
   try { j = JSON.parse(r.text.slice(r.text.indexOf('{'), r.text.lastIndexOf('}') + 1)); } catch { /* unusable reply: keep what we had */ }
   const personas = { ...kept };
@@ -171,6 +192,7 @@ ${want.length ? `Write personas for: ${want.map(c => c.id).join(', ')}.` : 'Ever
   // persona was dropped on every call and every watcher start asked again): any case, id or name
   const byKey = Object.fromEntries(Object.entries(j.personas && typeof j.personas === 'object' ? j.personas : {}).map(([k, v]) => [k.toLowerCase(), v]));
   for (const c of want) { const p = cleanPersona(byKey[c.id.toLowerCase()] ?? byKey[c.name.toLowerCase()], refs); if (p) personas[c.id] = p; }
+  for (const c of wantActs) personas[c.id] = { ...kept[c.id], acts: cleanActs((byKey[c.id.toLowerCase()] ?? byKey[c.name.toLowerCase()])?.acts, refs) };
   const figureRefs = new Set(cast.flatMap(c => [c.name, c.id]).map(x => x.toLowerCase()));
   const describe = n => [...cast, ...things].find(x => [x.name, x.id].some(y => y && y.toLowerCase() === n.toLowerCase()))?.drawing || '';
   const quests = [...keptQuests];

@@ -17,7 +17,7 @@ test('the pool is stale when missing or made for another cast', async () => {
     assert.equal(await poolIsStale(dir), true);                        // missing
     writeFileSync(join(dir, 'dialogues.json'), JSON.stringify({ cast: ['Affe'], dialogues: [] }));
     assert.equal(await poolIsStale(dir), true);                        // made before the mouse came
-    const p = { favourite: null, likes: [], fears: [], hobby: 'wander', lines: { de: [], en: [] } };
+    const p = { favourite: null, likes: [], fears: [], hobby: 'wander', lines: { de: [], en: [] }, acts: [] };
     writeFileSync(join(dir, 'dialogues.json'), JSON.stringify({ cast: ['Affe', 'Maus'], personas: { affe: p, maus: p }, quests: [], dialogues: [] }));
     assert.equal(await poolIsStale(dir), false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -40,7 +40,7 @@ test('a persona keeps only what the sim can use: known names, an agreed hobby, s
   const refs = new Set(['baum', 'maus', 'affe']);
   const p = cleanPersona({ favourite: 'Baum', likes: ['Maus', 'Mond', 'affe', 'Maus', 'Baum'], fears: ['Katze'], hobby: 'sing',
     lines: { de: ['Ich mag den Baum.', 'Du bist dumm!', 'Hallo!'], en: ['I like the tree.', 'Hi!'] } }, refs);
-  assert.deepEqual(p, { favourite: 'Baum', likes: ['Maus', 'affe', 'Maus'], fears: [], hobby: 'wander', lines: { de: ['Ich mag den Baum.', 'Hallo!'], en: ['I like the tree.', 'Hi!'] } });
+  assert.deepEqual(p, { favourite: 'Baum', likes: ['Maus', 'affe', 'Maus'], fears: [], hobby: 'wander', lines: { de: ['Ich mag den Baum.', 'Hallo!'], en: ['I like the tree.', 'Hi!'] }, acts: [] });
   assert.equal(cleanPersona('nope', refs), null);
 });
 
@@ -61,7 +61,7 @@ test('the pool call keeps old personas, writes new ones, and maps actor ids in d
     writeFileSync(join(dir, 'affe.js'), actor('affe', 'Affe'));
     writeFileSync(join(dir, 'maus.js'), actor('maus', 'Maus'));
     writeFileSync(join(dir, 'baum.js'), `export const meta = { name: 'Baum', drawing: 'a tree' };\nexport function build() { return { actors: [] }; }\n`);
-    const old = { favourite: 'Baum', likes: [], fears: [], hobby: 'guard', lines: { de: [], en: [] } };
+    const old = { favourite: 'Baum', likes: [], fears: [], hobby: 'guard', lines: { de: [], en: [] }, acts: [] };
     writeFileSync(join(dir, 'dialogues.json'), JSON.stringify({ personas: { affe: old, gone: old }, dialogues: [] }));
     writeFileSync(join(dir, 'reply.txt'), JSON.stringify({
       personas: { affe: { hobby: 'nap' }, maus: { favourite: 'Baum', likes: ['Affe'], fears: [], hobby: 'collect', lines: { de: ['Piep!'], en: ['Squeak!'] } } },
@@ -93,7 +93,7 @@ test('a pool without a persona for every figure is stale, so the watcher makes o
   try {
     writeFileSync(join(dir, 'affe.js'), actor('affe', 'Affe'));
     writeFileSync(join(dir, 'maus.js'), actor('maus', 'Maus'));
-    const p = { favourite: null, likes: [], fears: [], hobby: 'wander', lines: { de: [], en: [] } };
+    const p = { favourite: null, likes: [], fears: [], hobby: 'wander', lines: { de: [], en: [] }, acts: [] };
     writeFileSync(join(dir, 'dialogues.json'), JSON.stringify({ cast: ['Affe', 'Maus'], dialogues: [] }));
     assert.equal(await poolIsStale(dir), true);                        // from before personas
     writeFileSync(join(dir, 'dialogues.json'), JSON.stringify({ cast: ['Affe', 'Maus'], personas: { affe: p }, dialogues: [] }));
@@ -112,7 +112,7 @@ test('a new pool keeps the old dialogues for any time and replaces the old ones 
     writeFileSync(join(dir, 'affe.js'), actor('affe', 'Affe'));
     writeFileSync(join(dir, 'maus.js'), actor('maus', 'Maus'));
     const d = (de, when) => ({ between: ['Affe', 'Maus'], end: null, ...(when && { when }), turns: [{ who: 'Affe', de, en: 'Hi!' }, { who: 'Maus', de: 'Ja!', en: 'Yes!' }] });
-    const p = { favourite: null, likes: [], fears: [], hobby: 'wander', lines: { de: [], en: [] } };
+    const p = { favourite: null, likes: [], fears: [], hobby: 'wander', lines: { de: [], en: [] }, acts: [] };
     writeFileSync(join(dir, 'dialogues.json'), JSON.stringify({ personas: { affe: p, maus: p }, dialogues: [d('Alt immer'), d('Alt Nacht', { night: 0.5 }), { ...d('Weg'), between: ['Affe', 'Hund'] }] }));
     writeFileSync(join(dir, 'reply.txt'), JSON.stringify({ personas: {}, dialogues: [d('Neu Regen', { weather: 'rain' }), d('Neu immer')] }));
     process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
@@ -175,7 +175,7 @@ test('a pool without quests, or with a quest whose figure has left, is stale at 
   try {
     writeFileSync(join(dir, 'affe.js'), actor('affe', 'Affe'));
     writeFileSync(join(dir, 'maus.js'), actor('maus', 'Maus'));
-    const p = { favourite: null, likes: [], fears: [], hobby: 'wander', lines: { de: [], en: [] } };
+    const p = { favourite: null, likes: [], fears: [], hobby: 'wander', lines: { de: [], en: [] }, acts: [] };
     const pool = extra => writeFileSync(join(dir, 'dialogues.json'), JSON.stringify({ cast: ['Affe', 'Maus'], personas: { affe: p, maus: p }, dialogues: [], ...extra }));
     pool({});
     assert.equal(await poolIsStale(dir), true);
@@ -197,7 +197,7 @@ test('a quest is replaced when it is old or the sim reports it solved', async ()
   try {
     writeFileSync(join(dir, 'affe.js'), actor('affe', 'Affe'));
     writeFileSync(join(dir, 'maus.js'), actor('maus', 'Maus'));
-    const p = { favourite: null, likes: [], fears: [], hobby: 'wander', lines: { de: [], en: [] } };
+    const p = { favourite: null, likes: [], fears: [], hobby: 'wander', lines: { de: [], en: [] }, acts: [] };
     const q = (who, made_at) => ({ who, made_at, title: { de: 'x', en: 'x' } });
     const now = new Date().toISOString(), old = new Date(Date.now() - 4 * 3600_000).toISOString();
     writeFileSync(join(dir, 'reply.txt'), JSON.stringify({ personas: {}, quests: [], dialogues: [] }));
@@ -239,5 +239,31 @@ test("a persona keyed by the figure's name instead of its id is kept", async () 
     const j = JSON.parse(readFileSync(join(dir, 'dialogues.json'), 'utf8'));
     assert.equal(j.personas.turmwesen?.hobby, 'guard');
     assert.equal(j.personas.maus?.hobby, 'nap');
+  } finally { process.env.PATH = path; delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('acts: only the repertoire, a line in both languages, at most 3, no repeats; old personas get acts merged in', async () => {
+  const { cleanActs, makePool } = await import('./dialogues.mjs');
+  const refs = new Set(['baum', 'maus']);
+  assert.deepEqual(cleanActs([{ id: 'roar', de: 'Rooaar!', en: 'Roooar!', when: 'night', near: 'Baum', effect: 'sparkle' },
+    { id: 'fly-away', de: 'Tschüss', en: 'Bye' }, { id: 'roar', de: 'Noch mal', en: 'Again' }, { id: 'bow', de: 'Du bist dumm', en: 'Hi' },
+    { id: 'hop', de: 'Hopp!', en: 'Hop!', when: 'always', near: 'Mond' }, { id: 'spin', de: 'Dreh!', en: 'Spin!' }, { id: 'snack', de: 'Mjam', en: 'Yum' }], refs),
+    [{ id: 'roar', de: 'Rooaar!', en: 'Roooar!', when: 'night', near: 'Baum', effect: 'sparkle' }, { id: 'hop', de: 'Hopp!', en: 'Hop!' }, { id: 'spin', de: 'Dreh!', en: 'Spin!' }]);
+  assert.deepEqual(cleanActs([{ id: 1, de: 'Hüpf!', en: 'Hop!', effect: 'hop' }], refs), [{ id: 'hop', de: 'Hüpf!', en: 'Hop!' }]);   // numbered, act in effect
+  const dir = mkdtempSync(join(tmpdir(), 'kritzel-acts-'));
+  const path = process.env.PATH;
+  process.env.PATH = join(import.meta.dirname, 'test-bin') + ':' + path;
+  try {
+    writeFileSync(join(dir, 'affe.js'), actor('affe', 'Affe'));
+    writeFileSync(join(dir, 'maus.js'), actor('maus', 'Maus'));
+    const before = { favourite: null, likes: [], fears: [], hobby: 'guard', lines: { de: [], en: [] } };   // from before acts
+    writeFileSync(join(dir, 'dialogues.json'), JSON.stringify({ personas: { affe: before, maus: { ...before, acts: [] } }, quests: [], dialogues: [] }));
+    writeFileSync(join(dir, 'reply.txt'), JSON.stringify({ personas: { affe: { hobby: 'nap', acts: [{ id: 'juggle', de: 'Hoppla!', en: 'Oops!' }] } }, quests: [], dialogues: [] }));
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    await makePool({ thingsDir: dir, model: 'claude-haiku-5-5' });
+    const j = JSON.parse(readFileSync(join(dir, 'dialogues.json'), 'utf8'));
+    assert.equal(j.personas.affe.hobby, 'guard');                                 // the persona stays, only acts are added
+    assert.deepEqual(j.personas.affe.acts, [{ id: 'juggle', de: 'Hoppla!', en: 'Oops!' }]);
+    assert.deepEqual(j.personas.maus.acts, []);                                    // had its (empty) acts: not asked again
   } finally { process.env.PATH = path; delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
 });
