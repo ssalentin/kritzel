@@ -6,11 +6,13 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 process.env.PATH = join(import.meta.dirname, 'test-bin') + ':' + process.env.PATH;
-Object.assign(process.env, { KRITZEL_DRAFT_MODEL: 'claude-haiku-5-5', KRITZEL_MODEL: 'claude-sonnet-5-5' });
+Object.assign(process.env, { KRITZEL_DRAFT_MODEL: 'claude-haiku-5-5', KRITZEL_MODEL: 'claude-sonnet-5-5', KRITZEL_FINAL_RETRY_S: '0.3', KRITZEL_THINGS_LINGER_MS: '100' });
 const { processFrame } = await import('./generate.mjs');
 const example = readFileSync(join(import.meta.dirname, 'examples', 'schnecke.js'), 'utf8');
 
-async function run({ final, slow = null, meanwhile = null, onLater = () => {} }) {
+let lists = [], listsAtEnd = 0;
+async function run({ final, slow = null, meanwhile = null, onLater = () => {}, after = 0 }) {
+  lists = [];
   const dir = mkdtempSync(join(tmpdir(), 'kritzel-two-'));
   for (const d of ['things', 'reports']) mkdirSync(join(dir, d));
   const frame = join(dir, '20261017-120000.jpg');
@@ -20,10 +22,12 @@ async function run({ final, slow = null, meanwhile = null, onLater = () => {} })
   process.env.FAKE_CLAUDE_BY_MODEL = JSON.stringify({ 'claude-haiku-5-5': join(dir, 'draft.txt'), 'claude-sonnet-5-5': join(dir, 'final.txt') });
   if (slow) process.env.FAKE_CLAUDE_SLOW = slow; else delete process.env.FAKE_CLAUDE_SLOW;
   try {
-    const r = await processFrame(frame, { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports'), box: [100, 100, 200, 200], onLater });
+    const r = await processFrame(frame, { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports'), box: [100, 100, 200, 200], onLater, onProgress: p => { if (p.things) lists.push(p.things); } });
     const draft = readFileSync(join(dir, 'things', r.written[0].file), 'utf8');
     if (meanwhile) meanwhile(join(dir, 'things', r.written[0].file));
     await r.finalsDone;
+    await new Promise(ok => setTimeout(ok, 50)); listsAtEnd = lists.length;   // after the frame's own list is done
+    if (after) await new Promise(ok => setTimeout(ok, after));                // a retried final comes later
     const saved = JSON.parse(readFileSync(join(dir, 'reports', '20261017-120000.json'), 'utf8'));
     return { r, saved, draft, now: readFileSync(join(dir, 'things', r.written[0].file), 'utf8'), files: readdirSync(join(dir, 'things')) };
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -44,10 +48,12 @@ test('the final replaces the draft in its file, keeping its name and actor id', 
   assert.equal(r.written[0].model, 'claude-haiku-5-5');
 });
 
-test('a final that fails its checks leaves the draft', async () => {
-  const { saved, draft, now } = await run({ final: 'export const meta = { name: "x" };' });
-  assert.equal(now, draft);
-  assert.equal(saved.finals[0].kept, 'draft');
+test('a final that fails is tried once more; failing again, the draft stands as a plain thing', async () => {
+  const { saved, draft, now } = await run({ final: 'export const meta = { name: "x" };', after: 1500 });
+  assert.deepEqual(saved.finals.map(f => [f.kept, f.attempt]), [['draft', 1], ['draft', 2]]);
+  assert.match(draft, /draft: true/);
+  assert.equal(now, draft.replace(' draft: true,', ''));                   // never 'unfinished' for good
+  assert.ok(!lists.slice(listsAtEnd).some(l => l.length));                 // the late retry put no old list back
 });
 
 test('a thing changed meanwhile keeps the change: the stale final is dropped', async () => {

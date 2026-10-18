@@ -139,6 +139,7 @@ const FIX_SLOTS = 2, fixSlot = slots(FIX_SLOTS);
 export const DRAFT_MODEL = process.env.KRITZEL_DRAFT_MODEL || null;
 const BUILD = DRAFT_MODEL || MODEL;                    // what lists and builds first
 const FINAL_SLOTS = +process.env.KRITZEL_FINAL_SLOTS || 4, finalSlot = slots(FINAL_SLOTS);
+const FINAL_RETRY_MS = (+process.env.KRITZEL_FINAL_RETRY_S || 180) * 1000;
 const BUILD_SLOTS = +process.env.KRITZEL_BUILD_SLOTS || (isPiModel(BUILD) ? 8 : 4), buildSlot = slots(BUILD_SLOTS);
 const onlyHolds = problems => problems.length > 0 && problems.every(p => /^(holds|heldBy) names actor/.test(p));
 
@@ -492,7 +493,10 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
       if (split && b[0] >= draftBox.min[0] - 0.3 && b[0] <= draftBox.max[0] + 0.3 && b[1] >= draftBox.min[2] - 0.3 && b[1] <= draftBox.max[2] + 0.3) return [];
       return [`it stands centred at x ${b[0].toFixed(2)}, z ${b[1].toFixed(2)}, but this thing stands at x ${a[0].toFixed(2)}, z ${a[1].toFixed(2)} in the book: build it centred there (move its group, its scenery and its actor's start by ${(a[0] - b[0]).toFixed(2)}, ${(a[1] - b[1]).toFixed(2)})`];
     };
-    function finalOf({ s, file, draft, thingName, ids, draftBox }) {
+    // A final that fails (its checks or its call) is tried once more FINAL_RETRY later, off the busy path; if that fails
+    // too, the draft drops its draft flag and stands as a plain thing: a figure never stays 'unfinished' for good in a
+    // child's book (orch, 10-18)
+    function finalOf({ s, file, draft, thingName, ids, draftBox, attempt = 1 }) {
       return finalSlot(async () => {
         const path = join(thingsDir, file);
         const base = s.prompt || `${ask}\n\nYou build only this one drawing: ${said.seen[s.n]?.de || thingName}. Reply with just its one ### NEW section.`;
@@ -503,7 +507,18 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
 A quick draft of this drawing is in the book now (below)${at ? `, centred at x ${at[0].toFixed(2)}, z ${at[1].toFixed(2)}: build yours centred there too` : ''}. Build the drawing properly yourself, from the image, not from the draft's shapes. Keep what the book already knows about it: name '${thingName}'${ids.length ? `, actor id${ids.length > 1 ? 's' : ''} ${ids.map(i => `'${i}'`).join(', ')}${start ? ` (${start})` : ''}` : ''}${paperAt ? `, meta ${paperAt}` : ''}. Usually it is one thing: reply with its one ### NEW section. But the draft may have taken several things for one: if what is drawn there is really several separate things (by the rules: each object and each living figure its own), reply with one ### NEW section per thing; the first is the one the book knows (with the name, ids and place above), the others get their own names and actor ids and stand where they are drawn.
 
 ${draft}`;
-        const done = (x) => { const k = things.findIndex(t => t?.file === file); if (k >= 0) thingState(k, 'done'); report.finals.push({ file, at: T(), ...x }); mark('finalsDone'); report.timing.finalsDone = T(); save(); };
+        // the build list only while this frame still owns it: a retry minutes later must not bring an old queue back
+        const done = (x) => { const k = things.findIndex(t => t?.file === file); if (k >= 0 && thingsOwner === name) thingState(k, 'done'); report.finals.push({ file, at: T(), ...x }); mark('finalsDone'); report.timing.finalsDone = T(); try { save(); } catch { /* a late retry after the reports folder went */ } };
+        const failed = x => {
+          done({ ...x, attempt });
+          // the retry outlives the frame (its folders may be gone by then): it must never throw
+          if (attempt === 1) { setTimeout(() => finalOf({ s, file, draft, thingName, ids, draftBox, attempt: 2 }).catch(e => log(`${name}: retry of ${file}: ${e.message.slice(0, 120)}`)), FINAL_RETRY_MS).unref?.(); return; }
+          // the second try failed too: the draft stands for good, as a plain thing (only if nothing changed it meanwhile)
+          const path = join(thingsDir, file);
+          let now = null;
+          try { now = readFileSync(path, 'utf8'); } catch { /* removed */ }
+          if (now === draft) try { atomicWrite(path, draft.replace(/(export\s+const\s+meta\s*=\s*\{) draft: true,/, '$1')); log(`${name}: final of ${file} failed twice: the draft stays, as a plain thing`); } catch { /* the folder is gone */ }
+        };
         try {
           const r = await oneShot({ system: SYSTEM, text, images: s.images || images, model: MODEL });
           report.calls.push(callOf(r, { final: file }));
@@ -516,7 +531,7 @@ ${draft}`;
           const extra = info => [...sameSpot(draftBox, split)(info), ...hangingLoose(file)(info)];
           let f = await finish({ body: secs[0].body, model: MODEL, frame, images: s.images || images, takenIds: others,
             keepIds: ids, oldName: thingName, calls: report.calls, fixModels: [MODEL], extra });
-          if (!f.code) { log(`${name}: final of ${file} failed its checks, the draft stays: ${f.problems.join('; ').slice(0, 200)}`); return done({ kept: 'draft', problems: f.problems }); }
+          if (!f.code) { log(`${name}: final of ${file} failed its checks, the draft stays: ${f.problems.join('; ').slice(0, 200)}`); return failed({ kept: 'draft', problems: f.problems }); }
           // the book knows it by its name (personas, quests, dialogues): the final keeps the draft's
           const finalName = f.code.match(/name:\s*['"]([^'"]+)['"]/)?.[1];
           if (finalName && finalName !== thingName) {
@@ -567,7 +582,7 @@ ${draft}`;
           done({ model: MODEL, seconds: +r.seconds.toFixed(1), ...(parts.length && { split: parts }) });
           // the watcher refreshes dialogues from what a frame wrote; these came after it returned
           if (parts.length) try { onLater({ written: report.written.filter(w => parts.includes(w.file)) }); } catch { /* never breaks a final */ }
-        } catch (e) { log(`${name}: final of ${file} failed, the draft stays: ${e.message.slice(0, 200)}`); done({ kept: 'draft', problems: [e.message.slice(0, 200)] }); }
+        } catch (e) { log(`${name}: final of ${file} failed, the draft stays: ${e.message.slice(0, 200)}`); failed({ kept: 'draft', problems: [e.message.slice(0, 200)] }); }
       });
     }
     // sections of the main reply: only those it owns (not given to a helper), and no UPDATE on a new sheet
