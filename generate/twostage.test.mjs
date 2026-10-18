@@ -96,6 +96,7 @@ test('the draft is asked for as an honest sketch; its final gets the plain quest
     await run({ final: example });
     const prompts = readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l).message.content.at(-1).text);
     assert.match(prompts[0], /honest sketch/);                          // the draft (first call)
+    assert.match(prompts[0], /UPDATE section is built fully/);          // an UPDATE gets no final: never a sketch
     assert.ok(prompts.slice(1).every(p => !/honest sketch/.test(p)));     // the final
   } finally { delete process.env.FAKE_CLAUDE_LOG; }
 });
