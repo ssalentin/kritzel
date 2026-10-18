@@ -65,11 +65,13 @@ export function prewarm(model, system, n) {
 // matched a text-only one: every draft said 'the image was omitted'). Asked once per model from pi --list-models:
 // the line whose provider and model are exactly this id, its last column.
 const seeing = new Map();
+let checkFailedOnce = false;
 export function sees(model) {
   if (!seeing.has(model)) seeing.set(model, new Promise(ok => {
     const [provider, ...rest] = model.split('/'), id = rest.join('/');
     execFile('pi', ['--list-models', id], { timeout: 20_000 }, (err, out) => {
-      if (err) return ok(false);
+      // the check could not run (slow start under load): no for this call, asked again next time (review of 24f8476)
+      if (err) { seeing.delete(model); if (!checkFailedOnce) { checkFailedOnce = true; console.error(`pi --list-models failed (${err.message.slice(0, 80)}): image calls to ${model} go to the fallback until it answers`); } return ok(false); }
       const row = String(out).split('\n').map(l => l.trim().split(/\s+/)).find(c => c[0] === provider && c[1] === id);
       ok(!!row && row.at(-1) === 'yes');
     });
