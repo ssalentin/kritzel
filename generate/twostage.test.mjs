@@ -33,6 +33,8 @@ test('the final replaces the draft in its file, keeping its name and actor id', 
   const final = example.replace(/0x[0-9a-f]{6}/i, '0x123456').replace(/name: 'Schnecke'/g, "name: 'Große Schnecke'");
   const { r, saved, draft, now, files } = await run({ final });
   assert.match(draft, /\(claude-haiku-5-5\)/);
+  assert.match(draft, /export const meta = \{ draft: true,/);                // the draft says so, for the viewer's pencil look
+  assert.ok(!/draft: true/.test(now));                                   // the final does not
   assert.match(now, /\(claude-sonnet-5-5\)/);
   assert.match(now, /0x123456/);
   assert.ok(!/Große Schnecke/.test(now) && /name: 'Schnecke'/.test(now));        // the book knows it as Schnecke

@@ -456,6 +456,10 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
       const base = old ? old.file.replace(/\.js$/, '') : freeName(slug(thingName), files);
       files.add(base);
       const file = base + '.js';
+      // a draft says so (meta.draft: true), so the viewer can give it a pencil look until its final, which rewrites the
+      // whole module, replaces it
+      const isDraft = DRAFT_MODEL && f.model !== MODEL && s.kind === 'NEW';
+      if (isDraft) f = { ...f, code: f.code.replace(/export\s+const\s+meta\s*=\s*\{/, m => `${m} draft: true,`) };
       atomicWrite(join(thingsDir, file), f.code);
       if (f.info?.box) boxes.push({ file, ...f.info.box });
       const pm = f.code.match(/paper:\s*\{\s*x:\s*([\d.]+),\s*y:\s*([\d.]+)/);
