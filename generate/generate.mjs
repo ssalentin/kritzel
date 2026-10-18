@@ -23,7 +23,7 @@ import { oneShot, MODEL, FALLBACK_MODEL, PI_FALLBACK } from './claude.mjs';
 import { isPiModel, prewarm } from './pi.mjs';
 import { live } from './children.mjs';
 import { staticCheck, buildCheck, metaOf } from './check.mjs';
-import { SYSTEM, userText, fixText, DETECT_SYSTEM, detectText, oneOfText } from './prompts.mjs';
+import { SYSTEM, userText, fixText, DETECT_SYSTEM, detectText, oneOfText, DRAFT_NOTE } from './prompts.mjs';
 import { islandOf, movePaper } from './place.mjs';
 import { safeLine } from '../viewer/dialogues.js';
 
@@ -456,6 +456,10 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
       const base = old ? old.file.replace(/\.js$/, '') : freeName(slug(thingName), files);
       files.add(base);
       const file = base + '.js';
+      // a draft says so (meta.draft: true), so the viewer can give it a pencil look until its final, which rewrites the
+      // whole module, replaces it
+      const isDraft = DRAFT_MODEL && f.model !== MODEL && s.kind === 'NEW';
+      if (isDraft) f = { ...f, code: f.code.replace(/export\s+const\s+meta\s*=\s*\{/, m => `${m} draft: true,`) };
       atomicWrite(join(thingsDir, file), f.code);
       if (f.info?.box) boxes.push({ file, ...f.info.box });
       const pm = f.code.match(/paper:\s*\{\s*x:\s*([\d.]+),\s*y:\s*([\d.]+)/);
@@ -613,7 +617,8 @@ ${draft}`;
 
 Several builders make this sheet at the same time. You build only this one drawing: ${e.de} (${e.en}). The others (${others.join(', ')}) are built by someone else: leave them out, but keep this one's actor id different from theirs. Reply with just its one ### NEW section, no SEEN line.`;
       try {
-        const h = await buildSlot(() => oneShot({ system: SYSTEM, images: seen, text, model: BUILD }));
+        // a draft is asked for as an honest sketch; its final (s.prompt below) gets the plain question
+        const h = await buildSlot(() => oneShot({ system: SYSTEM, images: seen, text: DRAFT_MODEL ? `${text}\n\n${DRAFT_NOTE}` : text, model: BUILD }));
         report.calls.push(callOf(h, { helper: e.de }));
         const sec = parseReply(h.text).find(x => x.kind === 'NEW');
         if (!sec) { thingState(k, 'failed'); report.rejected.push({ kind: 'NEW', name: e.de, problems: ['the helper wrote no NEW section'] }); return; }
@@ -660,7 +665,7 @@ Several builders make this sheet at the same time. You build only this one drawi
       const ids = listed.map(e => { const id = freeName(slug(e.de.replace(/^(ein|eine|einen)\s+/i, '')), taken); taken.add(id); return id; });
       listed.forEach((e, k) => helpers.push(buildOne(k, e, { id: ids[k], area: e.box, others: listed.map((x, i) => i === k ? null : `${x.den} (actor id "${ids[i]}" if alive)`).filter(Boolean) })));
     } else {
-      try { r = await oneShot({ system: SYSTEM, text: ask, images, onText, signal: stop.signal, timeoutMs: 6 * 60_000, model: BUILD }); }
+      try { r = await oneShot({ system: SYSTEM, text: DRAFT_MODEL ? `${ask}\n\n${DRAFT_NOTE}` : ask, images, onText, signal: stop.signal, timeoutMs: 6 * 60_000, model: BUILD }); }
       catch (e) {
         // the main call failed (timeout, limit, login): let what is already being written finish, start nothing
         // new. If something got written, the frame counts as done (a retry would write it twice).
