@@ -3,6 +3,27 @@
 // day, night and lamps like everything else, plus foam and spray where it lands. Each call returns an
 // Object3D for the thing to add to its own group; the kit animates them (tick, from world.js) and lets
 // go of pieces whose thing was removed.
+let causticTex = null;
+// light nets: short bright arcs on black, tiled, drawn once and shared by every pond (additive blend)
+function caustics(THREE) {
+  if (causticTex) return causticTex;
+  const cv = document.createElement('canvas'); cv.width = cv.height = 256;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#000'; g.fillRect(0, 0, 256, 256);
+  g.strokeStyle = '#fff'; g.lineCap = 'round';
+  let seed = 5;
+  const r = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 70; i++) {
+    g.globalAlpha = 0.25 + r() * 0.5; g.lineWidth = 1 + r() * 2.2;
+    const x = r() * 256, y = r() * 256, rad = 6 + r() * 18, a0 = r() * 6.28;
+    g.beginPath(); g.arc(x, y, rad, a0, a0 + 1.2 + r() * 1.5); g.stroke();
+  }
+  causticTex = new THREE.CanvasTexture(cv);
+  causticTex.wrapS = causticTex.wrapT = THREE.RepeatWrapping; causticTex.repeat.set(3, 3);
+  causticTex.userData.shared = true;
+  return causticTex;
+}
+
 export function makeWater({ THREE, scene }) {
   const TAU = Math.PI * 2;
   const live = [];                       // { obj, step(t) }
@@ -92,6 +113,9 @@ export function makeWater({ THREE, scene }) {
       geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
       const wm = waterMat(tex, 0.82); wm.vertexColors = true;
       const disc = new THREE.Mesh(geo, wm); disc.renderOrder = 2;
+      // a soft caustic shimmer: light nets on the bottom, drawn over the surface and moving slowly
+      const caus = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: caustics(THREE), transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false }));
+      caus.renderOrder = 3; caus.position.y = 0.003;
       // the bank: a soft sand tube round the oval, so the water sits in it and the edge has height
       const bank = [];
       for (let i = 0; i < 64; i++) { const a = i / 64 * TAU; bank.push(new THREE.Vector3(Math.cos(a) * r, 0.1, Math.sin(a) * rz)); }
@@ -101,10 +125,11 @@ export function makeWater({ THREE, scene }) {
         const ring = new THREE.Mesh(new THREE.TorusGeometry(1, 0.012, 4, 40), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true }));
         ring.rotation.x = Math.PI / 2; ring.position.y = 0.05; g.add(ring); return ring;
       });
-      g.add(disc, bankMesh);
+      g.add(disc, caus, bankMesh);
       g.userData.zone = { kind: 'pond', r, rz };   // where swimmers may go (zones())
       return track(g, t => {
         tex.offset.set(Math.sin(t * 0.15) * 0.2, t * 0.04);
+        caus.material.map.offset.set(t * 0.03, Math.sin(t * 0.2) * 0.1);
         for (let i = 0; i < pos.count; i++) pos.setY(i, 0.035 + 0.008 * Math.sin(t * 1.3 + base[3 * i] * 1.5 + base[3 * i + 2] * 1.5));
         pos.needsUpdate = true;
         rings.forEach((ring, i) => {
