@@ -160,6 +160,12 @@ export function options(a, add, { spots, cover, spotCell, things, nearest, actor
       }
     }
   }
+  if (a.scary && actors && now() > (a.huntAt ?? 0)) {
+    // a scary hunter (a vampire): now and then it stalks the nearest figure that still fears it
+    const prey = actors().filter(b => b !== a && !b.hidden && b.fears?.includes(a.id))
+      .map(b => [b, Math.hypot(b.pos.x - a.pos.x, b.pos.z - a.pos.z)]).filter(([, d]) => d < 10).sort((x, y) => x[1] - y[1])[0]?.[0];
+    if (prey) add(1.0, { type: 'chase', target: prey, until: now() + 12, rounds: 1, hunt: true });
+  }
   if (p && actors) {
     // a liked figure: a follower walks after it for a while
     const liked = actors().find(b => b !== a && !b.hidden && p.likes.some(l => l === b.name || l === b.id));

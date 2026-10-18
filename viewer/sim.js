@@ -161,6 +161,12 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
       for (const [id, v] of Object.entries(a.relations || {})) if (byId[id] && !a._relSet?.[id]) a.rel[id] = v;
       for (const id of a.fears || []) if (byId[id] && !a._relSet?.[id]) a.rel[id] = Math.min(a.rel[id] ?? 0, -0.4);
     }
+    // a scary thing (a vampire, a ghost) declares itself: everyone else starts out afraid of it, until they
+    // stand up to it (spook) or a friendship grew and was saved (then _relSet keeps the peace)
+    for (const s of actors) if (s.scary) for (const a of actors) if (a !== s && !a.scary && !a._relSet?.[s.id]) {
+      if (!a.fears?.includes(s.id)) a.fears = [...(a.fears || []), s.id];
+      a.rel[s.id] = Math.min(a.rel[s.id] ?? 0, -0.4);
+    }
   }
   declaredRelations();
   // relationships that grew during play survive reloads
@@ -458,10 +464,16 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         break;
       case 'chase': {
         const prey = g.target;
-        if (now > g.until) { a.goal = null; prey.flee = null; break; }
-        if (near(a, prey)) {
+        if (g.hunt && !g.started) { g.started = true; a.huntAt = now + 30; say(a, line(a, 'tagStart'), 1.8); }   // a hunter announces itself
+        if (now > g.until || prey.hidden) { a.goal = null; prey.flee = null; break; }
+        if (near(a, prey, g.hunt ? 1.4 : 0.35)) {   // a hunter swoops: its cape reaches a step further than a hand
           say(a, line(a, 'tagCaught'), 1.4);
           prey.flee = null;
+          if (g.hunt) {                    // a scary hunter's catch: a scare, not a game; the prey keeps its distance a while
+            busy(a, prey, 'wave', 2); busy(prey, a, 'scared', 2);
+            say(prey, line(prey, 'scared'), 1.6, 0.4);
+            prey.calmUntil = now + 8; a.goal = null; break;
+          }
           a.lastMet[prey.id] = prey.lastMet[a.id] = now;
           bond(a, prey, 0.05);
           if (g.rounds > 1) {              // roles swap: the caught one now chases
