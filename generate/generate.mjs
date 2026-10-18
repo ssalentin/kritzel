@@ -507,7 +507,8 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
 A quick draft of this drawing is in the book now (below)${at ? `, centred at x ${at[0].toFixed(2)}, z ${at[1].toFixed(2)}: build yours centred there too` : ''}. Build the drawing properly yourself, from the image, not from the draft's shapes. Keep what the book already knows about it: name '${thingName}'${ids.length ? `, actor id${ids.length > 1 ? 's' : ''} ${ids.map(i => `'${i}'`).join(', ')}${start ? ` (${start})` : ''}` : ''}${paperAt ? `, meta ${paperAt}` : ''}. Usually it is one thing: reply with its one ### NEW section. But the draft may have taken several things for one: if what is drawn there is really several separate things (by the rules: each object and each living figure its own), reply with one ### NEW section per thing; the first is the one the book knows (with the name, ids and place above), the others get their own names and actor ids and stand where they are drawn.
 
 ${draft}`;
-        const done = (x) => { const k = things.findIndex(t => t?.file === file); if (k >= 0) thingState(k, 'done'); report.finals.push({ file, at: T(), ...x }); mark('finalsDone'); report.timing.finalsDone = T(); try { save(); } catch { /* a late retry after the reports folder went */ } };
+        // the build list only while this frame still owns it: a retry minutes later must not bring an old queue back
+        const done = (x) => { const k = things.findIndex(t => t?.file === file); if (k >= 0 && thingsOwner === name) thingState(k, 'done'); report.finals.push({ file, at: T(), ...x }); mark('finalsDone'); report.timing.finalsDone = T(); try { save(); } catch { /* a late retry after the reports folder went */ } };
         const failed = x => {
           done({ ...x, attempt });
           // the retry outlives the frame (its folders may be gone by then): it must never throw
