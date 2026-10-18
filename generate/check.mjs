@@ -48,7 +48,7 @@ function runSandboxed(mode, code, extra = []) {
   const file = join(dir, 'thing.mjs');
   writeFileSync(file, code);
   const reads = [join(HERE, 'check-run.mjs'), join(HERE, 'node_modules', 'three'), join(HERE, 'package.json'), join(VIEWER, 'characters.js'), join(VIEWER, 'dialogues.js'),
-    join(VIEWER, 'sim.js'), join(VIEWER, 'sound.js'), join(VIEWER, 'i18n.js'), join(HERE, 'node_modules', 'rot-js'), dir];   // the sim and what it imports
+    join(VIEWER, 'sim.js'), join(VIEWER, 'sound.js'), join(VIEWER, 'i18n.js'), join(VIEWER, 'portable.js'), join(VIEWER, 'book.js'), join(HERE, 'node_modules', 'rot-js'), dir];   // the sim and what it imports
   const args = ['--net', process.execPath, '--permission', ...reads.map(p => '--allow-fs-read=' + p), join(HERE, 'check-run.mjs'), mode, file, ...extra];
   return new Promise(ok => {
     const p = track(spawn('unshare', args, { stdio: ['ignore', 'pipe', 'pipe'], cwd: dir }));

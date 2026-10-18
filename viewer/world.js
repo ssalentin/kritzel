@@ -7,8 +7,8 @@ export const caption = '';
 export async function build(api, prevState = null) {
   const { THREE, scene, world, camera, controls, bubble, shadowAll, report } = api;
   const v = '?v=' + Date.now();
-  const [sim, bookMod, charMod, extra, waterMod, moves] = await Promise.all(
-    ['sim', 'book', 'characters', 'sim-extra', 'water', 'moves'].map(f => import(`./${f}.js${v}`)));
+  const [sim, bookMod, charMod, extra, waterMod, moves, portableMod] = await Promise.all(
+    ['sim', 'book', 'characters', 'sim-extra', 'water', 'moves', 'portable'].map(f => import(`./${f}.js${v}`)));
   const { GROUND, BASE, FIT_R, groundY, sizeFor } = bookMod;
   let grownAt = BASE.w;                         // the book size the sim was last set up for
 
@@ -81,20 +81,9 @@ export async function build(api, prevState = null) {
   // sizes hx, hz; r for things that need a circle); null if it floats in the sky
   // Flat pieces on the ground (water, paths, puddles: under 0.15 tall) don't count, and a thing that
   // still covers more than 30% of the island is ground itself: it neither moves nor blocks.
-  function footprint(box) {
-    const b = new THREE.Box3(), m = new THREE.Box3();
-    box.updateMatrixWorld(true);
-    box.traverse(o => {
-      if (!o.isMesh || !o.geometry) return;
-      m.setFromObject(o, true);                              // vertex-exact
-      if (m.max.y - m.min.y < 0.15 && m.max.y < 0.35) return;
-      b.union(m);
-    });
-    if (b.isEmpty() || b.min.y > 1.5) return null;
-    if ((b.max.x - b.min.x) * (b.max.z - b.min.z) > 0.3 * GROUND.w * GROUND.d) return null;
-    const hx = Math.max(0.3, (b.max.x - b.min.x) / 2), hz = Math.max(0.3, (b.max.z - b.min.z) / 2);
-    return { x: (b.min.x + b.max.x) / 2, z: (b.min.z + b.max.z) / 2, hx, hz, r: Math.max(0.4, Math.hypot(hx, hz)), top: b.max.y };
-  }
+  // the measure and the carry rule are shared with generate (portable.js), so both decide alike
+  function footprint(box) { return portableMod.footprintOf(box, THREE, 0.3 * GROUND.w * GROUND.d); }
+
   // how far two shapes reach into each other (0 = apart, by at least `gap`): a shape is a circle
   // { x, z, r } or a rectangle { x, z, hx, hz }
   function depth(p, q, gap = 0) {
@@ -154,18 +143,15 @@ export async function build(api, prevState = null) {
   }
   // a small thing a figure can pick up (sim-extra.js: 'portable'): it has no figure or hold in it and fits in a hand
   function ensurePortable(e) {
-    if (e.portable || !e.foot || e.heldBy || e.actors.length || e.holds.length) return;
-    const handLamp = e.light.length && e.light.every(l => l.kind === 'lamp') && Math.max(e.foot.hx, e.foot.hz) * 2 <= 3 && Math.min(e.foot.hx, e.foot.hz) * 2 <= 1.4 && e.foot.top < 1.5;
-    if (!handLamp && (Math.max(e.foot.hx, e.foot.hz) * 2 > 2 || e.foot.top > 2.5)) return;
-    // a house, a lamp, a sky or a pond is not carried: only things whose spots (a biscuit's food) can come along
-    // …but a small hand lamp (a flashlight, a lantern) is made to be carried: its light rides along (Sebastian, 2026-10-17)
-    if ((e.light.length && !handLamp) || e.weather.length || e.spots.some(s => s.kind !== 'food')) return;
+    if (e.portable || !e.foot) return;
     let pond = false; e.box.traverse(o => { if (o.userData?.zone) pond = true; });
-    if (pond) return;
+    if (!portableMod.isPortable({ hx: e.foot.hx, hz: e.foot.hz, top: e.foot.top, lightKinds: e.light.map(l => l.kind), weather: e.weather.length,
+      spotKinds: e.spots.map(s => s.kind), actors: e.actors.length, holds: e.holds.length, heldBy: !!e.heldBy, pond })) return;
     e.portable = { kind: 'portable', name: e.meta?.name, x: e.foot.x, z: e.foot.z, r: Math.max(e.foot.hx, e.foot.hz), carrier: null };
     e.syncAt = { x: e.foot.x, z: e.foot.z };
     e.spots.push(e.portable);
   }
+
   // in a hand, or in the air: not on the grid, not a perch, not dropped to the page
   const isHeld = e => !!(e.portable && (e.portable.carrier || e.portable.throw));
   // the situation the dialogue writer reads: who carries what, what is in the air, the night, the weather. Sent
