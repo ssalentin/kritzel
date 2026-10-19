@@ -190,11 +190,13 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     // a crowd must not push a figure into a drawn thing; a special mover (fly/swim/climb) is exempt
     const nudge = (c, dx, dz, mag) => {
       if (MV?.special(c, envNow)) { c.pos.x += dx * mag; c.pos.z += dz * mag; return; }
-      const inside = !bodyClear(c.pos.x, c.pos.z, c);
+      if (c.hold) return;                       // a jail holds its prisoner; a crowd does not move it
+      const cur = bodyPen(c.pos.x, c.pos.z, c);
+      const free = (x, z) => { const p = bodyPen(x, z, c); return p <= 0 || p <= cur + 1e-6; };
       const nx = c.pos.x + dx * mag, nz = c.pos.z + dz * mag;
-      if (inside || bodyClear(nx, nz, c)) { c.pos.x = nx; c.pos.z = nz; }
-      else if (bodyClear(nx, c.pos.z, c)) { c.pos.x = nx; }
-      else if (bodyClear(c.pos.x, nz, c)) { c.pos.z = nz; }
+      if (free(nx, nz)) { c.pos.x = nx; c.pos.z = nz; }
+      else if (free(nx, c.pos.z)) { c.pos.x = nx; }
+      else if (free(c.pos.x, nz)) { c.pos.z = nz; }
     };
     for (let i = 0; i < actors.length; i++) {
       const a = actors[i];
@@ -295,12 +297,15 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     return a._pass;
   }
   // the rendered body, not only its cell: a figure easing from cell to cell may cut a corner, so its own
-  // circle is kept off every drawn footprint and tree as it moves (the grid keeps the path, this keeps the body)
-  function bodyClear(x, z, a) {
-    if (feet.some(f => Math.abs(x - f.x) < f.hx + a.radius && Math.abs(z - f.z) < f.hz + a.radius)) return false;
-    if (trees.some(t => Math.hypot(x - t.x, z - t.z) < t.r + Math.max(0, a.radius - 0.25))) return false;
-    return true;
+  // circle is kept off every drawn footprint and tree as it moves (the grid keeps the path, this keeps the body).
+  // bodyPen is how deep it is (<=0 clear); a body already inside may move, but never deeper.
+  function bodyPen(x, z, a) {
+    let pen = 0;
+    for (const f of feet) pen = Math.max(pen, Math.min(f.hx + a.radius - Math.abs(x - f.x), f.hz + a.radius - Math.abs(z - f.z)));
+    for (const t of trees) pen = Math.max(pen, t.r + Math.max(0, a.radius - 0.25) - Math.hypot(x - t.x, z - t.z));
+    return pen;
   }
+  const bodyClear = (x, z, a) => bodyPen(x, z, a) <= 0;
   const dist = (a, b) => Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y));
   const rel = (a, b) => a.rel[b.id] ?? 0;
   const bond = (a, b, d) => {
@@ -948,11 +953,11 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
             }
             const n = Math.hypot(ux, uz) || 1; ux /= n; uz /= n;
             const nx = a.pos.x + ux * step, nz = a.pos.z + uz * step;
-            if (!bodyClear(nx, nz, a)) {                 // slide along the edge instead of cutting its corner
-              if (bodyClear(nx, a.pos.z, a)) { a.pos.x = nx; }
-              else if (bodyClear(a.pos.x, nz, a)) { a.pos.z = nz; }
-              else if (!bodyClear(a.pos.x, a.pos.z, a)) { a.pos.x = nx; a.pos.z = nz; }   // already inside: let it escape
-            } else { a.pos.x = nx; a.pos.z = nz; }
+            const cur = bodyPen(a.pos.x, a.pos.z, a);
+            const free = (x, z) => { const p = bodyPen(x, z, a); return p <= 0 || p <= cur + 1e-6; };
+            if (free(nx, nz)) { a.pos.x = nx; a.pos.z = nz; }     // or slide along the edge, not deeper
+            else if (free(nx, a.pos.z)) { a.pos.x = nx; }
+            else if (free(a.pos.x, nz)) { a.pos.z = nz; }
             a.face = Math.atan2(ux, uz);
           }
           else if (a.partner) a.face = Math.atan2(a.partner.pos.x - a.pos.x, a.partner.pos.z - a.pos.z);
