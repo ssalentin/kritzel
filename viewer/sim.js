@@ -248,7 +248,12 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   const line = (a, group) => {
     // what the figure says on the paper (lines.said, { de, en }): its first greet or chat, then about one time in three
     const said = a.lines?.said && (lang() === 'en' ? a.lines.said.en : a.lines.said.de);
-    if (said && (group === 'greet' || group === 'chat') && (!a.saidOnce || R() < 1 / 3)) { a.saidOnce = true; return said; }
+    // about one in three for its first ten minutes in the world, then one in eight: a child who wrote it hears it again
+    if (said && (group === 'greet' || group === 'chat')) {
+      a.arrivedAt ??= now;
+      const rate = now - a.arrivedAt < 600 ? 1 / 3 : 1 / 8;
+      if (!a.saidOnce || R() < rate) { a.saidOnce = true; return said; }
+    }
     const own = pickLines(a.lines?.[group]);     // a drawn character's own lines: array (German) or { de, en }
     if (own?.length) return pick(own);
     const L = lang() === 'en' ? LINES_EN : LINES;
