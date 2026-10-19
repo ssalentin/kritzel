@@ -431,18 +431,25 @@ export async function processTextRequest(reqPath, { thingsDir, reportsDir, onPro
     let sections;
     try { sections = parseReply(r.text); } catch (e) { throw new Error(`the reply could not be read: ${e.message.slice(0, 200)}`); }
     const news = sections.filter(s => s.kind === 'NEW'), unclear = sections.find(s => s.kind === 'UNCLEAR');
-    if (news.length > 1) throw new Error(`the reply made ${news.length} things; one request builds one thing`);
-    const sec = news[0];
-    if (!sec) throw new Error(unclear ? `cannot build this: ${unclear.body.split('|')[0].trim().slice(0, 240)}` : 'the reply had no ### NEW module');
-    if (wordOnly(sec.body)) throw new Error('a written word alone is not a thing');
-    let f = await finish({ body: sec.body, model: r.model || MODEL, frame: reqPath, images: [], takenIds: existing.flatMap(t => t.ids), keepIds: [],
-      calls: report.calls, source: `frames/requests/${id}.json`,
-      fixIntro: `The module below was made from this typed request: ${JSON.stringify(text)}.`, provider: TEXT_PROVIDER, fixModels: [TEXT_MODEL] });
-    if (!f.code) { report.rejected.push({ problems: f.problems }); throw new Error(`rejected after checks: ${f.problems.join('; ').slice(0, 300)}`); }
+    // one disallowed part refuses the whole typed request (the prompt asks for UNCLEAR for the whole
+    // request); never write the valid half of a mixed NEW + UNCLEAR reply
+    if (unclear) throw new Error(`cannot build this: ${unclear.body.split('|')[0].trim().slice(0, 240)}`);
+    if (!news.length) throw new Error('the reply had no ### NEW module');
+    if (news.length > 6) throw new Error(`the reply made ${news.length} things; that is too many for one request`);
+    for (const sec of news) if (wordOnly(sec.body)) throw new Error('a written word alone is not a thing');
+    // "Eiffelturm und Wolkenkratzer" is two things: check every section before writing any, so a failed
+    // part leaves no half request. Actor ids are unique across the sections as well as the book.
+    const checked = [], usedIds = new Set(existing.flatMap(t => t.ids));
+    for (const sec of news) {
+      const f = await finish({ body: sec.body, model: r.model || MODEL, frame: reqPath, images: [], takenIds: [...usedIds], keepIds: [],
+        calls: report.calls, source: `frames/requests/${id}.json`,
+        fixIntro: `The module below was made from this typed request: ${JSON.stringify(text)}.`, provider: TEXT_PROVIDER, fixModels: [TEXT_MODEL] });
+      if (!f.code) { report.rejected.push({ problems: f.problems }); throw new Error(`rejected after checks: ${f.problems.join('; ').slice(0, 300)}`); }
+      checked.push(f);
+      for (const actor of f.info?.actors || []) usedIds.add(actor);
+    }
     const made = await withThingWrite(async () => {
       const now = readThingIndex(thingsDir);
-      let name = f.info?.name || 'Ding';
-      let code = f.code;
       // names are unique in the book (dialogues name figures). A computed name counts too: evaluate only
       // those modules, so the normal path still costs no sandbox per existing thing.
       const names = new Set();
@@ -451,32 +458,44 @@ export async function processTextRequest(reqPath, { thingsDir, reportsDir, onPro
         const m = await metaOf(t.code);
         if (m?.name) names.add(String(m.name).toLowerCase());
       }
-      if (names.has(name.toLowerCase())) {
-        const original = name;
-        let n = 2;
-        while (names.has(`${original} ${n}`.toLowerCase())) n++;
-        name = `${original} ${n}`;
-        const q = original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const literal = code.replace(new RegExp(`(name:\\s*)(['"])${q}\\2`, 'g'), (_, a, b) => `${a}${b}${name}${b}`);
-        if (literal !== code) code = literal;
-        else {
-          // a computed meta name has no literal to replace: set the name after the declaration instead
-          const assigned = code.replace(/(export\s+const\s+meta\s*=\s*\{[\s\S]*?\}\s*;)/, `$1\nmeta.name = ${JSON.stringify(name)};`);
-          if (assigned !== code) code = assigned;
-          else name = original;                              // no place to rename it: keep the real name truthful
+      const filesTaken = new Set(now.map(t => t.file.replace(/\.js$/, '')));
+      const out = [];
+      for (const f of checked) {
+        let name = f.info?.name || 'Ding';
+        let code = f.code;
+        if (names.has(name.toLowerCase())) {
+          const original = name;
+          let n = 2;
+          while (names.has(`${original} ${n}`.toLowerCase())) n++;
+          name = `${original} ${n}`;
+          const q = original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const literal = code.replace(new RegExp(`(name:\\s*)(['"])${q}\\2`, 'g'), (_, a, b) => `${a}${b}${name}${b}`);
+          if (literal !== code) code = literal;
+          else {
+            // a computed meta name has no literal to replace: set the name after the declaration instead
+            const assigned = code.replace(/(export\s+const\s+meta\s*=\s*\{[\s\S]*?\}\s*;)/, `$1\nmeta.name = ${JSON.stringify(name)};`);
+            if (assigned !== code) code = assigned;
+            else name = original;                            // no place to rename it: keep the real name truthful
+          }
         }
+        names.add(name.toLowerCase());
+        const base = freeName(slug(name), filesTaken);
+        filesTaken.add(base);
+        const file = base + '.js';
+        const sound = soundFor(file, name, code, f.info, thingsDir);
+        atomicWrite(join(thingsDir, file), code);
+        const entry = { kind: 'NEW', file, name, model: f.model, at: T(),
+          ids: [...code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]),
+          ...(f.info?.paper && { paper: f.info.paper }), ...(sound && { sound }),
+          ...(f.warnings.length && { warnings: f.warnings }) };
+        report.written.push(entry);
+        out.push(entry);
       }
-      const base = freeName(slug(name), new Set(now.map(t => t.file.replace(/\.js$/, ''))));
-      const file = base + '.js';
-      const sound = soundFor(file, name, code, f.info, thingsDir);
-      atomicWrite(join(thingsDir, file), code);
-      report.written.push({ file, name, model: f.model, at: T(), ids: [...code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]), ...(sound && { sound }),
-        ...(f.warnings.length && { warnings: f.warnings }) });
-      save();                                                 // together with the write, for the archive replay
-      return { file, name, code };
+      save();                                                 // together with the writes, for the archive replay
+      return out;
     });
-    onProgress({ state: 'new', id, detail: made.name });
-    log(`${id}: text request ${JSON.stringify(text)} → WROTE ${made.file} (${made.name}) by ${f.model}`);
+    onProgress({ state: 'new', id, detail: made.map(m => m.name).join(', ') });
+    log(`${id}: text request ${JSON.stringify(text)} → WROTE ${made.map(m => `${m.file} (${m.name})`).join(', ')} by ${r.model || MODEL}`);
     return report;
   } catch (e) {
     report.error = e.message.slice(0, 500);
@@ -1311,6 +1330,8 @@ async function watch(dir, opts) {
       if (r.written.length) {
         status(r.written.every(w => w.kind === 'UPDATE') ? 'changed' : 'new', id, r.written.map(w => w.name).join(', '),
           { made: r.written.map(w => ({ de: w.name, en: w.name })) });
+        // the viewer's build queue: a typed request with two subjects shows its two things (they linger, then fade)
+        status.more({ things: r.written.map(w => ({ name: { de: w.name, en: w.name }, state: 'done', file: w.file })) });
         wantDialogues(opts, `request: ${r.written.map(w => w.name).join(', ')}`, r.written.map(w => w.name));
       } else status('failed', id, (r.error || 'nothing built').slice(0, 80));
     }
