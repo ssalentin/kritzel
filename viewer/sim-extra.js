@@ -584,7 +584,8 @@ export function tickQuests(actors, api) {
     // a quest the book can run now: its giver is here; a bring has a free thing to bring (any small one when the
     // quest names none), a visit has its place, a wait has a condition that does not hold yet
     const can = q => (figureOf(q.who) || thingOf(q.who)) && (q.solve.kind !== 'bring' || freeThing(q.solve.what)) &&
-      (q.solve.kind !== 'visit' || thingOf(q.solve.at)) && !(q.solve.kind === 'wait' && waitHolds(q.solve, api));
+      (q.solve.kind !== 'visit' || (thingOf(q.solve.at) && (!figureOf(q.who) || walks(figureOf(q.who))))) &&   // a flier's visit can't be walked
+      !(q.solve.kind === 'wait' && waitHolds(q.solve, api));
     const list = questPool().filter(can);
     if (!list.length) { nextQuestAt = t + 30; return; }
     const q = list[Math.floor(R() * list.length)];
@@ -610,6 +611,7 @@ export function tickQuests(actors, api) {
   const aq = activeQuest, { q, giver } = aq, at = giver ? giver.pos : aq.thing;
   const endQuest = solved => { if (solved) solvedLog.push({ who: q.who, at: Date.now() / 1000 }); if (aq.item?.quest === aq) aq.item.quest = null; activeQuest = null; nextQuestAt = questCooldown(t); return solved; };
   if (giver ? (giver.hidden || !actors.includes(giver)) : !thingOf(q.who)) return endQuest(false);
+  if (aq.item && !spots().includes(aq.item)) return endQuest(false);   // the item left the book: no pick to re-assign
   if (t - aq.since > QUEST_LIMIT_S) return endQuest(false);
   const here = aq.helpers.filter(h => !h.hidden && within(h.pos, at, reachOf(giver || aq.thing)));
   let solved = false;
