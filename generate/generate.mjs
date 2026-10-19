@@ -146,7 +146,7 @@ const onlyHolds = problems => problems.length > 0 && problems.every(p => /^(hold
 // deferHolds: when the only problem is a held creature not written yet, say so at once instead of
 // asking for a fix (which would just drop the hold)
 // extra(info) → more problems, from what the check measured (a creature hanging with nothing above it)
-async function finish({ body, model, frame, images, takenIds, keepIds, oldName = null, calls, deferHolds = false, extra = null, fixModels = [BUILD, FALLBACK_MODEL] }) {
+async function finish({ body, model, frame, images, takenIds, keepIds, oldName = null, calls, deferHolds = false, extra = null, says = null, fixModels = [BUILD, FALLBACK_MODEL] }) {
   let code = body.split('\n').filter(l => !l.startsWith(MARK)).join('\n').trim(), problems, simSkipped = null, info = {};
   for (const fixModel of [null, ...fixModels]) {
     if (fixModel) {
@@ -180,6 +180,7 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
       // a hand-built shape wound inward renders black: asked once to rewind, then taken (a hill must not vanish over shading)
       if (!problems.length && !fixModel && info.inwardMeshes) problems.push(`${info.inwardMeshes} hand-built shape${info.inwardMeshes > 1 ? 's' : ''} with its faces pointing inward (it renders black from outside): wind each triangle the other way (a, c, b instead of a, b, c), or build it with ExtrudeGeometry or LatheGeometry`);
       if (!problems.length && !fixModel) problems.push(...plainWater(code, info));
+      if (!problems.length && !fixModel) problems.push(...unsaid(code, says));
       if (!problems.length && !fixModel && (!DRAFT_MODEL || model === MODEL)) problems.push(...blobs(code, info));
       if (!problems.length && extra) problems.push(...extra(info));
     }
@@ -190,6 +191,15 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
     ] };
   }
   return { problems };
+}
+
+// the words in a drawn bubble (list entry's says) are its first line: asked for once, then taken (a figure must not
+// vanish over a missed line)
+export function unsaid(code, says) {
+  if (!says || code.replace(/\\(.)/g, '$1').includes(says.text)) return [];
+  return [says.kind === 'thought'
+    ? `its first chat line must be what it thinks on the paper, starting with 💭: "💭 ${says.text}" (German exactly as written, English a short translation), with // said on the paper: "${says.text}" above the actor`
+    : `its first greet line must be what it says on the paper: "${says.text}" (German exactly as written, English a short translation), with // said on the paper: "${says.text}" above the actor`];
 }
 
 // a module that only shows writing (Sebastian: "Sqichy" in 3D letters): a word alone is never a thing. By what it says
@@ -420,7 +430,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
         if (s.kind === 'NEW' && wordOnly(s.body)) { thingState(s.n, 'failed'); report.rejected.push({ kind: s.kind, problems: ['a written word alone is not a thing'] }); log(`${name}: a word alone, not built`); return; }   // no fix call: nothing to fix
         tell({ seen: seenOf(said.seen), now: nowOf(said.seen[s.n]) });
         thingState(s.n, 'building');
-        const check = (takenIds, extra = null) => finish({ body: s.body, model: BUILD, frame, images: s.images || images, takenIds, keepIds: old?.ids || [], oldName: old?.meta.name || null, calls: report.calls, deferHolds: !last, extra });
+        const check = (takenIds, extra = null) => finish({ body: s.body, model: BUILD, frame, images: s.images || images, takenIds, keepIds: old?.ids || [], oldName: old?.meta.name || null, calls: report.calls, deferHolds: !last, extra, says: s.says });
         const f = await check(takenNow(old));
         const run = lock.then(() => commit(s, old, f, last, check));
         lock = run.catch(() => {});                             // one failed write must not block the next ones
@@ -642,7 +652,7 @@ Several builders make this sheet at the same time. You build only this one drawi
         report.calls.push(callOf(h, { helper: e.de }));
         const sec = parseReply(h.text).find(x => x.kind === 'NEW');
         if (!sec) { thingState(k, 'failed'); report.rejected.push({ kind: 'NEW', name: e.de, problems: ['the helper wrote no NEW section'] }); return; }
-        sec.n = k; sec.images = seen; sec.prompt = text; sent.add(k);
+        sec.n = k; sec.images = seen; sec.prompt = text; sec.says = e.says; sent.add(k);
         write(sec);                                  // checked while this helper takes the next one
       } catch (err) { thingState(k, 'failed'); report.rejected.push({ kind: 'NEW', name: e.de, problems: [`helper call failed: ${err.message.slice(0, 200)}`] }); }
     }
