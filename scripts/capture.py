@@ -67,8 +67,10 @@ EARLY_S = 0.3            # into a still spell: look what's new, and fetch the sn
 SHRINK = f"format=gray,scale=960:540:flags=area,erosion,erosion,scale={W}:{H}:flags=area"   # keeps thin lines
 CW, CH = 96, 54          # colour thumbnail: the sheet and a hand, not the drawing's lines
 PAPER_BLOCK = 4          # the hand check works on blocks this many colour-thumbnail px square
-PAPER_SHARE = 0.09       # this much of the picture not being table is paper (busy drawings count too)
-HAND_SHARE, HAND_ON_PAPER = 0.008, 0.15   # a skin blob this large, with this share of it on the sheet
+PAPER_SHARE = 0.05       # this much of the picture being paper-bright is paper (busy drawings count too)
+PAPER_BRIGHT = 155       # ...or a smaller paper-bright field (printed picture, partial sheet)
+PAPER_PLAIN = 0.35       # a big paper field this large stands on its own
+HAND_SHARE, HAND_ON_PAPER = 0.012, 0.15   # a skin blob this large, with this share of it on the sheet
 MAX_BYTES = 20 << 20
 
 
@@ -147,32 +149,53 @@ def neighbours(i, w, h):
 def paper(rgb):
     """The sheet in a colour thumbnail: {w, h, mask, colour, area}, or None when no paper is there.
 
-    Paper is what is not the table: a colouring page or printed picture is mostly paper-bright
-    (or coloured) pixels, even when ink breaks it into many small fields. The table is warm brown,
-    so enough non-table pixels mean paper. The table colour itself is learned from the frame edge."""
+    Paper is white/neutral or coloured away from the wood's warm brown. A big field stands on its
+    own; a smaller one must also be paper-bright, which keeps a dark table reflection out while a
+    coupon or a partly visible sheet still counts. The table colour is learned from the frame edge."""
     if not rgb:
         return None
     bw, bh, means = blocks(rgb)
-    free, mask = [], [False] * (bw * bh)
+    free, blockmask = [], [False] * (bw * bh)
     for i in range(CW * CH):
         r, g, b = rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]
-        if wood((r, g, b)):
+        if not paperish(r, g, b):
             continue
         free.append(i)
         x, y = i % CW // PAPER_BLOCK, i // CW // PAPER_BLOCK
         if x < bw and y < bh:
-            mask[y * bw + x] = True
-    if len(free) < PAPER_SHARE * CW * CH:
+            blockmask[y * bw + x] = True
+    share = len(free) / (CW * CH)
+    bright = statistics.mean((rgb[i * 3] + rgb[i * 3 + 1] + rgb[i * 3 + 2]) / 3 for i in free) if free else 0
+    if not (share >= PAPER_PLAIN or (share >= PAPER_SHARE and bright >= PAPER_BRIGHT)):
         return None
-    xs, ys = [i % CW for i in free], [i // CW for i in free]
+    seen, parts = set(), []
+    for i in range(bw * bh):
+        if not blockmask[i] or i in seen:
+            continue
+        seen.add(i)
+        todo, part = [i], []
+        while todo:
+            j = todo.pop()
+            part.append(j)
+            for k in neighbours(j, bw, bh):
+                if blockmask[k] and k not in seen:
+                    seen.add(k)
+                    todo.append(k)
+        parts.append(part)
+    if not parts:
+        return None
+    part = max(parts, key=len)
+    bx = [i % bw for i in part]
+    by = [i // bw for i in part]
     edge = [i for i in range(bw * bh) if i % bw in (0, bw - 1) or i // bw in (0, bh - 1)]
     woods = [means[i] for i in edge if wood(means[i])]
     table = [statistics.median(c[d] for c in woods) for d in range(3)] if len(woods) >= 3 else None
     colour = [statistics.median(rgb[i * 3 + c] for i in free) for c in range(3)]
-    box = (min(xs) // PAPER_BLOCK, min(ys) // PAPER_BLOCK,
-           min(max(xs) // PAPER_BLOCK, bw - 1), min(max(ys) // PAPER_BLOCK, bh - 1))
+    mask = [False] * (bw * bh)
+    for i in part:
+        mask[i] = True
     return {"w": bw, "h": bh, "mask": mask, "colour": colour, "area": len(free),
-            "box": box, "table": table}
+            "box": (min(bx), min(by), max(bx), max(by)), "table": table}
 
 
 def hue(r, g, b):
@@ -192,6 +215,15 @@ def wood(colour):
     r, g, b = colour
     mx, mn = max(colour), min(colour)
     return 5 <= hue(r, g, b) <= 34 and (mx - mn) >= 0.22 * max(1, mx) and mx >= 40
+
+
+def paperish(r, g, b):
+    """A paper/print pixel: white/neutral, or coloured away from the wood's warm brown."""
+    mx, mn = max(r, g, b), min(r, g, b)
+    sat = (mx - mn) / mx if mx else 0
+    if 5 <= hue(r, g, b) <= 34:
+        return sat <= 0.12 and mx >= 100      # warm white paper, not a bright wood reflection
+    return mx >= 60 and (sat >= 0.08 or mx >= 140)
 
 
 def skin(r, g, b):
@@ -234,6 +266,26 @@ def blobs(mask, w, h):
     return out
 
 
+def filled(mask, w, h):
+    """`mask` with enclosed holes filled: paper around a hand, but not the table at its edge."""
+    out = list(mask)
+    seen, todo = set(), []
+    for i, on in enumerate(mask):
+        if not on and (i % w in (0, w - 1) or i // w in (0, h - 1)):
+            seen.add(i)
+            todo.append(i)
+    while todo:
+        i = todo.pop()
+        for j in neighbours(i, w, h):
+            if not mask[j] and j not in seen:
+                seen.add(j)
+                todo.append(j)
+    for i in range(w * h):
+        if not mask[i] and i not in seen:
+            out[i] = True
+    return out
+
+
 def hand(rgb, sheet, base=None):
     """A skin-coloured blob lying on (or touching the edge of) the sheet.
 
@@ -243,8 +295,9 @@ def hand(rgb, sheet, base=None):
     if not rgb:
         return False
     bw, bh = sheet["w"], sheet["h"]
+    region = filled(sheet["mask"], bw, bh)
     near, touch = [False] * (bw * bh), [False] * (bw * bh)
-    for i, flat in enumerate(sheet["mask"]):
+    for i, flat in enumerate(region):
         if flat:
             for y in range(max(0, i // bw - 2), min(bh, i // bw + 3)):
                 for x in range(max(0, i % bw - 2), min(bw, i % bw + 3)):
@@ -266,19 +319,22 @@ def hand(rgb, sheet, base=None):
         if sheet["table"]:
             col = [statistics.median(rgb[i * 3 + c] for i in part) for c in range(3)]
             edge = any(i % CW < 2 or i % CW >= CW - 2 or i // CW < 2 or i // CW >= CH - 2 for i in part)
-            tableish = max(abs(col[c] - sheet["table"][c]) for c in range(3)) <= 45
-            if tableish and (edge or base is None):
+            tableish = max(abs(col[c] - sheet["table"][c]) for c in range(3)) <= 60
+            if tableish and (edge or base is None or len(part) < 100):
                 continue                     # the table's own wood, not a hand on the sheet
         # a hand resting on the sheet has its middle on the sheet; the table beside the sheet
         # touches its border but its middle stays outside
         cx = sum(i % CW for i in part) / len(part) / PAPER_BLOCK
         cy = sum(i // CW for i in part) / len(part) / PAPER_BLOCK
+        at_c = min(int(cy), bh - 1) * bw + min(int(cx), bw - 1)
+        if not (x0 <= cx <= x1 + 1 and y0 <= cy <= y1 + 1):
+            continue
+        if tableish and not region[at_c]:
+            continue
         if base is not None and len(base) == len(rgb):
             changed = sum(1 for i in part if max(abs(rgb[i * 3 + c] - base[i * 3 + c]) for c in range(3)) > 30)
             if changed < (0.5 if tableish else 0.3) * len(part):
                 continue
-        elif not (x0 <= cx <= x1 + 1 and y0 <= cy <= y1 + 1):
-            continue
         inside = sum(1 for i in part if touch[at(i)])
         if inside >= HAND_ON_PAPER * len(part):
             return True

@@ -223,6 +223,11 @@ class Paper(unittest.TestCase):
         clean = rgb_sheet()
         self.assertEqual(c.look(clean, clean), "paper")
 
+    def test_table_uncovered_by_a_slid_sheet_is_not_a_hand(self):
+        before = rgb_sheet()
+        after = rgb_sheet(x0=30, seed=5)        # the sheet slid right; fresh table shows on the left
+        self.assertEqual(c.look(after, before), "paper")
+
     def test_a_hand_beside_the_sheet_is_not_on_it(self):
         img = rgb_sheet(x0=14)
         for y in range(20, 40):                 # a hand on the table, left of the sheet
