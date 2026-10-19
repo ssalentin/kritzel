@@ -335,7 +335,9 @@ For each frame:
    module that fails gets one fix attempt on the same model and one on the fallback model
    (`KRITZEL_FALLBACK_MODEL`; the same model by default on OpenRouter).
 3. **Write.** Each passing module is written atomically to `things/`. `--render` then
-   screenshots it in the real viewer (headless Chromium), off the critical path.
+   screenshots it in the real viewer (headless Chromium), off the critical path. The screenshot
+   allows 120 s: software WebGL on a headless host can take about 40 s for the first frame, so the
+   old 30 s default timed out even when the page was fine.
 
 Each frame leaves a report in `frames/generated/<frame>.json` with the reply, each call's
 model, seconds and cost, what was written or rejected and why, and the seconds from the
