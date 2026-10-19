@@ -232,6 +232,18 @@ export function wordOnly(code) {
 // ---------- a typed wish: frames/requests/<id>.json → one thing ----------
 export const textRequestId = file => basename(file).replace(/\.json$/, '');
 
+// The names and actor ids a text request needs, without running every module's top level in a sandbox:
+// readThings (metaOf per file) costs ~0.4 s per thing, and a typed request must not wait seconds for that.
+export function readThingIndex(dir) {
+  return readdirSync(dir).filter(f => /^[\w.-]+\.js$/.test(f)).sort().map(file => {
+    const code = readFileSync(join(dir, file), 'utf8');
+    const m = code.match(/\bmeta\s*=\s*\{[\s\S]*?\bname:\s*['"]([^'"]+)['"]/);
+    const d = code.match(/\bmeta\s*=\s*\{[\s\S]*?\bdrawing:\s*['"]([^'"]*)['"]/);
+    return { file, code, meta: { name: m?.[1] || '(does not load)', drawing: d?.[1] || '?' },
+      ids: [...code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]) };
+  });
+}
+
 // One request, one model call with no image and the same checks as a drawing. The report is always written,
 // including on failure, so a request never disappears silently.
 export async function processTextRequest(reqPath, { thingsDir, reportsDir, onProgress = () => {} }) {
@@ -253,7 +265,7 @@ export async function processTextRequest(reqPath, { thingsDir, reportsDir, onPro
     if (mode === 'change' && !target) throw new Error('which thing should change?');
     report.request = { id, text, mode, ...(target && { target }), lang: req.lang === 'de' ? 'de' : 'en', requested_at: req.requested_at || null };
     onProgress({ state: 'building', id, detail: text });
-    const existing = await readThings(thingsDir);
+    const existing = readThingIndex(thingsDir);
     const old = mode === 'change' ? existing.find(t => t.file === target) : null;
     if (mode === 'change' && !old) throw new Error(`no such thing to change: ${target}`);
     const r = await oneShot({ system: mode === 'change' ? CHANGE_SYSTEM : TEXT_SYSTEM,
