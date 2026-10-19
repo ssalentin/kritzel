@@ -399,6 +399,8 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
 
   function interact(a, b) {
     a.lastMet[b.id] = b.lastMet[a.id] = now;
+    // a figure's drawn words come before anything else: it says them first and the meeting waits a moment (orch)
+    for (const p of [a, b]) if (p.lines?.said && !p.saidOnce) { say(p, line(p, 'greet'), 2.5); p.busyUntil = now + 2.5; return; }
     const r = Math.min(rel(a, b), rel(b, a));
     if (X.choose) INT[X.choose(a, b, r, api)](a, b);   // without sim-extra.js people just wander
   }
