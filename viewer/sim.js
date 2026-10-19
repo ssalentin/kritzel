@@ -254,7 +254,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     if (said && (group === 'greet' || group === 'chat')) {
       a.arrivedAt ??= now;
       const rate = now - a.arrivedAt < 600 ? 1 / 3 : 1 / 8;
-      if (!a.saidOnce || R() < rate) { a.saidOnce = true; return said; }
+      if (!a.saidOnce || R() < rate) return said;      // marked as shown (below), not when picked: a dropped bubble is said again
     }
     const own = pickLines(a.lines?.[group]);     // a drawn character's own lines: array (German) or { de, en }
     if (own?.length) return pick(own);
@@ -746,7 +746,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
           if (now - p.at < 4) { p.at = now + 0.5; pending.push(p); }
           continue;
         }
-        guarded(p.a, () => { p.a.rig.say(p.text); p.a.sayUntil = now + p.dur; });
+        guarded(p.a, () => { p.a.rig.say(p.text); p.a.sayUntil = now + p.dur; if (p.text === paperText(p.a)) p.a.saidOnce = true; });
       }
 
       separate(dt);
