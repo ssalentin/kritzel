@@ -61,6 +61,8 @@ class Upstream(BaseHTTPRequestHandler):
             ans = {"kind": "weather", "weather": "snow"}
         elif "Nacht" in text:
             ans = {"kind": "time", "time": "night"}
+        elif "Mond soll tanzen" in text:
+            ans = {"kind": "goal", "action": "dance", "target": "mond.js", "where": "none"}
         elif "Mond" in text:
             ans = {"kind": "goal", "action": "fly_to", "target": "hexe.js", "where": "mond.js"}
         elif "tanzen" in text:
@@ -149,6 +151,24 @@ class Action(unittest.TestCase):
           if (j.ok) window.__applyAction(j.command);
           return j;
         }""", text)
+
+    def test_a_refused_action_is_not_confirmed_in_green(self):
+        self.page.click('#textMode button[data-mode="action"]')
+        self.page.fill("#textThingIn", "Der Mond soll tanzen")
+        self.page.click("#textThing button.go")
+        note = None
+        for _ in range(40):
+            time.sleep(0.2)
+            note = self.page.evaluate("""() => ({ text: document.querySelector('#status .note').textContent,
+              tone: document.querySelector('#status .note').dataset.tone,
+              hidden: document.querySelector('#status .note').hidden })""")
+            if not note["hidden"]:
+                break
+        self.assertEqual(note["tone"], "bad", note)
+        self.assertRegex(note["text"], r"ging gerade nicht|did not work", note)
+        self.assertIsNone(self.page.evaluate("""() => {
+          const a = window.__paperWorld().brain().actors().find(x => x.id === 'hexe'); return a.action?.what ?? null;
+        }"""))
 
     def test_snow_night_flight_and_unknown(self):
         snow = self.send("Es soll schneien")
