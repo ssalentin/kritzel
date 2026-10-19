@@ -302,7 +302,8 @@ export async function build(api, prevState = null) {
       if (later) later.push([file, entry, m?.meta]);           // at page load: placed once everything is there
       else place(file, entry, m?.meta, live);
     } catch (e) { report(`things/${file}: placing: ${e.message}`); }
-    if (STYLE === 'origami') { origami(THREE, entry.box); if (entry.free) origami(THREE, entry.free); }
+    if (m?.meta?.draft) { sketch(THREE, entry.box); if (entry.free) sketch(THREE, entry.free); }   // a two-stage draft: a light pencil sketch until its final
+    else if (STYLE === 'origami') { origami(THREE, entry.box); if (entry.free) origami(THREE, entry.free); }
     else if (STYLE === 'cutout') { cutout(THREE, entry.box); if (entry.free) cutout(THREE, entry.free); }
     else if (STYLE === 'crayon') { crayon(THREE, entry.box); if (entry.free) crayon(THREE, entry.free); }
     else { bakeAO(THREE, entry.box); if (entry.free) bakeAO(THREE, entry.free); }
@@ -631,6 +632,15 @@ function crayonStrokes(THREE) {
   crayonTex.colorSpace = THREE.SRGBColorSpace; crayonTex.anisotropy = 8;
   crayonTex.userData.shared = true;               // used by every thing: never disposed with one of them
   return crayonTex;
+}
+// a draft (meta.draft, from generate's two stages): a light pencil sketch in paper grey with thin ink edges
+function sketch(THREE, root) {
+  const paper = new THREE.Color(0xe9e4d8);
+  for (const o of styleable(root)) {
+    const drawn = m => new THREE.MeshStandardMaterial({ map: crayonStrokes(THREE), color: (m.color || new THREE.Color(0xffffff)).clone().lerp(paper, 0.75), roughness: 1, metalness: 0 });
+    o.material = Array.isArray(o.material) ? o.material.map(drawn) : drawn(o.material);
+    shell(THREE, o, 0x3a3530, 0.012);             // a thin ink edge, not the bold pencil line of the finished look
+  }
 }
 function crayon(THREE, root) {
   for (const o of styleable(root)) {
