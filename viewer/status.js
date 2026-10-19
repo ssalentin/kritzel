@@ -5,9 +5,49 @@ import { t, lang } from './i18n.js';
 
 const RESULT_S = 10;       // how long "✓ neu: …" / "✗ nicht erkannt" stays up
 const SEEN_S = 6;          // how long "✏️ neue Zeichnung erkannt" stays up (if generate is slower to start)
+const KIND_S = 2;          // a labelled change says what it is before the build message takes over
 const IDLE_S = 4;          // a calm pill folds to a dot after this long
 const LIGHT_MAX_S = 120;   // a light whose thing never arrives (generator running) goes away after this long
 const LIGHT_MAX = 3;       // waiting lights at once; with the generator down, the oldest goes when a new drawing comes
+
+// The pill's text for a moment, from both stages' status files — pure, so it can be tested without a DOM.
+export function pillView({ st, now, seenAt = 0, connectedAt = 0 }) {
+  const c = st?.capture || {}, g = st?.generate || {}, last = c.last;
+  // a name from generate: { de, en } or a plain (German) string
+  const say = x => typeof x === 'string' ? x : x?.[lang()] || x?.de || '';
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+  // a change Jev has just labelled: say what it is before generate's build message takes over
+  if (last?.kind && last.kind !== 'unchanged' && now - last.at < KIND_S)
+    return { tone: 'busy', text: t('seenKind', t('kind_' + last.kind)) };
+  if (g.alive && g.state === 'building') {
+    if (g.now) return { tone: 'busy', text: t('buildingNow', say(g.now)) };
+    const seen = (g.seen || []).map(say).filter(Boolean);
+    if (seen.length && now - seenAt < 4) return { tone: 'busy', text: t('seenList', cap(seen.slice(0, 4).join(', '))) };
+    if (seen.length) return { tone: 'busy', text: t('coming', seen[0]) };
+    return { tone: 'busy', text: t('thinking', Math.max(0, Math.round(now - g.since))) };
+  }
+  if (g.alive && now - g.since < RESULT_S) {
+    if (g.state === 'new' || g.state === 'changed') {
+      if (g.detail === 'removed') return { tone: 'ok', text: t('changed', t('removed')) };
+      const names = (g.made?.length ? g.made.map(say) : (g.detail || '').split(', ')).filter(Boolean);
+      return { tone: 'ok', text: '✓ ' + (names.length ? names.slice(0, 3).map(n => t('hello', n)).join(' ') : t('made', '')) };
+    }
+    if (g.state === 'unclear') return { tone: 'warn', text: g.why ? '🤷 ' + say(g.why) : t('notKnown') };
+    if (g.state === 'failed') return { tone: 'warn', text: t('failedSoft') };
+    if (g.state === 'idle' && last && g.frame === last.frame) return { tone: 'ok', text: t('nothingNew') };
+  }
+  if (last && now - last.at < SEEN_S) {
+    // without a label from Jev: something is happening, we don't know what yet
+    return { tone: 'busy', text: t('noticed') };
+  }
+  if (!c.alive) return { tone: 'bad', text: t('captureOff') };
+  if (c.state === 'camera-off') return { tone: 'bad', text: t('cameraOff') };
+  if (c.state === 'no-camera') return { tone: 'bad', text: t('noCamera') };
+  if (c.state === 'no-paper') return { tone: 'warn', text: t('noPaper') };
+  if (c.state === 'moving') return { tone: 'ok', text: c.detail === 'hand on the paper' ? t('handOnPaper') : t('moving') };
+  if (now - connectedAt < 3) return { tone: 'ok', text: t('connected') };
+  return { tone: 'ok', text: t('watching'), calm: true };
+}
 
 // a soft round glow for the light's halo, drawn once
 function glowTexture(THREE) {
@@ -94,42 +134,10 @@ export function createStatus({ THREE, scene, el, world, banner, onView = null })
     lights.delete(frame);
   }
 
-  // the pill's text for this moment, from both stages' status files
-  // a name from generate: { de, en } or a plain (German) string
-  const say = x => typeof x === 'string' ? x : x?.[lang()] || x?.de || '';
-  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
   // the pill narrates in a kids' voice (issue #18): what Kritzel notices, sees, builds and greets
   function view(now) {
-    const c = st?.capture || {}, g = st?.generate || {}, last = c.last;
     if (performance.now() < modeNoteUntil) return { tone: 'ok', text: modeNote };   // the mode just changed
-    if (g.alive && g.state === 'building') {
-      if (g.now) return { tone: 'busy', text: t('buildingNow', say(g.now)) };
-      const seen = (g.seen || []).map(say).filter(Boolean);
-      if (seen.length && now - seenAt < 4) return { tone: 'busy', text: t('seenList', cap(seen.slice(0, 4).join(', '))) };
-      if (seen.length) return { tone: 'busy', text: t('coming', seen[0]) };
-      return { tone: 'busy', text: t('thinking', Math.max(0, Math.round(now - g.since))) };
-    }
-    if (g.alive && now - g.since < RESULT_S) {
-      if (g.state === 'new' || g.state === 'changed') {
-        if (g.detail === 'removed') return { tone: 'ok', text: t('changed', t('removed')) };
-        const names = (g.made?.length ? g.made.map(say) : (g.detail || '').split(', ')).filter(Boolean);
-        return { tone: 'ok', text: '✓ ' + (names.length ? names.slice(0, 3).map(n => t('hello', n)).join(' ') : t('made', '')) };
-      }
-      if (g.state === 'unclear') return { tone: 'warn', text: g.why ? '🤷 ' + say(g.why) : t('notKnown') };
-      if (g.state === 'failed') return { tone: 'warn', text: t('failedSoft') };
-      if (g.state === 'idle' && last && g.frame === last.frame) return { tone: 'ok', text: t('nothingNew') };
-    }
-    if (last && now - last.at < SEEN_S) {
-      // Jev's label for the change, when capture has one ("new drawing", "colouring in", …)
-      return { tone: 'busy', text: last.kind && last.kind !== 'unchanged' ? t('seenKind', t('kind_' + last.kind)) : t('noticed') };
-    }
-    if (!c.alive) return { tone: 'bad', text: t('captureOff') };
-    if (c.state === 'camera-off') return { tone: 'bad', text: t('cameraOff') };
-    if (c.state === 'no-camera') return { tone: 'bad', text: t('noCamera') };
-    if (c.state === 'no-paper') return { tone: 'warn', text: t('noPaper') };
-    if (c.state === 'moving') return { tone: 'ok', text: c.detail === 'hand on the paper' ? t('handOnPaper') : t('moving') };
-    if (now - connectedAt < 3) return { tone: 'ok', text: t('connected') };
-    return { tone: 'ok', text: t('watching'), calm: true };
+    return pillView({ st, now, seenAt, connectedAt });
   }
 
   function render() {
