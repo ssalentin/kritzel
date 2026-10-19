@@ -1097,11 +1097,11 @@ def main():
             if cam is None or cam[0] != url:
                 if url is not None:
                     base_rgb = None              # another camera's picture is no base for this one
+                    restart_base = False
                 if stream:
                     stream.stop()
                 stream, url, seq, det.anchor = None, cam and cam[0], 0, None
                 early, held, held_spell, recheck, recheck_step = None, None, 0, None, 0
-                restart_base = False
         if cam is None:                       # none chosen (or no camera.json): wait, and say so
             status.set("no-camera")
             time.sleep(0.5)
@@ -1205,10 +1205,7 @@ def main():
         if restart_base and got[0] == "drawn" and sparse_noise(got[1]):
             print("sparse wide change after restart looks like camera noise; waiting again", file=sys.stderr, flush=True)
             restart_base = False
-            if getattr(det, "prev", None) is not None:
-                det.undo(t)
-            else:
-                det.anchor, det.still_since, det.diff = None, t, None
+            base_rgb = rgb                # the detector already adopted this picture; keep it
             early, held = None, None
             continue
         previous = hand_on(data, size, *got, cam[1], previous, det.measured if previous else None)
