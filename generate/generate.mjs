@@ -310,8 +310,11 @@ const str = (x, n) => typeof x === 'string' && x.trim().length > 0 && x.length <
 // with its eyes below its mouth three times out of three; asked where the eyes are, it saw it every time.
 // A creature drawn hanging head-down (a bat under its branch) has its eyes below its mouth too: not turned.
 // a bubble's words come from whoever draws, in any language, and land as written in the German line: clean in both
-// filters. "die" before a capitalised word is the German article ("Die Katze ist lieb"), not the English verb
-const safeSaid = text => safeLine(text, 'de') && safeLine(text.replace(/(?<!\p{L})[Dd]ie(?=\s+\p{Lu})/gu, ''), 'en');
+// filters. "die" before a capitalised word is the German article ("Die Katze ist lieb"), not the English verb, but only
+// in a sentence that reads German otherwise too: "You will die Tom" stays caught
+const GERMAN = /(?<!\p{L})(?:der|das|den|dem|ist|sind|und|ein|eine|nicht|ich|du|wir|mein|meine|dein|deine|mit|auf|im|zu|hallo)(?!\p{L})/iu;
+const safeSaid = text => safeLine(text, 'de') &&
+  safeLine(GERMAN.test(text) ? text.replace(/(?<!\p{L})[Dd]ie(?=\s+\p{Lu})/gu, '') : text, 'en');
 export function parseList(text) {
   let j;
   try { j = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)); } catch { return null; }
