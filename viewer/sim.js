@@ -245,10 +245,11 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   // a bubble stays long enough for a 7-year-old to read it (Sebastian, 2026-10-17): ~6 letters a second
   const say = (a, text, dur = 2.4, delay = 0) => pending.push({ a, text, at: now + delay, dur: readTime(text, dur) });
   const BUBBLES_MAX = 2;                 // at most this many speech bubbles at once (a dialogue's two always get through)
+  // the paper line as text (lines.said, or said on the actor), or null: the same test line() and the meetings use
+  const paperText = a => { const t = (a.lines?.said ?? a.said)?.[lang() === 'en' ? 'en' : 'de']; return typeof t === 'string' && t ? t : null; };
   const line = (a, group) => {
     // what the figure says on the paper (lines.said, { de, en }): its first greet or chat, then about one time in three
-    const sayPaper = a.lines?.said ?? a.said;                     // generate writes it inside lines (a stray one on the actor is read too)
-    const said = typeof sayPaper?.[lang() === 'en' ? 'en' : 'de'] === 'string' ? sayPaper[lang() === 'en' ? 'en' : 'de'] : null;
+    const said = paperText(a);                                    // generate writes it inside lines (a stray one on the actor is read too)
     // about one in three for its first ten minutes in the world, then one in eight: a child who wrote it hears it again
     if (said && (group === 'greet' || group === 'chat')) {
       a.arrivedAt ??= now;
@@ -400,7 +401,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   function interact(a, b) {
     a.lastMet[b.id] = b.lastMet[a.id] = now;
     // a figure's drawn words come before anything else: it says them first and the meeting waits a moment (orch)
-    for (const p of [a, b]) if (p.lines?.said && !p.saidOnce) { say(p, line(p, 'greet'), 2.5); p.busyUntil = now + 2.5; return; }
+    for (const p of [a, b]) if (paperText(p) && !p.saidOnce) { say(p, line(p, 'greet'), 2.5); p.busyUntil = now + 2.5; return; }
     const r = Math.min(rel(a, b), rel(b, a));
     if (X.choose) INT[X.choose(a, b, r, api)](a, b);   // without sim-extra.js people just wander
   }
