@@ -568,6 +568,24 @@ ${building('Ritter mit Schwert', 0.5, 0.5, '6a7a9a')}`);
   } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('a typed reply that mixes a valid NEW with an UNCLEAR writes nothing', async () => {
+  const dir = dirs();
+  try {
+    writeFileSync(join(dir, 'reply.txt'), `### NEW
+${building('Eiffelturm', 0.4, 0.5, 'b08a5a')}
+### UNCLEAR
+Ein Schwert | Waffen kommen nicht ins Buch.`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const r = await processTextRequest(request(dir, 'text-20261019-210802', 'Eiffelturm und ein Schwert'),
+      { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    assert.match(r.error, /cannot build this: Ein Schwert/);
+    assert.deepEqual(r.written, []);
+    assert.deepEqual(readdirSync(join(dir, 'things')), []);
+    const saved = JSON.parse(readFileSync(join(dir, 'reports', 'text-20261019-210802.json'), 'utf8'));
+    assert.match(saved.error, /cannot build this/);
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('the prompts split separate subjects and keep connected parts together', () => {
   assert.match(TEXT_SYSTEM, /one ### NEW section per thing/);
   assert.match(TEXT_SYSTEM, /Ritter mit Schwert/);

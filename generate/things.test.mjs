@@ -78,7 +78,8 @@ ${tower('Wolkenkratzer', 0.7, 0.45, '8a9ab0')}`);
     process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
     const r = await processFrame(frame, { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports'), box: [80, 80, 440, 240] });
     assert.equal(r.error, undefined, r.error);
-    assert.deepEqual(r.written.map(w => w.name), ['Eiffelturm', 'Wolkenkratzer']);
+    // section writes run concurrently in the frame path: the completion order is not a promise
+    assert.deepEqual(r.written.map(w => w.name).sort(), ['Eiffelturm', 'Wolkenkratzer']);
     assert.deepEqual(r.written.map(w => w.file).sort(), ['eiffelturm.js', 'wolkenkratzer.js']);
     assert.deepEqual(readdirSync(join(dir, 'things')).filter(f => f.endsWith('.js')).sort(), ['eiffelturm.js', 'wolkenkratzer.js']);
     const code = r.written.map(w => readFileSync(join(dir, 'things', w.file), 'utf8')).join('\n');

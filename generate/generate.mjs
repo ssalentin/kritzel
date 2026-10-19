@@ -431,7 +431,10 @@ export async function processTextRequest(reqPath, { thingsDir, reportsDir, onPro
     let sections;
     try { sections = parseReply(r.text); } catch (e) { throw new Error(`the reply could not be read: ${e.message.slice(0, 200)}`); }
     const news = sections.filter(s => s.kind === 'NEW'), unclear = sections.find(s => s.kind === 'UNCLEAR');
-    if (!news.length) throw new Error(unclear ? `cannot build this: ${unclear.body.split('|')[0].trim().slice(0, 240)}` : 'the reply had no ### NEW module');
+    // one disallowed part refuses the whole typed request (the prompt asks for UNCLEAR for the whole
+    // request); never write the valid half of a mixed NEW + UNCLEAR reply
+    if (unclear) throw new Error(`cannot build this: ${unclear.body.split('|')[0].trim().slice(0, 240)}`);
+    if (!news.length) throw new Error('the reply had no ### NEW module');
     if (news.length > 6) throw new Error(`the reply made ${news.length} things; that is too many for one request`);
     for (const sec of news) if (wordOnly(sec.body)) throw new Error('a written word alone is not a thing');
     // "Eiffelturm und Wolkenkratzer" is two things: check every section before writing any, so a failed
