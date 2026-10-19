@@ -32,8 +32,11 @@
   #status.calm { padding: 5px; }
   #status.calm:has(.note:not([hidden])) { padding: 4px 10px 4px 8px; }
   #status.calm .text, #status.calm img { display: none; }
+  /* no text, no note: the pill is not there at all (the camera frame owns camera state) */
+  #status.silent { display: none; }
+  #status.silent:has(.note:not([hidden])) { display: flex; }
   @keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
-  @media (max-width: 560px) { #status { top: auto; bottom: 52px; max-width: calc(100vw - 32px); border-radius: 16px; }
+  @media (max-width: 560px) { #status { top: auto; bottom: 245px; max-width: calc(100vw - 32px); border-radius: 16px; }
     #status .text { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; } }
   /* the name of a drawing that just came alive, big for a moment (status.js) */
   #arrive { position: fixed; left: 50%; top: 16%; transform: translate(-50%, 0) scale(.6); opacity: 0; pointer-events: none;
@@ -50,20 +53,19 @@
   #log h3 { margin: 0 0 6px; font-size: 15px; }
   #log .day { margin: 10px 0 2px; font-weight: 600; color: #557; }
   #log li { margin: 2px 0; } #log ul { margin: 0; padding-left: 18px; } #log code { color: #889; font-size: 11px; }
-  /* the build queue, top left: which things are being built (buildqueue.js) */
-  #bq { position: fixed; left: 16px; top: 60px; max-width: min(320px, calc(100vw - 32px)); box-sizing: border-box; padding: 6px 4px; z-index: 4;
-    background: #fff8e6; border-radius: 4px 10px 6px 12px; box-shadow: 0 1px 0 #d9c9a3, 0 6px 14px #0002; transform: rotate(-1deg); }
-  #bq::before { content: ''; position: absolute; top: -7px; left: 14px; width: 42px; height: 12px; background: #f2dfa6aa; transform: rotate(3deg); }
+  /* the build queue, top left: which things are being built (buildqueue.js), in the panel language */
+  #bq { position: fixed; left: 16px; top: 60px; max-width: min(320px, calc(100vw - 32px)); box-sizing: border-box; padding: 5px; z-index: 4;
+    background: var(--panel); border-radius: 10px; box-shadow: 0 4px 12px #0003; }
   #bq[hidden] { display: none; }
-  #bq .row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 5px 10px; transition: opacity 1s; }
+  #bq .row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 4px 8px; transition: opacity 1s; }
   #bq .row[data-state=done] { opacity: .75; }
   #bq .dot { flex: none; align-self: center; width: 9px; height: 9px; border-radius: 50%; background: #c9b98f; }
   #bq .row[data-state=building] .dot { background: #e0a020; animation: pulse .8s ease-in-out infinite alternate; }
   #bq .row[data-state=done] .dot { background: #3a9d5d; }
   #bq .row[data-state=failed] .dot { background: #d0443a; }
-  #bq .name { font-size: 17px; font-weight: 600; color: #1d2a30; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  #bq .label { font-size: 14px; color: #5a4a2a; white-space: nowrap; flex: none; }
-  @media (max-width: 560px) { #bq { top: 84px; left: 12px; max-width: calc(100vw - 24px); } #bq .name { font-size: 15px; } }
+  #bq .name { font-size: 14px; font-weight: 600; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  #bq .label { font-size: 12px; color: #4d5f70; white-space: nowrap; flex: none; }
+  @media (max-width: 560px) { #bq { top: 84px; left: 12px; max-width: calc(100vw - 24px); } #bq .name { font-size: 13px; } }
   /* bottom right: a text field to add something by name, then the live camera in a picture frame (camframe.js) */
   #corner { position: fixed; right: 16px; bottom: 12px; width: min(24vw, 300px); display: flex; flex-direction: column; gap: 8px; z-index: 5; }
   #textThing { display: grid; gap: 4px; width: min(24vw, 300px); align-self: flex-end; box-sizing: border-box; padding: 4px;
@@ -151,7 +153,7 @@
 <body>
 <div id="hud"><div id="err"></div></div>
 <div id="arrive" aria-live="polite"></div>
-<div id="status" data-tone="ok"><span class="dot"></span><span class="text"></span><span class="note" hidden></span><span class="gen" hidden>⚠ Generator aus</span></div>
+<div id="status" class="silent" data-tone="ok"><span class="dot"></span><span class="text"></span><span class="note" hidden></span><span class="gen" hidden>⚠ Generator aus</span></div>
 <div id="veil"><div><span class="pen">✏️</span> Leg los mit dem Malen!</div></div>
 <div id="hint">Tippe eine Figur an, um ihr mit der Kamera zu folgen · Esc beendet <span id="ver"></span></div>
 <div id="bq" hidden></div>
