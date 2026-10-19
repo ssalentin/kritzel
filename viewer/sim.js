@@ -129,7 +129,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     a.lastMet = {}; a.sayUntil = 0; a.hunger = R() * 0.5;
     a.getSpeed = () => a.speed;
     a.move = ['walk', 'hop', 'crawl', 'fly', 'swim', 'climb'].includes(a.move) ? a.move : 'walk';   // how it moves (moves.js)
-    a.alt = 0; a.mv = null;
+    a.alt = 0; a.mv = null; a.held = null;
     MV?.setup(a);
     if (st) {
       Object.assign(a, { energy: st.energy, social: st.social, fear: st.fear, hunger: st.hunger ?? a.hunger,
@@ -180,6 +180,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   // walking somewhere (the smaller one more); held characters and those busy with someone else stay
   // put; partners nudge each other to a polite distance. One far above the other doesn't count.
   function give(a, other) {
+    if (a.held) return 0;
     if (a.hold) return 0;
     if (now < (a.partnerUntil ?? 0)) return a.partner === other ? 1 : 0;
     if (now < a.busyUntil) return 0;
@@ -200,10 +201,10 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     };
     for (let i = 0; i < actors.length; i++) {
       const a = actors[i];
-      if (a.hidden) continue;
+      if (a.hidden || a.held) continue;
       for (let j = i + 1; j < actors.length; j++) {
         const c = actors[j];
-        if (c.hidden || Math.abs((a.alt || 0) - (c.alt || 0)) > 0.8 * Math.max(a.height || 1, c.height || 1)) continue;
+        if (c.hidden || c.held || Math.abs((a.alt || 0) - (c.alt || 0)) > 0.8 * Math.max(a.height || 1, c.height || 1)) continue;
         let dx = c.pos.x - a.pos.x, dz = c.pos.z - a.pos.z;
         const d = Math.hypot(dx, dz), min = a.radius + c.radius;
         if (d >= min) continue;
@@ -483,6 +484,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     if (a.landedFrom) { a.move = a.landedFrom; a.landedFrom = null; a.mv = null; }   // a flyer/swimmer/climber takes its mover back
   }
   function decide(a) {
+    if (a.held) return;
     a.meet = null;                       // a new decision replaces any earlier meeting intent (hidden/blocked clear too)
     const opts = [];
     const add = (u, goal) => opts.push({ u: u + R() * 0.3, goal });
@@ -599,6 +601,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   }
 
   function act(a) {
+    if (a.held) return;
     if (MV?.special(a, envNow)) return;        // flies, swims or climbs: moves.js runs it, off the grid
     a.energy = Math.max(0, a.energy - 0.004 * (1 + nightNow));   // night makes everyone tired sooner
     a.hunger = Math.min(1, a.hunger + 0.003);
@@ -875,6 +878,26 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
       if (now >= a.busyUntil) decide(a);
       return true;
     },
+    // the hand: carry a figure above the page, then put it down on a free cell near the release
+    hold(a) {
+      if (!a || a.hidden || a.hold) return false;          // in a jail or inside a door: not pickable
+      a.held = { x: a.pos.x, z: a.pos.z };
+      a.goal = null; a.goalSince = 0; a.meet = null; a.action = null; a.actionTarget = null;
+      a.mv = null; a.partner = null; a.partnerUntil = 0; a.busyUntil = 0;
+      return true;
+    },
+    moveHeld(a, x, z) { if (a?.held) { a.held.x = x; a.held.z = z; } },
+    release(a, x, z) {
+      if (!a?.held) return false;
+      a.held = null;
+      const c = nearestCell(x, z, a) || a.cell;
+      a.cell = c;
+      const [wx, wz] = toWorld(c.x, c.y);
+      a.pos.set(wx, 0, wz);
+      a.alt = 0; a.goal = null; a.goalSince = 0; a.busyUntil = now + 0.4; a.mv = null;
+      if (!a.lift) a.rig.g.position.y = 0;
+      return true;
+    },
     // someone tapped this character: a little jump, a giggle and hello
     tap(a) {
       if (!a || a.hidden) return;
@@ -997,7 +1020,9 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         let moving;
         // in a dialogue (or another moment with a partner): stay put and keep facing them until it ends
         const withPartner = now < (a.partnerUntil ?? 0) && a.partner && !a.partner.hidden;
-        if (withPartner) {
+        if (a.held) {                     // the hand carries it: follow the pointer, a little above the page
+          a.pos.x = a.held.x; a.pos.z = a.held.z; a.alt = 0.6; moving = false;
+        } else if (withPartner) {
           moving = false;
           a.face = Math.atan2(a.partner.pos.x - a.pos.x, a.partner.pos.z - a.pos.z);
         } else if (MV?.special(a, envNow)) {      // flying, swimming, climbing (moves.js)
@@ -1051,6 +1076,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
           ACT_MOTION[anim](g, k);
           a.acting = { ry: g.rotation.y - ry, py, scale };
         }
+        if (a.held && !a.lift) a.rig.g.position.y = groundY(a.pos.x) + 0.6;   // walkers have no lift group
       });
     },
   };
