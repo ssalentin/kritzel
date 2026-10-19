@@ -1088,6 +1088,7 @@ def main():
     previous = done[-1].name if done else None
     det = Detector(small(done[-1].read_bytes()) if done else None)
     base_rgb = colour(done[-1].read_bytes()) if done else None
+    restart_base = bool(done)            # this base came from disk, not from the running preview
     status, stream, url, seq, checked, cam, early = Status(), None, None, 0, 0, None, None
     held, held_spell, recheck, recheck_at, recheck_step = None, 0, None, 0.0, 0
     while True:
@@ -1100,6 +1101,7 @@ def main():
                     stream.stop()
                 stream, url, seq, det.anchor = None, cam and cam[0], 0, None
                 early, held, held_spell, recheck, recheck_step = None, None, 0, None, 0
+                restart_base = False
         if cam is None:                       # none chosen (or no camera.json): wait, and say so
             status.set("no-camera")
             time.sleep(0.5)
@@ -1142,6 +1144,7 @@ def main():
                     det.hold()
                     held, held_spell = found, det.spell
                     recheck_at, recheck_step = time.monotonic(), 0
+                    restart_base = False
                 elif early.spell == det.spell:
                     held = None               # this settled picture has paper and no hand
             if early.spell != det.spell:
@@ -1195,11 +1198,13 @@ def main():
             det.hold()
             shot.checked, held, held_spell = True, found, det.spell
             recheck_at, recheck_step = time.monotonic(), 0
+            restart_base = False
             early = shot
             held_status(status, held)
             continue
-        if got[0] == "drawn" and sparse_noise(got[1]):
-            print("sparse wide change looks like camera noise; waiting again", file=sys.stderr, flush=True)
+        if restart_base and got[0] == "drawn" and sparse_noise(got[1]):
+            print("sparse wide change after restart looks like camera noise; waiting again", file=sys.stderr, flush=True)
+            restart_base = False
             if getattr(det, "prev", None) is not None:
                 det.undo(t)
             else:
@@ -1207,6 +1212,7 @@ def main():
             early, held = None, None
             continue
         previous = hand_on(data, size, *got, cam[1], previous, det.measured if previous else None)
+        restart_base = False
         base_rgb = rgb
         meta = json.loads((OUT / previous.replace(".jpg", ".json")).read_text())
         try:
