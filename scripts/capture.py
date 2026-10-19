@@ -51,7 +51,6 @@ W, H = 320, 180          # compare at this size: averages away sensor noise, kee
 PIXEL = 20               # brightness step (0-255) that counts as a changed pixel
 NEW_PX = 15              # changed pixels that count: vs the still picture = movement, vs the last sheet = new
 SNAP_DIFF = 200          # a full snapshot this far from the preview is another picture, not resampling
-NOISE_SHARE, NOISE_WIDE, NOISE_TALL = 0.02, 0.8, 0.5   # sparse marks spread over most of a restart preview
 INK_R = 2                # new ink must be this far (thumb px) from ink already there
 SLIDE = 8                # how far (thumb px, ×6 at 1080p) the paper may slide and still be the same sheet
 INK_EDGE, INK_SHARE = 25, 0.25   # local contrast that is ink, not shade; share of a change that must be inky
@@ -69,6 +68,8 @@ HOLD_RECHECKS = (0.3, 0.6, 1.2, 2.5)   # a held frame: quick at first for the tr
 SHRINK = f"format=gray,scale=960:540:flags=area,erosion,erosion,scale={W}:{H}:flags=area"   # keeps thin lines
 CW, CH = 96, 54          # colour thumbnail: the sheet and a hand, not the drawing's lines
 PAPER_BLOCK = 4          # the hand check works on blocks this many colour-thumbnail px square
+FLAT, COLOUR_DIFF = 7, 26   # a flat paper block, and how close neighbouring blocks are the same sheet
+SHEET_CONFIDENT = 0.20  # a flat sheet field this large is trustworthy for restart-noise checks
 PAPER_SHARE = 0.05       # this much of the picture being paper-bright is paper (busy drawings count too)
 PAPER_BRIGHT = 155       # ...or a smaller paper-bright field (printed picture, partial sheet)
 PAPER_PLAIN = 0.35       # a big paper field this large stands on its own
@@ -136,6 +137,26 @@ def blocks(rgb):
             n = PAPER_BLOCK * PAPER_BLOCK
             means.append([s / n for s in sums])
     return bw, bh, means
+
+
+def flat_blocks(rgb):
+    """(width, height, mean colour, flat flag) blocks, for finding the sheet against the table."""
+    bw, bh = CW // PAPER_BLOCK, CH // PAPER_BLOCK
+    means, flat = [], []
+    for by in range(bh):
+        for bx in range(bw):
+            sums, squares = [0, 0, 0], [0, 0, 0]
+            for y in range(by * PAPER_BLOCK, (by + 1) * PAPER_BLOCK):
+                for x in range(bx * PAPER_BLOCK, (bx + 1) * PAPER_BLOCK):
+                    i = (y * CW + x) * 3
+                    for c in range(3):
+                        sums[c] += rgb[i + c]
+                        squares[c] += rgb[i + c] * rgb[i + c]
+            n = PAPER_BLOCK * PAPER_BLOCK
+            mean = [s / n for s in sums]
+            means.append(mean)
+            flat.append(max(math.sqrt(max(0, squares[c] / n - mean[c] * mean[c])) for c in range(3)) <= FLAT)
+    return bw, bh, means, flat
 
 
 def neighbours(i, w, h):
@@ -286,6 +307,58 @@ def filled(mask, w, h):
         if not mask[i] and i not in seen:
             out[i] = True
     return out
+
+
+def sheet_region(rgb):
+    """The flat sheet field against the table, or None when it is not clear enough to judge noise."""
+    if not rgb:
+        return None
+    bw, bh, means, flat = flat_blocks(rgb)
+    n = bw * bh
+    seen, parts = set(), []
+    for i in range(n):
+        if not flat[i] or i in seen:
+            continue
+        seen.add(i)
+        todo, part = [i], []
+        while todo:
+            j = todo.pop()
+            part.append(j)
+            for k in neighbours(j, bw, bh):
+                if flat[k] and k not in seen and all(abs(means[j][c] - means[k][c]) <= COLOUR_DIFF for c in range(3)):
+                    seen.add(k)
+                    todo.append(k)
+        parts.append(part)
+    for part in sorted(parts, key=len, reverse=True):
+        if len(part) < SHEET_CONFIDENT * n:
+            continue
+        xs, ys = [i % bw for i in part], [i // bw for i in part]
+        if (max(xs) - min(xs) + 1) < 0.25 * bw or (max(ys) - min(ys) + 1) < 0.25 * bh:
+            continue
+        if len(part) < 0.25 * (max(xs) - min(xs) + 1) * (max(ys) - min(ys) + 1):
+            continue
+        colour = [statistics.median(means[i][c] for i in part) for c in range(3)]
+        if wood(colour):
+            continue
+        mask = [False] * n
+        for i in part:
+            mask[i] = True
+        return filled(mask, bw, bh), bw, bh
+    return None
+
+
+def restart_noise(diff, rgb):
+    """A restart change almost entirely outside the sheet: cable, table or tile grout, not ink."""
+    region = sheet_region(rgb)
+    if not region or not diff:
+        return False
+    blocksheet, bw, bh = region
+    inside = 0
+    for i in diff:
+        x, y = (i % W) * CW // W // PAPER_BLOCK, (i // W) * CH // H // PAPER_BLOCK
+        if x < bw and y * bw + x < len(blocksheet) and blocksheet[y * bw + x]:
+            inside += 1
+    return inside < NEW_PX
 
 
 def hand(rgb, sheet, base=None):
@@ -906,15 +979,6 @@ def box(diff, size):
     return [int(x0 * sx), int(y0 * sy), int(x1 * sx) - int(x0 * sx), int(y1 * sy) - int(y0 * sy)]
 
 
-def sparse_noise(diff):
-    """A few changed pixels spread over most of the picture: a restart preview, not new ink."""
-    if not diff:
-        return False
-    xs, ys = [i % W for i in diff], [i // W for i in diff]
-    return (len(diff) < NOISE_SHARE * W * H
-            and max(xs) - min(xs) >= NOISE_WIDE * W and max(ys) - min(ys) >= NOISE_TALL * H)
-
-
 def camera():
     """The chosen remote camera as (snapshot URL, info), or None."""
     try:
@@ -1202,8 +1266,8 @@ def main():
             early = shot
             held_status(status, held)
             continue
-        if restart_base and got[0] == "drawn" and sparse_noise(got[1]):
-            print("sparse wide change after restart looks like camera noise; waiting again", file=sys.stderr, flush=True)
+        if restart_base and got[0] == "drawn" and restart_noise(got[1], rgb):
+            print("restart change is outside the sheet; keeping it as the silent baseline", file=sys.stderr, flush=True)
             restart_base = False
             base_rgb = rgb                # the detector already adopted this picture; keep it
             early, held = None, None

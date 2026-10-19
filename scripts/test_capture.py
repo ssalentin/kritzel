@@ -212,11 +212,16 @@ class Paper(unittest.TestCase):
             img[i:i + 3] = [rnd.randint(0, 255) for _ in range(3)]
         self.assertEqual(c.look(img), "paper")
 
-    def test_sparse_wide_marks_are_noise_but_a_compact_drawing_is_not(self):
-        wide = [y * W + x for y in range(10, 170, 16) for x in range(10, 310, 15)]
-        compact = [100 * W + 100 + y * W + x for y in range(10) for x in range(20)]
-        self.assertTrue(c.sparse_noise(wide))
-        self.assertFalse(c.sparse_noise(compact))
+    def test_restart_noise_is_outside_the_sheet(self):
+        img = rgb_table()
+        for y in range(10, 44):
+            for x in range(10, 86):
+                i = (y * CW + x) * 3
+                img[i:i + 3] = [240, 240, 240]
+        outside = [60 * W + x for x in (10, 11, 12)]
+        inside = [60 * W + x for x in range(150, 171)]
+        self.assertTrue(c.restart_noise(outside, img))
+        self.assertFalse(c.restart_noise(inside, img))
 
     def test_an_empty_table_has_no_paper(self):
         self.assertEqual(c.look(rgb_table()), "no-paper")
