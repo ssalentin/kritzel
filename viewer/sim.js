@@ -430,6 +430,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     },
   };
   function decide(a) {
+    a.meet = null;                       // a new decision replaces any earlier meeting intent (hidden/blocked clear too)
     const opts = [];
     const add = (u, goal) => opts.push({ u: u + R() * 0.3, goal });
     add(0.3 + a.traits.curiosity * 0.35, { type: 'wander', cell: pick(groundCells) });
@@ -546,7 +547,8 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     if (a.flee && now < a.flee.until) { if (!X.hide?.(a, a.flee.from, api)) stepAway(a, a.flee.from); return; }
     a.flee = null;
 
-    if (!a.goal || (now - a.goalSince > 15 && !/visit|fetch|bring/.test(a.goal.type))) decide(a);
+    // a Jev approach is kept until it arrives or its meeting intent expires: a long walk must not lose the word
+    if (!a.goal || (now - a.goalSince > 15 && !/visit|fetch|bring/.test(a.goal.type) && !a.goal.meet)) decide(a);
     const g = a.goal;
     switch (g.type) {
       case 'wander':
