@@ -39,6 +39,45 @@ export function build({ makePerson }) {
 }
 """
 
+WALKER2 = """export const meta = { name: 'Breiter Zwei', drawing: 'a second broad figure' };
+export function build({ makePerson }) {
+  const rig = makePerson({ shirtColor: 0x9955aa, scale: 4 });
+  return { actors: [{ id: 'wide2', name: 'Breiter Zwei', start: [2.2, 0.4], rig, move: 'walk' }] };
+}
+"""
+
+KEKS = """export const meta = { name: 'Keks', drawing: 'a small biscuit', paper: { x: 0.8, y: 0.2 } };
+export function build({ THREE, world, mat }) {
+  const g = new THREE.Group();
+  const m = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.25, 0.5), mat(0xc9964a));
+  m.position.y = 0.125;
+  g.add(m);
+  world.add(g);
+  return { actors: [], obstacles: [], spots: [{ kind: 'food', x: 0.8, z: 0.2, lines: { de: ['Mmh!'], en: ['Yum!'] } }] };
+}
+"""
+
+JAIL = """export const meta = { name: 'Gefängnis', drawing: 'a little jail with bars', paper: { x: 0.2, y: 0.2 } };
+export function build({ THREE, world, mat }) {
+  const g = new THREE.Group(), wood = mat(0x8a6a4a), iron = mat(0x555555);
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(2, 0.12, 2), wood); floor.position.y = 0.06; g.add(floor);
+  for (const x of [-0.9, 0, 0.9]) {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.6, 0.08), iron);
+    bar.position.set(x, 0.8, 0.9); g.add(bar);
+  }
+  g.position.set(-6, 0, 4);
+  world.add(g);
+  return { actors: [], obstacles: [], holds: [{ actor: 'gaffer', x: -6, z: 4, r: 0.8 }] };
+}
+"""
+
+GAFFER = """export const meta = { name: 'Gaffer', drawing: 'a broad figure in a jail' };
+export function build({ makePerson }) {
+  const rig = makePerson({ shirtColor: 0x777777, scale: 3 });
+  return { actors: [{ id: 'gaffer', name: 'Gaffer', start: [-6, 4], rig, move: 'walk' }] };
+}
+"""
+
 
 def free_port():
     with socket.socket() as s:
@@ -59,6 +98,10 @@ class Collisions(unittest.TestCase):
         (cls.world / "viewer" / "things").mkdir()
         (cls.world / "viewer" / "things" / "balken.js").write_text(BEAM)
         (cls.world / "viewer" / "things" / "breiter.js").write_text(WALKER)
+        (cls.world / "viewer" / "things" / "breiter2.js").write_text(WALKER2)
+        (cls.world / "viewer" / "things" / "keks.js").write_text(KEKS)
+        (cls.world / "viewer" / "things" / "gefaengnis.js").write_text(JAIL)
+        (cls.world / "viewer" / "things" / "gaffer.js").write_text(GAFFER)
         cls.port = free_port()
         env = {**os.environ, "PORT": str(cls.port), "KRITZEL_THINK": "0"}
         cls.server = subprocess.Popen([sys.executable, str(cls.world / "viewer" / "serve.py")], cwd=cls.world, env=env,
@@ -106,6 +149,9 @@ class Collisions(unittest.TestCase):
           a.start = [foot.x - 2.25, foot.z + 5.4];
           [a.cell.x, a.cell.y] = cell(a.start[0], a.start[1]);
           a.pos.set(a.start[0], 0, a.start[1]);
+          const other = b.actors().find(x => x.id === 'wide2');       // park the crowding partner out of this walk
+          if (other) { other.pos.set(-7, 0, 5); [other.cell.x, other.cell.y] = cell(-7, 5);
+            other.goal = { type: 'idle', until: 1e9 }; other.busyUntil = 0; other.partner = null; }
           const goal = cell(foot.x + 6, foot.z - 5);   // a long diagonal: the rendered body must not chase through the corner
           let t = 1000, maxPen = -Infinity, path = 0, crossed = false, last = [a.pos.x, a.pos.z], samples = 0;
           const startSide = Math.sign(a.pos.x - foot.x) || 1;
@@ -163,6 +209,83 @@ class Collisions(unittest.TestCase):
         }""")
         self.assertLessEqual(out["maxPen"], 0.02, f"the rendered body crossed the beam: {out}")
         print("\n[collisions] continuous " + json.dumps(out))
+
+    def test_crowding_does_not_push_into_the_beam(self):
+        """Two wide figures overlap: the pair push must not shove one into the beam (one is partnered/idle)."""
+        out = self.page.evaluate("""() => {
+          const w = window.__paperWorld(), b = w.brain(), foot = w.feet().find(e => e.file === 'balken.js').foot;
+          const a = b.actors().find(x => x.id === 'wide'), c = b.actors().find(x => x.id === 'wide2');
+          const cell = (x, z) => ({ x: Math.round(x / 0.45 + 35), y: Math.round(z / 0.45 + 35) });
+          a.pos.set(foot.x + foot.hx + a.radius + 0.15, 0, foot.z); Object.assign(a.cell, cell(a.pos.x, a.pos.z));
+          c.pos.set(foot.x + foot.hx + a.radius + 0.15 + c.radius, 0, foot.z); Object.assign(c.cell, cell(c.pos.x, c.pos.z));
+          for (const p of [a, c]) { p.hidden = false; p.hold = null; p.alt = 0; p.busyUntil = 0; p.goal = null; p.flee = null; }
+          let t = b.time(), maxPen = -Infinity;
+          for (let i = 0; i < 60 * 5; i++) {
+            a.partner = c; a.partnerUntil = t + 1e6; a.goal = null;
+            c.goal = { type: 'idle', until: t + 1e6 };
+            w.update(t += 1 / 60, 1 / 60);
+            if (i % 15) continue;
+            for (const p of [a, c]) maxPen = Math.max(maxPen,
+              Math.min(foot.hx + p.radius - Math.abs(p.pos.x - foot.x), foot.hz + p.radius - Math.abs(p.pos.z - foot.z)));
+          }
+          return { maxPen, a: [a.pos.x, a.pos.z], c: [c.pos.x, c.pos.z], r: [a.radius, c.radius] };
+        }""")
+        self.assertLessEqual(out["maxPen"], 0.02, f"a crowd pushed a body into the beam: {out}")
+        print("\n[collisions] crowding " + json.dumps(out))
+
+    def test_portable_food_and_a_held_prisoner_are_not_walls(self):
+        out = self.page.evaluate("""() => {
+          const w = window.__paperWorld(), b = w.brain();
+          const entry = file => w.feet().find(e => e.file === file);
+          const inGrid = (e, list) => !!e?.foot && list.some(p => Math.abs(p.x - e.foot.x) < 0.02 &&
+            Math.abs(p.z - e.foot.z) < 0.02 && Math.abs(p.hx - e.foot.hx) < 0.02 && Math.abs(p.hz - e.foot.hz) < 0.02);
+          const blocking = b.blockingFeet(), keks = entry('keks.js'), jail = entry('gefaengnis.js');
+          const gaffer = b.actors().find(a => a.id === 'gaffer');
+          return { keksFoot: !!keks?.foot, keksBlocking: inGrid(keks, blocking), jailFoot: !!jail?.foot,
+            jailBlocking: inGrid(jail, blocking), jailPinned: !!jail?.pinned, held: !!gaffer?.hold };
+        }""")
+        self.assertTrue(out["keksFoot"], out)
+        self.assertFalse(out["keksBlocking"], f"a portable Keks became a wall: {out}")
+        self.assertTrue(out["jailFoot"], out)
+        self.assertTrue(out["jailPinned"], out)
+        self.assertFalse(out["jailBlocking"], f"a jail holding its prisoner became a wall: {out}")
+        self.assertTrue(out["held"], f"the prisoner is not held: {out}")
+        print("\n[collisions] exemptions " + json.dumps(out))
+
+    def test_adding_and_removing_a_thing_rebuilds_the_solid_grid(self):
+        new = self.world / "viewer" / "things" / "neu.js"
+        new.write_text("""export const meta = { name: 'Neu', drawing: 'a box', paper: { x: 0.6, y: 0.6 } };
+export function build({ THREE, world, mat }) {
+  const g = new THREE.Group();
+  const m = new THREE.Mesh(new THREE.BoxGeometry(3, 1, 3), mat(0xaa8844));
+  m.position.y = 0.5; g.add(m); world.add(g);
+  return { actors: [], obstacles: [] };
+}
+""")
+        try:
+            try:
+                added = self.page.wait_for_function("""() => {
+                  const w = window.__paperWorld();
+                  const e = w?.feet?.().find(x => x.file === 'neu.js');
+                  if (!e?.foot) return false;
+                  return w.brain().blockingFeet().some(p => Math.abs(p.x - e.foot.x) < 0.02 && Math.abs(p.z - e.foot.z) < 0.02);
+                }""", timeout=30000)
+            except Exception:
+                print("\n[collisions] add diag " + json.dumps(self.page.evaluate("""() => ({
+                  feet: window.__paperWorld()?.feet?.().map(x => x.file),
+                  err: document.getElementById('err').textContent,
+                  has: typeof window.__paperWorld()?.brain?.().blockingFeet })""")))
+                raise
+            self.assertTrue(added)
+            foot = self.page.evaluate("() => { const e = window.__paperWorld().feet().find(x => x.file === 'neu.js'); return { x: e.foot.x, z: e.foot.z, hx: e.foot.hx, hz: e.foot.hz }; }")
+        finally:
+            new.unlink()
+        self.page.wait_for_function("""() => !window.__paperWorld()?.feet?.().some(x => x.file === 'neu.js')""", timeout=15000)
+        gone = self.page.evaluate("""(f) => ({ feet: window.__paperWorld().feet().some(x => x.file === 'neu.js'),
+          blocking: window.__paperWorld().brain().blockingFeet().some(p => Math.abs(p.x - f.x) < 0.02 && Math.abs(p.z - f.z) < 0.02) })""", foot)
+        self.assertFalse(gone["feet"], gone)
+        self.assertFalse(gone["blocking"], gone)
+        print("\n[collisions] grid rebuild on add/remove ok")
 
 
 if __name__ == "__main__":
