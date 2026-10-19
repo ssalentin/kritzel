@@ -13,7 +13,7 @@ Kritzel speaks English and German.</p>
 <p align="center">
   <img alt="version 0.7.0" src="https://img.shields.io/badge/version-0.7.0-6aa65a">
   <img alt="German and English" src="https://img.shields.io/badge/languages-DE%20%7C%20EN-9fb4f2">
-  <img alt="drawings read by Claude" src="https://img.shields.io/badge/drawings%20read%20by-Claude-d97757?logo=anthropic">
+  <img alt="drawings read by DeepSeek via OpenRouter" src="https://img.shields.io/badge/drawings%20read%20by-DeepSeek%20via%20OpenRouter-6aa65a">
   <img alt="status: prototype" src="https://img.shields.io/badge/status-prototype-f2b38a">
 </p>
 
@@ -52,7 +52,7 @@ right now (**Switch**). **New world** turns the page to an empty one; old worlds
 ### From paper to book in seconds
 
 <p align="center">
-  <img src="docs/how-it-works.svg" alt="How a drawing comes alive: 1, draw on paper or lay down a sticker; 2, the camera above watches and waits until your hand is gone; 3, Kritzel notices the new drawing, asks what have we got here, and a warm light shows where it will stand, after about 1.5 seconds; 4, Claude reads the drawing and writes a small, safety-checked 3D program; 5, about 15 seconds after the pen lifts, the creature pops up out of the book and starts walking and talking." width="100%">
+  <img src="docs/how-it-works.svg" alt="How a drawing comes alive: 1, draw on paper or lay down a sticker; 2, the camera above watches and waits until your hand is gone; 3, Kritzel notices the new drawing, asks what have we got here, and a warm light shows where it will stand, after about 1.5 seconds; 4, DeepSeek (through OpenRouter) reads the drawing and writes a small, safety-checked 3D program; 5, about 15 seconds after the pen lifts, the creature pops up out of the book and starts walking and talking." width="100%">
 </p>
 
 About **1.5 seconds** after the pen lifts, a warm light appears where the new thing will
@@ -89,7 +89,8 @@ its name, and the others walk over to look. A whole new sheet takes about 24 sec
 ## Getting started
 
 You need a computer with Linux for Kritzel itself (the camera may sit on another computer) and
-a Claude account for reading the drawings. No API key is needed.
+an OpenRouter account for reading the drawings: export `OPENROUTER_API_KEY` (create one at
+https://openrouter.ai/keys) before `./kritzel start`.
 
 ```bash
 git clone https://github.com/ssalentin/kritzel.git && cd kritzel

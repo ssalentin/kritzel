@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 process.env.PATH = join(import.meta.dirname, 'test-bin') + ':' + process.env.PATH;
+process.env.KRITZEL_PROVIDER = 'pi';
 const { oneShot } = await import('./claude.mjs');
 const M = 'fake/model', img = Buffer.from('jpeg');
 
@@ -71,7 +72,7 @@ test('a claude that dies before reading its prompt fails the call, not the proce
   const path = process.env.PATH;
   process.env.PATH = bin + ':' + path;
   try {
-    await assert.rejects(oneShot({ system: 'S', text: 'x'.repeat(4_000_000), images: [], model: 'claude-sonnet-5-5' }, 1), /without a result/);
+    await assert.rejects(oneShot({ system: 'S', text: 'x'.repeat(4_000_000), images: [], model: 'claude-sonnet-5-5', provider: 'claude' }, 1), /without a result/);
   } finally { process.env.PATH = path; rmSync(bin, { recursive: true, force: true }); }
 });
 

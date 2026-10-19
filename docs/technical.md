@@ -57,12 +57,13 @@ On a Linux computer (it turns drawings into code; the camera may sit on another 
 
 ```bash
 git clone https://github.com/ssalentin/kritzel.git && cd kritzel
-./kritzel setup     # checks Python 3, Node 22.13+, ffmpeg, ImageMagick and a logged-in Claude Code
+./kritzel setup     # checks Python 3, Node 22.13+, ffmpeg, ImageMagick and an OpenRouter key
 ./kritzel start     # viewer + capture + generate; opens http://127.0.0.1:8765/viewer/
 ```
 
-`setup` says how to fix anything missing. For Claude Code it is a one-time `claude auth
-login` with your Claude account; no API key is needed. Then click **📷 Kamera** in the
+`setup` says how to fix anything missing. Drawings are read through OpenRouter: create a key at
+https://openrouter.ai/keys and export it as `OPENROUTER_API_KEY` (put the export in your shell
+profile; the key is never written to disk or logged). Then click **📷 Kamera** in the
 viewer, choose the camera, and start drawing.
 
 If the camera is plugged into another computer (on the same Tailscale network), run this
@@ -213,7 +214,8 @@ answer each other, about what is in the book right now (the newest drawing, the 
 someone holds, night, a lamp, a cloud) and how the two get along, ending in something they do
 together (stroll, dance, tag, go and look). They face each other and take turns; nobody next to
 them talks over it. Authored templates in German and English are always there; on top,
-`generate/dialogues.mjs` asks a small model (`claude-haiku-5-5`) for ~12 dialogues for the current
+`generate/dialogues.mjs` asks a small model (`KRITZEL_DIALOGUE_MODEL`, the generation model by
+default) for ~12 dialogues for the current
 cast after new things arrive and writes them to `viewer/things/dialogues.json`. Every generated
 line passes a child-safe filter before it is written and again before it is played. That filter (a
 short German and an English denylist, length and shape) plus the system prompt is the whole
@@ -269,8 +271,12 @@ shows it in the same place; things already standing never move.
 ## Generation
 
 `generate/` turns each settled frame from the capture stage into modules in
-`viewer/things/`. It runs headless Claude Code (`claude -p`) on this machine's existing
-Claude Code login, so it needs no API key (`--bare` can't be used: it ignores that login).
+`viewer/things/`. It sends the frame and the module contract to OpenRouter
+(`POST https://openrouter.ai/api/v1/chat/completions`) with `OPENROUTER_API_KEY`; no Claude
+login and no `pi` binary are needed. `KRITZEL_PROVIDER=openrouter|claude|pi` picks the backend
+(default `openrouter`), `KRITZEL_MODEL` overrides the model (default
+`deepseek/deepseek-v4.1-flash`), and the Claude (`claude -p`) and pi paths stay available for
+comparison. The watcher refuses to start when OpenRouter is selected and the key is unset.
 
 ```bash
 cd generate && npm install
@@ -283,7 +289,7 @@ npm test                                        # the offline checks
 For each frame:
 
 1. **One call.** The frame is cropped to capture's `changed_box` (plus a margin) and scaled
-   to at most 768 px (1568 px for a whole sheet without a trusted box). One `claude -p` call (default `claude-sonnet-5-5`, `KRITZEL_MODEL` to
+   to at most 768 px (1568 px for a whole sheet without a trusted box). One OpenRouter call (default `deepseek/deepseek-v4.1-flash`, `KRITZEL_MODEL` to
    change) gets the crop inline, all tools off, and a short system prompt with the contract
    and one example (`generate/examples/`). The existing modules' code is in the request. The
    reply is `NOTHING`, or one section per change: `### NEW` (a module), `### UPDATE <file>`
@@ -302,7 +308,8 @@ For each frame:
    `node --permission` (no file writes, no child processes), killed after 10 s. The result
    must be visible, on the pages, with valid actors (unique id; non-person rigs bring their
    own `animate`), obstacles, spots, and an `update` that survives 30 simulated seconds. A
-   module that fails gets one fix attempt on the same model and one on `claude-opus-5-5`.
+   module that fails gets one fix attempt on the same model and one on the fallback model
+   (`KRITZEL_FALLBACK_MODEL`; the same model by default on OpenRouter).
 3. **Write.** Each passing module is written atomically to `things/`. `--render` then
    screenshots it in the real viewer (headless Chromium), off the critical path.
 

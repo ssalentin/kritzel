@@ -6,7 +6,7 @@
 //
 // Per settled frame (format agreed with pipeline-capture: <ts>.jpg renamed in after its <ts>.json
 // sidecar { previous, changed_box, reason, ... }):
-//   crop to changed_box + margin, downscale → ONE claude -p call (no tools, image inline) that
+//   crop to changed_box + margin, downscale → ONE model call (OpenRouter by default; image inline) that
 //   answers NOTHING, UNCLEAR: …, or the module → static + real build() checks (< 1 s) → atomic
 //   write to things/. A failed check gets one retry, then one try on the fallback model.
 //   Each module is checked and written as soon as it is complete in the streamed reply; on a new
@@ -19,8 +19,8 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { oneShot, MODEL, FALLBACK_MODEL, PI_FALLBACK } from './claude.mjs';
-import { isPiModel, prewarm } from './pi.mjs';
+import { oneShot, MODEL, FALLBACK_MODEL, PI_FALLBACK, PROVIDER, providerProblem } from './claude.mjs';
+import { prewarm } from './pi.mjs';
 import { live } from './children.mjs';
 import { staticCheck, buildCheck, metaOf } from './check.mjs';
 import { SYSTEM, userText, fixText, DETECT_SYSTEM, detectText, oneOfText, DRAFT_NOTE } from './prompts.mjs';
@@ -133,14 +133,14 @@ const FIX_SLOTS = 2, fixSlot = slots(FIX_SLOTS);
 // builds of a listed sheet: through pi (DeepSeek) all at once is the point; on the Claude plan as many as the
 // old main call + helpers (4)
 // Two stages (Sebastian, 15:55: DeepSeek is fast but its models look much worse): with KRITZEL_DRAFT_MODEL set, a
-// fast draft by that model is written first, as one stage did; then the final model (KRITZEL_MODEL, Sonnet) builds
+// fast draft by that model is written first, as one stage did; then the final model (KRITZEL_MODEL) builds
 // the same drawing from the same image and replaces the draft in its file (same name, actor ids, paper place), at
 // most FINAL_SLOTS at once, in the background. Unset: one stage, as before.
 export const DRAFT_MODEL = process.env.KRITZEL_DRAFT_MODEL || null;
 const BUILD = DRAFT_MODEL || MODEL;                    // what lists and builds first
 const FINAL_SLOTS = +process.env.KRITZEL_FINAL_SLOTS || 4, finalSlot = slots(FINAL_SLOTS);
 const FINAL_RETRY_MS = (+process.env.KRITZEL_FINAL_RETRY_S || 180) * 1000;
-const BUILD_SLOTS = +process.env.KRITZEL_BUILD_SLOTS || (isPiModel(BUILD) ? 8 : 4), buildSlot = slots(BUILD_SLOTS);
+const BUILD_SLOTS = +process.env.KRITZEL_BUILD_SLOTS || (PROVIDER === 'pi' ? 8 : 4), buildSlot = slots(BUILD_SLOTS);
 const onlyHolds = problems => problems.length > 0 && problems.every(p => /^(holds|heldBy) names actor/.test(p));
 
 // deferHolds: when the only problem is a held creature not written yet, say so at once instead of
@@ -974,9 +974,9 @@ async function watch(dir, opts) {
   const frames = list();
   let last = frames.findLast(done) || null;
   if (!last && !readdirSync(opts.reportsDir).some(f => f.endsWith('.json'))) last = frames.at(-1) || null;
-  log(`watching ${dir} → ${opts.thingsDir} (${DRAFT_MODEL ? `draft ${DRAFT_MODEL}, final ` : 'model '}${MODEL}${isPiModel(BUILD) ? ` (${BUILD} via pi, ${PI_FALLBACK} when pi fails)` : ''}, fallback ${FALLBACK_MODEL}); handled up to ${last || '(nothing)'}`);
-  if (isPiModel(BUILD)) prewarm(BUILD, SYSTEM, 6);            // warm for the first frame: a cold pi costs ~1.3 s, ~140 MB each
-  if (isPiModel(DETECT_MODEL)) prewarm(DETECT_MODEL, DETECT_SYSTEM, 1);
+  log(`watching ${dir} → ${opts.thingsDir} (${DRAFT_MODEL ? `draft ${DRAFT_MODEL}, final ` : 'model '}${MODEL} via ${PROVIDER}${PROVIDER === 'pi' ? ` (${PI_FALLBACK} when pi fails)` : ''}, fallback ${FALLBACK_MODEL}); handled up to ${last || '(nothing)'}`);
+  if (PROVIDER === 'pi') prewarm(BUILD, SYSTEM, 6);            // warm for the first frame: a cold pi costs ~1.3 s, ~140 MB each
+  if (PROVIDER === 'pi') prewarm(DETECT_MODEL, DETECT_SYSTEM, 1);
   loadPoolCalls(opts);
   if (pool.calls.length) log(`dialogues: ${pool.calls.length} calls in the last hour before this start`);
   const stale = await staleReason(opts.thingsDir).catch(() => null);
@@ -1087,6 +1087,9 @@ async function watch(dir, opts) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  // fail loudly at startup, before frames pile up under a provider that cannot answer
+  const problem = providerProblem();
+  if (problem) { console.error(problem); process.exit(1); }
   // stop at once on SIGTERM / Ctrl-C: kill running calls and checks (a headless render's browser is
   // closed by playwright on exit). Files are only ever written as .tmp + rename, so nothing is half-written.
   for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => {

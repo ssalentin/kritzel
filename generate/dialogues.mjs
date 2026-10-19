@@ -10,13 +10,13 @@
 import { readFileSync, writeFileSync, renameSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { oneShot } from './claude.mjs';
+import { oneShot, PROVIDER, MODEL } from './claude.mjs';
 import { safeDialogue, safeLine } from '../viewer/dialogues.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // the cheap fast model through pi (as live generation), Haiku when pi fails
-export const POOL_MODEL = process.env.KRITZEL_DIALOGUE_MODEL || 'deepseek/deepseek-flash';
-export const POOL_FALLBACK = process.env.KRITZEL_DIALOGUE_FALLBACK || 'claude-haiku-5-5';
+export const POOL_MODEL = process.env.KRITZEL_DIALOGUE_MODEL || (PROVIDER === 'openrouter' ? MODEL : 'deepseek/deepseek-flash');
+export const POOL_FALLBACK = process.env.KRITZEL_DIALOGUE_FALLBACK || (PROVIDER === 'openrouter' ? POOL_MODEL : 'claude-haiku-5-5');
 // the most dialogues kept in the pool: many pairs meet, and each dialogue plays once per page load
 const POOL_MAX = 80;
 // dialogues per pair in the pool: 36 over 10 pairs ran out within minutes and the sim fell back to its templates

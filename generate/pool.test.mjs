@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { poolIsStale } from './generate.mjs';
+process.env.KRITZEL_PROVIDER = 'claude';
+const { poolIsStale } = await import('./generate.mjs');
 
 const actor = (id, name) => `export const meta = { name: '${name}', drawing: 'x' };\nexport function build(ctx) { return { actors: [{ id: '${id}', name: '${name}', rig: {} }] }; }\n`;
 

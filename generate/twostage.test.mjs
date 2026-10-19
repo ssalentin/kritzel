@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 process.env.PATH = join(import.meta.dirname, 'test-bin') + ':' + process.env.PATH;
+process.env.KRITZEL_PROVIDER = 'claude';
 Object.assign(process.env, { KRITZEL_DRAFT_MODEL: 'claude-haiku-5-5', KRITZEL_MODEL: 'claude-sonnet-5-5', KRITZEL_FINAL_RETRY_S: '0.3', KRITZEL_THINGS_LINGER_MS: '100' });
 const { processFrame } = await import('./generate.mjs');
 const example = readFileSync(join(import.meta.dirname, 'examples', 'schnecke.js'), 'utf8');
