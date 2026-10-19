@@ -1,7 +1,6 @@
-// One headless model call. KRITZEL_PROVIDER picks the backend: OpenRouter (the default; one
-// OPENROUTER_API_KEY, see openrouter.mjs), `claude -p` on this host's Claude Code login, or a warm pi
-// process (see pi.mjs). The claude and pi paths stay working behind the switch until QA has passed the
-// OpenRouter path.
+// One headless model call. KRITZEL_PROVIDER picks the backend: `claude -p` on this host's Claude Code
+// login (the default), OpenRouter (opt-in; one OPENROUTER_API_KEY, see openrouter.mjs), or a warm pi
+// process (see pi.mjs).
 // One shot, no agent loop: the image goes inline (stream-json input), all tools are off and
 // the default system prompt is replaced. (--bare would be shorter but ignores the OAuth login.)
 // A camera frame is input from strangers; with no tools the reply is just text we check.
@@ -12,7 +11,7 @@ import { piCall } from './pi.mjs';
 import { openrouterCall, hasKey } from './openrouter.mjs';
 
 export const PROVIDERS = ['openrouter', 'claude', 'pi'];
-export const PROVIDER = String(process.env.KRITZEL_PROVIDER || 'openrouter').toLowerCase();
+export const PROVIDER = String(process.env.KRITZEL_PROVIDER || 'claude').toLowerCase();
 if (!PROVIDERS.includes(PROVIDER)) throw new Error(`KRITZEL_PROVIDER must be one of ${PROVIDERS.join(', ')} (got "${process.env.KRITZEL_PROVIDER}")`);
 const MODEL_DEFAULTS = { openrouter: 'deepseek/deepseek-v4.1-flash', claude: 'claude-sonnet-5-5', pi: 'deepseek/deepseek-flash' };
 export const MODEL = process.env.KRITZEL_MODEL || MODEL_DEFAULTS[PROVIDER];

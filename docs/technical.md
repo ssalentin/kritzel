@@ -57,13 +57,13 @@ On a Linux computer (it turns drawings into code; the camera may sit on another 
 
 ```bash
 git clone https://github.com/ssalentin/kritzel.git && cd kritzel
-./kritzel setup     # checks Python 3, Node 22.13+, ffmpeg, ImageMagick and an OpenRouter key
+./kritzel setup     # checks Python 3, Node 22.13+, ffmpeg, ImageMagick and the active model provider
 ./kritzel start     # viewer + capture + generate; opens http://127.0.0.1:8765/viewer/
 ```
 
-`setup` says how to fix anything missing. Drawings are read through OpenRouter: create a key at
-https://openrouter.ai/keys and export it as `OPENROUTER_API_KEY` (put the export in your shell
-profile; the key is never written to disk or logged). Then click **📷 Kamera** in the
+`setup` says how to fix anything missing. The default is a logged-in Claude Code (`claude auth
+login`). OpenRouter is opt-in: `KRITZEL_PROVIDER=openrouter` plus an `OPENROUTER_API_KEY` from
+https://openrouter.ai/keys, kept in your shell profile and never written to disk or logged. Then click **📷 Kamera** in the
 viewer, choose the camera, and start drawing.
 
 If the camera is plugged into another computer (on the same Tailscale network), run this
@@ -295,12 +295,12 @@ shows it in the same place; things already standing never move.
 ## Generation
 
 `generate/` turns each settled frame from the capture stage into modules in
-`viewer/things/`. It sends the frame and the module contract to OpenRouter
-(`POST https://openrouter.ai/api/v1/chat/completions`) with `OPENROUTER_API_KEY`; no Claude
-login and no `pi` binary are needed. `KRITZEL_PROVIDER=openrouter|claude|pi` picks the backend
-(default `openrouter`), `KRITZEL_MODEL` overrides the model (default
-`deepseek/deepseek-v4.1-flash`), and the Claude (`claude -p`) and pi paths stay available for
-comparison. The watcher refuses to start when OpenRouter is selected and the key is unset.
+`viewer/things/`. By default it runs headless Claude Code (`claude -p`) on this machine's
+existing login, with `claude-sonnet-5-5` and no API key. `KRITZEL_PROVIDER=openrouter|claude|pi`
+picks the backend (default `claude`); the OpenRouter path sends the frame and the module contract
+to `POST https://openrouter.ai/api/v1/chat/completions` with `OPENROUTER_API_KEY` and defaults to
+`deepseek/deepseek-v4.1-flash`. `KRITZEL_MODEL` overrides the model. The watcher refuses to start
+when OpenRouter is selected and the key is unset.
 
 ```bash
 cd generate && npm install
@@ -313,7 +313,7 @@ npm test                                        # the offline checks
 For each frame:
 
 1. **One call.** The frame is cropped to capture's `changed_box` (plus a margin) and scaled
-   to at most 768 px (1568 px for a whole sheet without a trusted box). One OpenRouter call (default `deepseek/deepseek-v4.1-flash`, `KRITZEL_MODEL` to
+   to at most 768 px (1568 px for a whole sheet without a trusted box). One model call (Claude `claude-sonnet-5-5` by default; on OpenRouter `deepseek/deepseek-v4.1-flash`; `KRITZEL_MODEL` to
    change) gets the crop inline, all tools off, and a short system prompt with the contract
    and one example (`generate/examples/`). The existing modules' code is in the request. The
    reply is `NOTHING`, or one section per change: `### NEW` (a module), `### UPDATE <file>`

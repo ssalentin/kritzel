@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 440" role="img" aria-labelledby="t d">
   <title id="t">How a drawing comes alive in Kritzel</title>
-  <desc id="d">Five steps from left to right: a child draws on paper; a camera above the paper watches; Kritzel notices the drawing is finished and lights a glow in the book after about 1.5 seconds; DeepSeek, through OpenRouter, reads the drawing and writes a small 3D program for it; about 15 seconds after the pen lifts, the creature pops up out of the pop-up book and starts living there.</desc>
+  <desc id="d">Five steps from left to right: a child draws on paper; a camera above the paper watches; Kritzel notices the drawing is finished and lights a glow in the book after about 1.5 seconds; Claude reads the drawing and writes a small 3D program for it; about 15 seconds after the pen lifts, the creature pops up out of the pop-up book and starts living there.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#fbf6ec"/>
@@ -67,7 +67,7 @@
       <text y="175" font-size="18" fill="#5a5560">it will stand · ≈ 1.5 s</text>
     </g>
 
-    <!-- 4 · DeepSeek reads and builds -->
+    <!-- 4 · Claude reads and builds -->
     <g transform="translate(1050 175)">
       <rect x="-66" y="-66" width="132" height="104" rx="14" fill="#ffffff" stroke="#10202e" stroke-width="5"/>
       <path d="M-66 -40 h132" stroke="#10202e" stroke-width="4"/>
@@ -77,7 +77,7 @@
         <path d="M-36 16 h40" stroke="#d97757"/><path d="M-46 34 h60" stroke="#8a6a9c" opacity="0"/>
       </g>
       <path d="M44 -10 l12 0 M50 -16 l0 12" stroke="#10202e" stroke-width="3" stroke-linecap="round"/>
-      <text y="118" font-size="24">4 · DeepSeek builds it</text>
+      <text y="118" font-size="24">4 · Claude builds it</text>
       <text y="146" font-size="18" fill="#5a5560">reads the drawing, writes a</text>
       <text y="175" font-size="18" fill="#5a5560">small 3D program, checked safe</text>
     </g>
