@@ -333,7 +333,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   // and the fallback. Off unless the server says KRITZEL_THINK=1 and a key is configured.
   const THINK_EVERY = 6, THINK_USE_S = 8, MEET_USE_S = 60;
   let thinkOn = false, thinkProbed = false, thinkAt = -Infinity, thinkBusy = false, thinkCursor = 0, thinkRound = 0;
-  let fps = 0, frames = 0, fpsAt = typeof performance === 'undefined' ? 0 : performance.now();
+  let fps = 0, frames = 0, updates = 0, fpsAt = typeof performance === 'undefined' ? 0 : performance.now();
   const thinkStats = { requests: 0, answers: 0, goalsApplied: 0, failed: 0, latency: [], cost: 0 };
   const moodWord = a => a.fear > 0.4 ? 'scared' : a.energy < 0.3 ? 'tired' : a.hunger > 0.6 ? 'hungry' : a.social < 0.3 ? 'lonely' : 'happy';
   const needsOf = a => [['tired', 1 - a.energy], ['hungry', a.hunger], ['lonely', 1 - a.social], ['scared', a.fear]]
@@ -355,7 +355,8 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     };
   }
   function askDirector() {
-    const pool = actors.filter(a => !a.hidden);
+    // flyers, swimmers and climbers move off the grid (moves.js) and never run decide(): don't ask for them
+    const pool = actors.filter(a => !a.hidden && !MV?.special(a, envNow));
     if (!pool.length) return;
     const n = Math.min(5, Math.max(3, Math.round(pool.length / 2))), picked = [];
     for (let i = 0; i < n && i < pool.length; i++) picked.push(pool[(thinkCursor + i) % pool.length]);
@@ -596,9 +597,12 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
       case 'visit': case 'fetch': case 'bring': X.visit?.(a, g, api); break;
       case 'pick': case 'carry': case 'give': X.portable?.(a, g, api); break;
       case 'approach':
-        if (g.target.hidden) { a.goal = null; break; }
+        if (g.target.hidden) { if (a.meet?.with === g.target.id) a.meet = null; a.goal = null; break; }
         if (near(a, g.target, 0.9)) { interact(a, g.target); }   // wider margin: two bodies waiting on each other would deadlock
-        else if (!stepToward(a, g.target.cell.x, g.target.cell.y, g.target)) a.goal = null;
+        else if (!stepToward(a, g.target.cell.x, g.target.cell.y, g.target)) {
+          if (a.meet?.with === g.target.id) a.meet = null;        // the way is blocked: drop the meeting's intent
+          a.goal = null;
+        }
         break;
       case 'chase': {
         const prey = g.target;
@@ -753,7 +757,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     addActor, removeActor,
     actors: () => actors, byId: () => byId, spots: () => spots, weather: () => weatherNow, trace: () => picks.slice(), solved: () => X.solvedQuests?.() ?? [],   // read-only views for the UI and tests
     // the director's numbers for a measured run (latency in ms, cost in dollars, fps of the whole page)
-    think: () => ({ on: thinkOn, ...thinkStats, latency: thinkStats.latency.slice(), cost: +thinkStats.cost.toFixed(8),
+    think: () => ({ on: thinkOn, updates, ...thinkStats, latency: thinkStats.latency.slice(), cost: +thinkStats.cost.toFixed(8),
       median: thinkStats.latency.length ? [...thinkStats.latency].sort((p, q) => p - q)[Math.floor(thinkStats.latency.length / 2)] : null, fps }),
     // obstacles/spots changed (a drawn thing was added, changed or removed)
     setWorld({ trees: tr, spots: sp, feet: ft = feet }) {
@@ -799,6 +803,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     update(t, dt, { cover = 0, birdsLow = false, night = 0, lamps = [], weather = {}, perches = [], water = [] } = {}) {
       envNow = { perches, water, feet, actors }; weatherNow = weather;     // climbers keep off things and figures (moves.js)
       now = t; nightNow = night; lampsNow = lamps;
+      updates++;
       // the director: ask every ~6 s while the page is visible, and only when the server has it switched on
       frames++;
       if (performance.now() - fpsAt >= 2000) { fps = Math.round(frames * 1000 / (performance.now() - fpsAt)); frames = 0; fpsAt = performance.now(); }
