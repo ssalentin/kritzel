@@ -118,6 +118,22 @@ class TextThing(unittest.TestCase):
         req = json.loads((self.root / "frames" / "requests" / f"{out['id']}.json").read_text())
         self.assertEqual(req["text"], "ein Haus")
 
+    def test_the_director_route_survives_next_to_text_thing(self):
+        """The merge with camera-select: both POST routes and the shared same-site guard are in the real server."""
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/api/think", timeout=5) as r:
+            self.assertEqual(r.status, 200)
+            self.assertIn("on", json.load(r))
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/think", data=b"{}", method="POST",
+                                     headers={"Content-Type": "application/json", "X-Kritzel": "1"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            self.assertEqual(r.status, 200)
+            self.assertEqual(json.load(r), {})
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/think", data=b"{}", method="POST",
+                                     headers={"Content-Type": "application/json"})
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(req, timeout=5)
+        self.assertEqual(e.exception.code, 403)
+
 
 if __name__ == "__main__":
     unittest.main()

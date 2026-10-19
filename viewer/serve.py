@@ -14,6 +14,8 @@ Camera selection (see scripts/camera_server.py for the remote side):
   POST /api/text-thing          → {text} → frames/requests/<id>.json, for the generate watcher to build
   GET /api/stamps               → mtime:size of every engine file and every thing, so the viewer's poll is one request
   PUT /api/placement            → {file, d: [dx, dz] | null}: where the viewer moved a new thing (viewer/things/placement.json)
+  GET  /api/think               → {on, model}: is the Jev director switched on (KRITZEL_THINK=1 and a key)?
+  POST /api/think               → {scene, actors} → {goals, usage, ms}: a local director; {} when it is off or fails
 
 HOST / PORT env vars change the listen address (default 127.0.0.1:8765).
 """
@@ -22,6 +24,7 @@ import functools
 import hashlib
 import http.server
 import json
+import math
 import os
 import re
 import subprocess
@@ -94,6 +97,183 @@ MODE_FILE = ROOT / "viewer" / "things" / "mode.json"     # {"mode": "add" | "swi
 NEWWORLD_LOCK, NEWWORLD_GAP_S = threading.Lock(), 10
 TEXT_LOCK = threading.Lock()          # request ids are allocated and written under one lock: no same-second race
 last_newworld = [0.0]
+
+# ---------- the Jev director: a slow, server-side opinion on what a figure should do next ----------
+# The sim still decides every goal locally at 60 fps. Every few seconds it asks this proxy for one
+# Choice per figure; a failed, slow or switched-off answer simply leaves the local decision in charge.
+THINK_URL = "https://openrouter.ai/api/alpha/decisions"   # overridable for tests (KRITZEL_THINK_URL)
+THINK_MODEL = "typesafe/jev-1.14"
+THINK_TIMEOUT_S = 2.0
+THINK_CACHE_S = 3.0
+THINK_MAX_ACTORS = 8
+THINK_LOCK = threading.Lock()                 # at most one upstream request in flight
+THINK_CACHE = {}                              # payload hash → (at, answer), at most THINK_CACHE_S old
+THINK_GOALS = {
+    "explore": "Wander somewhere else on the pages, curious about the book",
+    "greet": "Go over to another figure and say hello",
+    "chat": "Go over to another figure for a chat",
+    "play": "Go over to another figure to play",
+    "eat": "Find something to eat (a drawn food spot, an egg)",
+    "rest": "Sit down or sleep for a while",
+    "hide": "Get out of the way: into a drawn door if there is one, otherwise away from the others",
+    "follow": "Walk after a figure it likes or follows",
+    "inspect": "Go and look at a drawn thing nearby",
+    "dance": "Dance, preferably with another figure",
+}
+
+
+def think_enabled():
+    """Off unless asked for and a key is present: the local sim is the default."""
+    on = os.environ.get("KRITZEL_THINK", "0").strip().lower()
+    return on not in ("", "0", "false", "off", "no") and bool(os.environ.get("OPENROUTER_API_KEY", "").strip())
+
+
+def think_config():
+    return {"on": think_enabled(), "model": os.environ.get("KRITZEL_THINK_MODEL", THINK_MODEL)}
+
+
+def _text(x, n=80):
+    return str(x)[:n] if isinstance(x, (str, int, float)) else ""
+
+
+def _distance(x):
+    try:
+        d = float(x)
+    except (TypeError, ValueError):
+        return None
+    return round(d, 1) if math.isfinite(d) and d >= 0 else None
+
+
+def _cost(x):
+    try:
+        c = float(x)
+    except (TypeError, ValueError):
+        return None
+    return round(c, 8) if math.isfinite(c) and c >= 0 else None
+
+
+def clean_think(body):
+    """The compact state the sim sends, checked and bounded before it reaches an external service."""
+    if not isinstance(body, dict) or not isinstance(body.get("actors"), list):
+        return None
+    actors = []
+    for a in body["actors"][:THINK_MAX_ACTORS]:
+        if not isinstance(a, dict):
+            continue
+        aid = _text(a.get("id"), 60)
+        if not aid:
+            continue
+        nearby = []
+        for t in (a.get("nearby") if isinstance(a.get("nearby"), list) else [])[:3]:
+            if not isinstance(t, dict) or not _text(t.get("name"), 60):
+                continue
+            d = _distance(t.get("distance"))
+            if d is None:
+                continue
+            nearby.append({"name": _text(t.get("name"), 60), "kind": _text(t.get("kind"), 20), "distance": d})
+        actors.append({
+            "id": aid,
+            "name": _text(a.get("name"), 40) or aid,
+            "kind": _text(a.get("kind"), 20) or "figure",
+            "mood": _text(a.get("mood"), 20) or "calm",
+            "needs": [_text(n, 30) for n in (a.get("needs") if isinstance(a.get("needs"), list) else [])[:3] if _text(n)],
+            "nearby": nearby,
+        })
+    if not actors:
+        return None
+    scene = body.get("scene") if isinstance(body.get("scene"), dict) else {}
+    night = scene.get("night")
+    try:
+        night = min(1.0, max(0.0, float(night)))
+    except (TypeError, ValueError):
+        night = 0.0
+    weather = [_text(w, 20) for w in (scene.get("weather") if isinstance(scene.get("weather"), list) else [])[:6] if _text(w)]
+    return {"scene": {"night": round(night, 2), "weather": weather}, "actors": actors}
+
+
+def think_payload(state):
+    """One Choice per figure, all evaluated in parallel in one request (TypeSafe's documented pattern)."""
+    questions = {}
+    for a in state["actors"]:
+        needs = ", ".join(a["needs"]) or "nothing pressing"
+        near = ", ".join(f"{t['name']} ({t['distance']} m away)" for t in a["nearby"]) or "nothing close"
+        questions[a["id"]] = {
+            "type": "choice",
+            "instructions": {
+                "figure": f"{a['name']} ({a['kind']}), mood: {a['mood']}, needs: {needs}. Nearby: {near}.",
+                "question": f"What should {a['name']} do next in this book world? Pick the one action that fits best.",
+            },
+            "criteria": THINK_GOALS,
+        }
+    return {"model": os.environ.get("KRITZEL_THINK_MODEL", THINK_MODEL), "state": state, "questions": questions}
+
+
+def think_answers(upstream, wanted):
+    """Jev's answers → {actor id: {goal, confidence}}; anything unexpected is left out."""
+    goals = {}
+    answers = upstream.get("answers") if isinstance(upstream, dict) else None
+    if not isinstance(answers, dict):
+        return goals
+    for aid, ans in answers.items():
+        aid = _text(aid, 60)
+        choice = ans.get("choice") if isinstance(ans, dict) else None
+        if aid not in wanted or not isinstance(choice, str) or choice not in THINK_GOALS:
+            continue
+        try:
+            confidence = round(float(ans.get("confidence", 0)), 3)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        goals[aid] = {"goal": choice, "confidence": confidence}
+    return goals
+
+
+def think(body):
+    """The proxy. Anything that goes wrong answers {} — the sim keeps its own local choice."""
+    if not think_enabled():
+        return {}
+    state = clean_think(body)
+    if not state:
+        return {}
+    payload = think_payload(state)
+    key = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    now = time.time()
+    hit = THINK_CACHE.get(key)
+    if hit and now - hit[0] < THINK_CACHE_S:
+        return hit[1]
+    if not THINK_LOCK.acquire(blocking=False):
+        return {}                                  # one request at a time; a second viewer keeps its local pick
+    try:
+        started = time.time()
+        req = urllib.request.Request(
+            os.environ.get("KRITZEL_THINK_URL", THINK_URL),
+            data=json.dumps(payload).encode(),
+            method="POST",
+            headers={"Authorization": "Bearer " + os.environ.get("OPENROUTER_API_KEY", ""),
+                     "Content-Type": "application/json",
+                     "X-Title": "Kritzel director"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=THINK_TIMEOUT_S) as r:
+                upstream = json.load(r)
+        except (OSError, ValueError, urllib.error.HTTPError):
+            return {}
+        goals = think_answers(upstream, {a["id"] for a in state["actors"]})
+        if not goals:
+            return {}
+        usage = upstream.get("usage") if isinstance(upstream.get("usage"), dict) else {}
+        cost = _cost(usage.get("cost"))
+        out = {"goals": goals, "usage": {"cost": cost, "input_tokens": usage.get("input_tokens"),
+                                         "output_tokens": usage.get("output_tokens")},
+               "ms": round((time.time() - started) * 1000)}
+        if len(THINK_CACHE) >= 8:
+            for k in [k for k, v in THINK_CACHE.items() if time.time() - v[0] >= THINK_CACHE_S]:
+                THINK_CACHE.pop(k, None)
+            if len(THINK_CACHE) >= 8:
+                THINK_CACHE.pop(next(iter(THINK_CACHE)))
+        THINK_CACHE[key] = (time.time(), out)
+        return out
+    finally:
+        THINK_LOCK.release()
 
 
 def read_mode():
@@ -237,6 +417,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                               "things": stamps(viewer / "things", "*.js")})
         if path == "/api/mode":
             return self.json({"mode": read_mode()})
+        if path == "/api/think":
+            return self.json(think_config())
         if path == "/api/status":
             return self.json(self.status())
         if path == "/api/status/cutout.png":
@@ -277,6 +459,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urllib.parse.urlsplit(self.path).path
+        if path == "/api/think":
+            # same header as /api/newworld: a page on another site must not spend credits by a plain POST
+            if self.headers.get("X-Kritzel") != "1":
+                return self.json({"error": "forbidden"}, 403)
+            try:
+                n = int(self.headers.get("Content-Length", ""))
+                assert 0 <= n <= 16384
+                body = json.loads(self.rfile.read(n))
+            except (ValueError, AssertionError, TypeError):
+                return self.json({})
+            try:
+                return self.json(think(body))
+            except Exception:                    # the contract is {} on any failure, never a dropped request
+                return self.json({})
         if path not in ("/api/text-thing", "/api/newworld"):
             return self.json({"error": "not found"}, 404)
         # only the viewer itself: a page on another site can send a plain POST without asking first,
@@ -483,7 +679,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         pass
 
 
-http.server.ThreadingHTTPServer(
-    (os.environ.get("HOST", "127.0.0.1"), int(os.environ.get("PORT", "8765"))),
-    functools.partial(Handler, directory=str(ROOT)),
-).serve_forever()
+def main():
+    http.server.ThreadingHTTPServer(
+        (os.environ.get("HOST", "127.0.0.1"), int(os.environ.get("PORT", "8765"))),
+        functools.partial(Handler, directory=str(ROOT)),
+    ).serve_forever()
+
+
+if __name__ == "__main__":
+    main()

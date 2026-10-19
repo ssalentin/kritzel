@@ -108,6 +108,8 @@ test('the watcher picks up a request, and a second look at the same id builds it
   const log = join(dir, 'prompts.jsonl');
   writeFileSync(join(dir, 'reply.txt'), `### NEW\n${lantern}`);
   const settled = join(dir, 'settled'); mkdirSync(settled);
+  // the watcher-level collision: a frame report with the same timestamp must not make takeRequests skip the text id
+  writeFileSync(join(dir, 'reports', '20261019-184015.json'), JSON.stringify({ frame: '20261019-184015.jpg', written: [] }));
   const child = spawn(process.execPath, [join(import.meta.dirname, 'generate.mjs'), '--watch', settled,
     '--requests', join(dir, 'requests'), '--things', join(dir, 'things'), '--reports', join(dir, 'reports')], {
     env: { ...process.env, FAKE_CLAUDE_REPLY: join(dir, 'reply.txt'), FAKE_CLAUDE_LOG: log }, stdio: ['ignore', 'pipe', 'pipe'],

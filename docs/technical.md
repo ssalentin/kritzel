@@ -167,6 +167,17 @@ also in `/api/status`), and the status pill shows it briefly when it changes.
 runs `scripts/newworld.sh` on the server (`POST /api/newworld`, at most every 10 s): the world is
 archived to `worlds/`, never deleted, and the page starts empty.
 
+### An optional director for the figures
+
+The sim picks every goal locally. If the server is started with `KRITZEL_THINK=1` and an
+`OPENROUTER_API_KEY` in its environment, the viewer also asks `POST /api/think` every six seconds
+for a second opinion on 3–5 figures. `serve.py` sends one TypeSafe Choice per figure to Jev
+(`typesafe/jev-1.14` through OpenRouter, 2 s timeout, one request at a time, 3 s cache) and the
+key never reaches the browser. An answer is a preference for that figure's next goal, valid for
+eight seconds; the local utility pick stays the default, and a slow, failed or switched-off
+director leaves it in charge. `GET /api/think` says whether the director is on. Off unless both
+are set: `KRITZEL_THINK=0` (or no key) behaves exactly like before and makes no director requests.
+
 ### Starting a new sheet
 
 ```bash

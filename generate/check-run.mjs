@@ -47,6 +47,7 @@ function inwardShare(geo) {
 // throws ({ error }), if anything: in the book, one rig that throws there stops every figure after it.
 async function simThrows(actor) {
   globalThis.document ??= { documentElement: {} };            // i18n.js sets the page's language
+  globalThis.location ??= { pathname: '/viewer/', search: '' };   // sim.js probes /api/think only in the live viewer
   let create;
   try { ({ create } = await import(pathToFileURL(join(VIEWER, 'sim.js')).href)); }
   catch (e) { return { skipped: e.message }; }                 // no rot-js here (npm ci in generate/): not checked
