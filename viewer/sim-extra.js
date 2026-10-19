@@ -131,6 +131,31 @@ const remember = (a, who, kind) => { a.memo = [...(a.memo || []), { who: who.id,
 // Bounded: at most CARRY_MAX carried at once, and a carrier who is gone or hidden lets it go.
 const CARRY_MAX = 3, CARRY_FOR = 25;
 const carriedBy = (spots, a) => spots().find(s => s.kind === 'portable' && s.carrier === a);
+// Would a child believe this figure can lift this thing? Jev answers once per (figure kind, thing name)
+// pair and the answer is kept for the session; while it is on its way, try it. When Jev is off or cannot
+// answer, a deterministic size rule replaces it: the thing's half-width must fit in 60% of the figure's
+// measured height, and its top must stay under 1.2x that height.
+const CAN_CACHE = new Map(), CAN_PENDING = new Set();
+export function localCan(a, it) {
+  const height = a.height ?? 1.5, r = it?.r ?? 0.4, top = it?.top ?? 2 * r;
+  return r <= Math.max(0.35, 0.6 * height) && top <= 1.2 * height;
+}
+export function canCarry(a, it) {
+  const key = `${a.kind || ''}|${a.name || a.id || ''}|${it?.name || ''}`;
+  if (CAN_CACHE.has(key)) return CAN_CACHE.get(key);
+  if (!CAN_PENDING.has(key)) {
+    CAN_PENDING.add(key);
+    const actor = { name: a.name || a.id || '', kind: a.kind || 'figure', bulk: +(a.height ?? 1.5).toFixed(2) };
+    const thing = { name: it?.name || '', bulk: +(it?.r ?? 0.4).toFixed(2), contents: '' };
+    const fallback = localCan(a, it);
+    fetch('/api/can', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Kritzel': '1' }, body: JSON.stringify({ actor, thing }) })
+      .then(r => r.json())
+      .then(j => CAN_CACHE.set(key, j && j.ok && typeof j.can === 'boolean' ? j.can : fallback))
+      .catch(() => CAN_CACHE.set(key, fallback))
+      .finally(() => CAN_PENDING.delete(key));
+  }
+  return true;                                  // optimistic while the ask is in flight; the next tick re-reads
+}
 
 export function options(a, add, { spots, cover, spotCell, things, nearest, actors, now }) {
   refreshPool();                         // the personas load from dialogues.json even before any dialogue is picked
@@ -180,6 +205,12 @@ export function options(a, add, { spots, cover, spotCell, things, nearest, actor
 export function portable(a, g, api) {
   const { now, step, say, line, nearest, R, busy, spots, actors } = api;
   const it = g.item ?? g.spot;
+  if (!it) { a.goal = null; return; }
+  if (canCarry(a, it) === false) {              // Jev or the size rule says this figure cannot lift it
+    if (it.carrier === a) { it.carrier = null; it.carryUntil = null; }
+    a.goal = null;
+    return;
+  }
   const drop = () => { if (it.carrier === a) { it.carrier = null; it.carryUntil = null; say(a, line(a, 'put'), 1.8); } a.goal = null; };
   if (g.type === 'pick') {
     if (it.carrier) { a.goal = null; return; }
