@@ -438,6 +438,7 @@ export async function build(api, prevState = null) {
     freeSpot: (x, z, r) => freeSpot(x, z, r),
     places: () => ({ perches: env.perches, water: env.water }),   // where animals land, climb and swim (for tests)
     box: file => loaded.get(file)?.box,    // a thing's group (for tests)
+    things: () => [...loaded].map(([file, e]) => ({ file, name: e.meta?.name || file.replace(/\.js$/, '') })),   // for the text field's target picker
     book: () => ({ w: GROUND.w, d: GROUND.d }),   // the book's size now (the page turn uses it: index.html has its own module instance)
     feet: () => [...loaded].map(([f, e]) => ({ file: f, foot: e.foot, obstacles: e.obstacles, pinned: !!pinned(e) })),   // for tests   // for the light that shows where a drawing will appear
     brain: () => brain,                   // for UI in index.html (e.g. click a character); sim exposes its actors

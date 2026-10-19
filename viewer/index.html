@@ -25,6 +25,7 @@
   #status[data-tone=bad] .dot { background: #d0443a; }
   #status .text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-size: 15px; }
   #status .note { color: #b3261e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-size: 14px; }
+  #status .note[data-tone=ok] { color: #2f6b46; }
   /* a message of ours (a refused request) takes the pill for its few seconds: nothing is clipped behind the old text */
   #status:has(.note:not([hidden])) .text, #status:has(.note:not([hidden])) .gen { display: none; }
   #status .gen { color: #b3261e; white-space: nowrap; }
@@ -65,15 +66,24 @@
   @media (max-width: 560px) { #bq { top: 84px; left: 12px; max-width: calc(100vw - 24px); } #bq .name { font-size: 15px; } }
   /* bottom right: a text field to add something by name, then the live camera in a picture frame (camframe.js) */
   #corner { position: fixed; right: 16px; bottom: 12px; width: min(24vw, 300px); display: flex; flex-direction: column; gap: 8px; z-index: 5; }
-  #textThing { display: flex; gap: 4px; padding: 4px; box-sizing: border-box; background: var(--panel); border-radius: 10px;
+  #textThing { display: grid; gap: 4px; width: min(24vw, 300px); align-self: flex-end; box-sizing: border-box; padding: 4px;
+    background: var(--panel); border-radius: 10px;
     box-shadow: 0 4px 12px #0003; }
+  #textThing .row { display: flex; gap: 4px; }
+  #textMode { display: flex; gap: 2px; padding: 2px; border-radius: 7px; background: #ffffff80; }
+  #textMode button { flex: 1; border: 0; border-radius: 5px; padding: 2px 5px; font: 11px/1.4 system-ui, sans-serif;
+    background: none; color: #4d5f70; cursor: pointer; }
+  #textMode button[aria-pressed=true] { background: #6aa65a; color: #fff; }
   #textThing input { flex: 1; min-width: 0; font: 12px system-ui, sans-serif; color: var(--fg); background: #ffffffb0;
     border: 0; border-radius: 7px; padding: 7px 6px; }
   #textThing input::placeholder { color: #4d5f70; opacity: 1; }
   #textThing input:focus { outline: 2px solid #6aa65a; background: #fff; }
-  #textThing button { flex: none; border: 0; border-radius: 7px; padding: 3px 7px; font: 600 17px/1.2 system-ui, sans-serif;
+  #textThing button.go { flex: none; border: 0; border-radius: 7px; padding: 3px 7px; font: 600 17px/1.2 system-ui, sans-serif;
     background: #6aa65a; color: #fff; cursor: pointer; }
-  #textThing[data-busy] button { background: #b9a87c; cursor: default; }
+  #textThing[data-busy] .go { background: #b9a87c; cursor: default; }
+  #textTarget { width: 100%; box-sizing: border-box; font: 12px system-ui, sans-serif; color: var(--fg);
+    background: #ffffffb0; border: 0; border-radius: 7px; padding: 5px 6px; }
+  #textTarget[hidden] { display: none; }
   /* the live camera in a picture frame (camframe.js): a wooden edge, the pipeline's words under it */
   #frame { position: relative; box-sizing: border-box; padding: 10px 10px 8px;   /* .min is absolute: keep it in the frame, not over the + */
     background: linear-gradient(135deg, #d8b679, #a9773c); border-radius: 6px; box-shadow: 0 8px 20px #0005, inset 0 0 0 2px #f1dca455; font: inherit; }
@@ -147,8 +157,16 @@
 <div id="bq" hidden></div>
 <div id="corner">
   <form id="textThing" autocomplete="off">
-    <input id="textThingIn" type="text" maxlength="80" enterkeyhint="send">
-    <button type="submit" aria-label="Etwas hinzufügen">+</button>
+    <div id="textMode" role="group" aria-label="Neu oder Korrektur">
+      <button type="button" data-mode="new" aria-pressed="true">Neu</button>
+      <button type="button" data-mode="change" aria-pressed="false">Korrektur</button>
+      <button type="button" data-mode="action" aria-pressed="false">Aktion</button>
+    </div>
+    <div class="row">
+      <input id="textThingIn" type="text" maxlength="80" enterkeyhint="send">
+      <button type="submit" class="go" aria-label="Etwas hinzufügen">+</button>
+    </div>
+    <select id="textTarget" hidden></select>
   </form>
   <div id="frame" data-mode="live"><div class="pic"><div class="none"></div></div><div class="cap"><span class="txt"></span></div><button class="min" type="button" aria-label="Bild ein-/ausblenden"></button></div>
 </div>
@@ -428,42 +446,99 @@ langBtn.addEventListener('click', e => { e.stopPropagation(); setLang(lang() ===
 
 // text → thing: say what to add ("eine Laterne"), Enter builds it in the book (POST /api/text-thing).
 // The 200 answer's id comes back for the tests; the generate watcher does the rest.
-const textForm = document.getElementById('textThing'), textIn = document.getElementById('textThingIn'), textBtn = textForm.querySelector('button');
+const textForm = document.getElementById('textThing'), textIn = document.getElementById('textThingIn'), textBtn = textForm.querySelector('button.go'),
+  textMode = document.getElementById('textMode'), textTarget = document.getElementById('textTarget');
 const pillNote = document.querySelector('#status .note');
 let noteTimer = 0;
-function note(msg, ms = 7000) {          // a short message inside the status pill (the pill's own text is status.js's)
+function note(msg, tone = 'bad', ms = 7000) {   // a short message inside the status pill (the pill's own text is status.js's)
   clearTimeout(noteTimer);
-  pillNote.textContent = msg; pillNote.hidden = !msg;
+  pillNote.dataset.tone = tone; pillNote.textContent = msg; pillNote.hidden = !msg;
   if (msg) noteTimer = setTimeout(() => { pillNote.hidden = true; }, ms);
 }
+
+// Neu: a new thing from words. Korrektur: fix one that is already in the book. The mode is kept for the tab.
+let textKind = 'new';
+try { if (sessionStorage.getItem('kritzelTextMode') === 'change') textKind = 'change'; } catch {}
+const thingsNow = () => { try { return current?.things?.() || []; } catch { return []; } };
+function fillTargets() {
+  const list = thingsNow(), keep = textTarget.value;
+  textTarget.replaceChildren(...list.map(x => new Option(x.name, x.file)));
+  if (!list.length) textTarget.append(new Option(t('textNoThings'), ''));
+  if (list.some(x => x.file === keep)) textTarget.value = keep;
+  else if (list.length) textTarget.value = list[list.length - 1].file;   // nothing matches: the last thing that came
+}
+function showTextMode() {
+  for (const b of textMode.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.mode === textKind));
+  textTarget.hidden = textKind !== 'change';
+  if (!textForm.dataset.busy) textIn.placeholder = t(placeholderKey());
+  if (textKind === 'change') fillTargets();
+}
+const placeholderKey = () => textKind === 'change' ? 'textFixPlaceholder' : textKind === 'action' ? 'actionPlaceholder' : 'textThingPlaceholder';
+const busyKey = () => textKind === 'change' ? 'textFixBusy' : textKind === 'action' ? 'actionBusy' : 'textThingBusy';
+textMode.addEventListener('click', e => {
+  const b = e.target.closest('button[data-mode]');
+  if (!b || b.dataset.mode === textKind) return;
+  textKind = b.dataset.mode;
+  try { sessionStorage.setItem('kritzelTextMode', textKind); } catch {}
+  showTextMode();
+});
+textIn.addEventListener('input', () => {          // "Die Hexe sitzt …" picks the Hexe
+  if (textKind !== 'change') return;
+  const s = textIn.value.toLowerCase();
+  const hit = thingsNow().find(x => x.name && s.includes(String(x.name).toLowerCase()));
+  if (hit && [...textTarget.options].some(o => o.value === hit.file)) textTarget.value = hit.file;
+});
+textTarget.addEventListener('focus', () => { if (textTarget.options.length !== thingsNow().length) fillTargets(); });
 onLang(() => {
-  if (!textForm.dataset.busy) textIn.placeholder = t('textThingPlaceholder');
+  showTextMode();
   textBtn.title = t('textThingAdd'); textBtn.setAttribute('aria-label', t('textThingAdd'));
+  textMode.setAttribute('aria-label', t('textModeGroup'));
+  textTarget.setAttribute('aria-label', t('textTarget'));
+  const [n, f, a] = textMode.querySelectorAll('button');
+  n.textContent = t('textModeNew'); f.textContent = t('textModeFix'); a.textContent = t('textModeAction');
 });
 textForm.addEventListener('submit', async e => {
   e.preventDefault();
   if (textForm.dataset.busy) return;
   const text = textIn.value.trim();
   if (!text) { textIn.focus(); return; }
+  if (textKind === 'change') fillTargets();
+  const body = { text };
+  if (textKind === 'change') { body.mode = 'change'; body.target = textTarget.value; }
+  const url = textKind === 'action' ? '/api/action' : '/api/text-thing';
   const started = performance.now();
   textForm.dataset.busy = '1'; textBtn.setAttribute('aria-busy', 'true');
   textIn.value = '';                                     // the field shows the build state, then it is free again
-  textIn.placeholder = t('textThingBusy');
-  let error = '';
+  textIn.placeholder = t(busyKey());
+  let error = '', said = '', tone = 'bad';
   try {
     // X-Kritzel: 1 is the same-site guard /api/newworld uses too: no other page can send it without a preflight
-    const r = await fetch('/api/text-thing', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Kritzel': '1' }, body: JSON.stringify({ text }) });
-    if (r.status === 400) error = (await r.json().catch(() => null))?.error || t('textThingRejected');
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Kritzel': '1' }, body: JSON.stringify(body) });
+    if (r.ok && textKind === 'action') {
+      const c = (await r.json().catch(() => null))?.command || {};
+      if (c.kind === 'unknown') said = c.why || t('actionNo');       // understood, not supported: Jev's reason
+      else { said = confirmAction(c); tone = 'ok'; }
+    } else if (r.status === 400) error = (await r.json().catch(() => null))?.error || t('textThingRejected');
     else if (!r.ok) error = t('textThingNoServer');       // an old server has no such endpoint: said once, never retried
   } catch { error = t('textThingNoServer'); }
   if (error) textIn.value = text;                        // keep what was typed, so it can be changed
   const rest = 700 - (performance.now() - started);      // "wird gebaut …" stays readable for a moment
   if (rest > 0) await new Promise(ok => setTimeout(ok, rest));
   delete textForm.dataset.busy; textBtn.removeAttribute('aria-busy');
-  textIn.placeholder = t('textThingPlaceholder');
-  if (error) note(error);
+  textIn.placeholder = t(placeholderKey());
+  if (error) note(error); else if (said) note(said, tone);
   textBtn.blur(); textIn.blur();                          // the book has the keyboard again (not the field or its button)
 });
+
+// one line for what an action did: the figure's name from its module's meta, not its file
+const nameOf = f => thingsNow().find(x => x.file === f)?.name
+  || String(f || '').replace(/\.js$/, '').replace(/[-_]/g, ' ').replace(/^./, c => c.toUpperCase());
+function confirmAction(c) {
+  if (c.kind === 'goal') return c.where ? t('actionGo', nameOf(c.target), nameOf(c.where)) : t('actionJoin', nameOf(c.target));
+  if (c.kind === 'weather') return t('actionWeather', c.value);
+  if (c.kind === 'time') return c.value === 'night' ? t('actionNight') : t('actionDay');
+  return t('actionDone');
+}
 
 // world mode (kept on the server, read by the generate watcher) and 'new world' with an inline second tap
 const modeBtn = document.getElementById('modeBtn'), newBtn = document.getElementById('newBtn');
