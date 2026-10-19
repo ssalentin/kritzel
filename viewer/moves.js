@@ -84,6 +84,18 @@ export function makeMoves({ THREE, R, ground = null }) {
       const m = a.mv ||= { phase: '' }, sp = 1.6 * (a.speed || 1);
       const perches = env.perches || [];
       if (a.move === 'fly') {
+        // action mode: an instructed flight goes straight to the place the person named (the moon, a thing)
+        if (a.actionTarget) {
+          const at = a.actionTarget, y = at.y ?? 3;
+          if (now > at.until) { a.actionTarget = null; a.action = null; m.phase = ''; }   // the instruction ran out
+          else {
+            const there = toward(a, at.x, at.z, sp * 1.3, dt);
+            a.alt += (y - a.alt) * Math.min(1, dt * 2.2);
+            if (there && Math.abs(a.alt - y) < 0.12) at.arrived = true;
+            if (at.arrived) { a.pos.x = at.x; a.pos.z = at.z; a.alt = y; }   // stay at the named place until the action ends
+            return true;
+          }
+        }
         if (!m.phase) Object.assign(m, { phase: 'loop', cx: a.pos.x, cz: a.pos.z, r: 1.5 + R(), ang: 0, until: now + 6 + R() * 4 });
         if (m.phase === 'loop') {
           m.ang += dt * sp * 1.3 / m.r;

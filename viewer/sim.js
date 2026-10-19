@@ -454,6 +454,34 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
       return c ? { type: 'wander', cell: [c.x, c.y], target: t } : null;
     },
   };
+  // Action mode: a typed instruction becomes a strong goal for ~60 s through the same goal machinery
+  const whereActor = w => w && actors.find(o => o.file === w.file && !o.hidden);
+  function actionGoal(a, act) {
+    const w = act.where, o = whereActor(w) || nearestOther(a);
+    switch (act.what) {
+      case 'fly_to': case 'go_to': {
+        if (!w) return null;
+        if (Math.hypot(a.pos.x - w.x, a.pos.z - w.z) < 0.8) { a.action = null; return null; }   // arrived
+        const c = nearestCell(w.x, w.z, a);
+        return c ? { type: 'wander', cell: [c.x, c.y], target: { name: w.file } } : null;
+      }
+      case 'dance': return o ? { type: 'approach', target: o, meet: 'dance' } : null;
+      case 'sleep': return { type: 'rest', until: Math.min(act.until, now + 60) };
+      case 'hide': {
+        const door = spots.find(s => s.kind === 'door'), c = door && spotCell(door, a);
+        if (c) return { type: 'visit', spot: door, cell: c, phase: 'walk' };
+        const f = farthestCell(a);
+        return f ? { type: 'wander', cell: f } : null;
+      }
+      case 'follow': return o && Math.hypot(o.pos.x - a.pos.x, o.pos.z - a.pos.z) > 2 ? { type: 'follow', target: o } : null;
+      case 'greet': return o ? { type: 'approach', target: o, meet: 'greet' } : null;
+    }
+    return null;
+  }
+  function endAction(a) {
+    a.action = null; a.actionTarget = null;
+    if (a.landedFrom) { a.move = a.landedFrom; a.landedFrom = null; a.mv = null; }   // a flyer/swimmer/climber takes its mover back
+  }
   function decide(a) {
     a.meet = null;                       // a new decision replaces any earlier meeting intent (hidden/blocked clear too)
     const opts = [];
@@ -506,6 +534,17 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         a.meet = g.meet ? { with: g.target.id, what: g.meet, word: pref.goal, at: now } : null;
         thinkStats.goalsApplied++;
         console.info(`[think] ${a.id}: ${pref.goal} instead of ${local?.type ?? 'nothing'}`);
+        chosen = g;
+      }
+    }
+    // an action-mode instruction beats the director's slow opinion while it lasts
+    const act = a.action && now < a.action.until ? a.action : null;
+    if (a.action && !act) endAction(a);
+    if (act && local?.type !== 'flee' && local?.type !== 'chase') {
+      const g = actionGoal(a, act);
+      if (g) {
+        g.why = 'action';
+        a.meet = g.meet ? { with: g.target.id, what: g.meet, word: 'action', at: now } : null;   // the meeting runs the asked interaction
         chosen = g;
       }
     }
@@ -782,7 +821,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
 
   return {
     addActor, removeActor,
-    actors: () => actors, byId: () => byId, spots: () => spots, time: () => now,
+    actors: () => actors, byId: () => byId, spots: () => spots, things: () => thingsNow, time: () => now,
     weather: () => weatherNow, trace: () => picks.slice(), solved: () => X.solvedQuests?.() ?? [],   // read-only views for the UI and tests
     blockingFeet: () => feet.map(f => ({ x: f.x, z: f.z, hx: f.hx, hz: f.hz })),   // for tests: what the grid treats as solid
     // the director's numbers for a measured run (latency in ms, cost in dollars, fps of the whole page)
@@ -805,6 +844,37 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     // walks inside its circle and is brought in if it is outside. Actors no longer held walk free again.
     // something new appeared at (x, z): curious characters nearby go and look
     inspect(x, z) { X.inspect?.(x, z, null, api); },
+    // action mode: a typed instruction for one figure ({target: file, action, where: file|null})
+    action(cmd) {
+      const a = actors.find(x => x.file === cmd.target) || actors.find(x => x.name === cmd.target);
+      if (!a || a.hidden || a.hold || a.held) return false;   // in a jail/door, or in the hand
+      // a new instruction replaces the last one completely: a flyer must not keep holding at the old place
+      const wasLanded = a.landedFrom;
+      if (a.landedFrom) { a.move = a.landedFrom; a.landedFrom = null; a.mv = null; }
+      a.actionTarget = null; a.action = null; a.mv = null;
+      const t = cmd.where && thingsNow.find(x => x.file === cmd.where);
+      const w = t ? { x: t.x, z: t.z, y: t.y ?? 0, file: t.file } : null;
+      a.action = { what: cmd.action, where: w, at: now, until: now + 60 };
+      a.think = null;
+      a.goal = null;
+      if (a.move === 'fly' && w && (cmd.action === 'fly_to' || cmd.action === 'go_to')) {
+        a.actionTarget = { x: w.x, y: (w.y ?? 0) + 0.5, z: w.z, until: now + 60 };
+        a.mv = null;
+        return true;
+      }
+      // a non-flight instruction for a flyer/swimmer/climber: land it so the page's goal machinery can run it
+      const special = wasLanded || MV?.special(a, envNow);
+      if (special) {
+        a.landedFrom = a.move;
+        a.move = 'walk';
+        const c = nearestCell(a.pos.x, a.pos.z, a);
+        a.cell = c;
+        const [wx, wz] = toWorld(c.x, c.y);
+        a.pos.set(wx, 0, wz); a.alt = 0; a.mv = null;
+      }
+      if (now >= a.busyUntil) decide(a);
+      return true;
+    },
     // someone tapped this character: a little jump, a giggle and hello
     tap(a) {
       if (!a || a.hidden) return;
@@ -852,6 +922,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
       // a goal with an end time ends by the clock, every frame: act() only sees it when the figure is scheduled,
       // and a slow frame rate starved long goals (a circle dance) until the end of the world
       // (a visit, fetch or bring uses until as a phase timer: its own exit runs, so it is left alone, as in the 15 s rule)
+      for (const a of actors) if (a.action && now > a.action.until) endAction(a);
       for (const a of actors) if (a.goal?.until != null && now > a.goal.until && !/visit|fetch|bring/.test(a.goal.type)) a.goal = null;
       while (acc >= TICK) { acc -= TICK; const a = scheduler.next(); if (a) guarded(a, () => act(a)); }   // empty world: nobody to act
       try { X.frame?.(actors, api); } catch (e) { reportOnce('frame', e); }   // portable things move every frame (sim-extra.js frame)

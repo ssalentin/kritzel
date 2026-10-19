@@ -16,6 +16,7 @@ Camera selection (see scripts/camera_server.py for the remote side):
   PUT /api/placement            → {file, d: [dx, dz] | null}: where the viewer moved a new thing (viewer/things/placement.json)
   GET  /api/think               → {on, model}: is the Jev director switched on (KRITZEL_THINK=1 and a key)?
   POST /api/think               → {scene, actors} → {goals, usage, ms}: a local director; {} when it is off or fails
+  POST /api/action              → {text, things?} → {ok, command}: "es soll schneien", a figure's goal, day/night
 
 HOST / PORT env vars change the listen address (default 127.0.0.1:8765).
 """
@@ -120,6 +121,22 @@ THINK_GOALS = {
     "inspect": "Go and look at a drawn thing nearby",
     "dance": "Dance, preferably with another figure",
 }
+
+# the closed command vocabulary for action mode (API.md beside the slice brief)
+ACTION_ACTIONS = {
+    "fly_to": "Fly to the place (for a flying figure)",
+    "go_to": "Walk or move to the place",
+    "dance": "Dance, preferably with another figure",
+    "sleep": "Sleep for a while",
+    "hide": "Hide away from the others or in a drawn door",
+    "follow": "Follow a figure",
+    "greet": "Go to a figure and say hello",
+}
+ACTION_WEATHER = {"rain": "Rain", "snow": "Snow", "storm": "A storm with lightning", "rainbow": "A rainbow", "clear": "Clear sky"}
+ACTION_LOCK = threading.Lock()
+ACTION_CACHE = {}
+ACTION_CACHE_S = 3.0
+ACTION_UNKNOWN = "Das habe ich nicht verstanden."
 
 
 def think_enabled():
@@ -274,6 +291,154 @@ def think(body):
         return out
     finally:
         THINK_LOCK.release()
+
+
+def action_things(body):
+    """The things the world has, from the viewer (preferred: its own live list) or from the folder."""
+    raw = body.get("things") if isinstance(body.get("things"), list) else []
+    things, seen = [], set()
+    for t in raw[:60]:
+        if not isinstance(t, dict):
+            continue
+        f = _text(t.get("file"), 80)
+        if not f or f in seen or not re.fullmatch(r"[\w.-]+\.js", f):
+            continue
+        seen.add(f)
+        things.append({"file": f, "name": _text(t.get("name"), 60) or f})
+    if things:
+        return things
+    for f in sorted((ROOT / "viewer" / "things").glob("*.js"))[:60]:
+        try:
+            txt = f.read_text(errors="replace")[:5000]
+        except OSError:
+            continue
+        m = re.search(r"export\s+const\s+meta\s*=\s*\{.*?\bname\s*:\s*['\"]([^'\"]+)['\"]", txt, re.S)
+        things.append({"file": f.name, "name": m.group(1) if m else f.stem})
+    return things
+
+
+def action_payload(text, things):
+    questions = {
+        "kind": {
+            "type": "choice",
+            "instructions": f"What does this instruction ask for? The person says: {text}",
+            "criteria": {"goal": "A figure should do something", "weather": "The weather should change",
+                         "time": "It should become day or night", "unknown": "Something else, or not supported"},
+        },
+        "action": {
+            "type": "choice",
+            "instructions": "If the instruction is about a figure, which action does it ask for? Otherwise pick none.",
+            "criteria": {**ACTION_ACTIONS, "none": "No figure action"},
+        },
+        "target": {
+            "type": "choice",
+            "instructions": f"The person says: {text}. Which figure should do it? Pick the file of the figure that acts "
+                            "(a creature or person), not a place; otherwise none.",
+            "criteria": {**{t["file"]: t["name"] for t in things}, "none": "No target"},
+        },
+        "where": {
+            "type": "choice",
+            "instructions": f"The person says: {text}. Which place should the figure go to? Pick the destination the "
+                            "instruction names (for example the moon). Never pick the figure that acts. If no destination "
+                            "is named, pick none.",
+            "criteria": {**{t["file"]: t["name"] for t in things}, "none": "Nowhere in particular"},
+        },
+        "weather": {
+            "type": "choice",
+            "instructions": "If the instruction asks for weather, which one? Otherwise none.",
+            "criteria": {**ACTION_WEATHER, "none": "No weather"},
+        },
+        "time": {
+            "type": "choice",
+            "instructions": "If the instruction asks for day or night, which one? Otherwise none.",
+            "criteria": {"day": "Day", "night": "Night", "none": "No time change"},
+        },
+    }
+    return {"model": os.environ.get("KRITZEL_THINK_MODEL", THINK_MODEL), "state": {"instruction": text, "things": things},
+            "questions": questions}
+
+
+def action_command(answers, things):
+    """Assemble a closed command; anything inconsistent is unknown, never a guess that changes the world."""
+    def pick(q):
+        a = answers.get(q) if isinstance(answers, dict) else None
+        return a.get("choice") if isinstance(a, dict) and isinstance(a.get("choice"), str) else None
+    files = {t["file"] for t in things}
+    unknown = {"kind": "unknown", "why": ACTION_UNKNOWN}
+    kind = pick("kind")
+    if kind == "goal":
+        what, target = pick("action"), pick("target")
+        where = pick("where")
+        if what not in ACTION_ACTIONS or target not in files:
+            return unknown
+        if where == "none":
+            where = None
+        elif where not in files:
+            return unknown
+        if where and where == target:
+            return {"kind": "unknown", "why": "Wohin denn?" if what in ("fly_to", "go_to") else "Das passt nicht zusammen."}
+        if what in ("fly_to", "go_to") and not where:
+            return {"kind": "unknown", "why": "Wohin denn?"}
+        return {"kind": "goal", "target": target, "action": what, "where": where}
+    if kind == "weather":
+        v = pick("weather")
+        return {"kind": "weather", "value": v} if v in ACTION_WEATHER else unknown
+    if kind == "time":
+        v = pick("time")
+        return {"kind": "time", "value": v} if v in ("day", "night") else unknown
+    return unknown
+
+
+def action(text, body, meta=None):
+    """Ask Jev for the typed command. Any failure is an unknown command; it never changes the world."""
+    started = time.time()
+
+    def done(cmd, usage=None):
+        if meta is not None:
+            meta["ms"] = round((time.time() - started) * 1000)
+            if usage:
+                meta["usage"] = usage
+        return cmd
+    if not think_enabled():
+        return done({"kind": "unknown", "why": ACTION_UNKNOWN})
+    things = action_things(body)
+    if not things:
+        return done({"kind": "unknown", "why": "Ich sehe noch nichts in der Welt."})
+    payload = action_payload(text, things)
+    key = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    now = time.time()
+    hit = ACTION_CACHE.get(key)
+    if hit and now - hit[0] < ACTION_CACHE_S:
+        return done(hit[1])
+    if not ACTION_LOCK.acquire(blocking=False):
+        return done({"kind": "unknown", "why": "Einen Moment noch."})
+    try:
+        req = urllib.request.Request(
+            os.environ.get("KRITZEL_THINK_URL", THINK_URL),
+            data=json.dumps(payload).encode(),
+            method="POST",
+            headers={"Authorization": "Bearer " + os.environ.get("OPENROUTER_API_KEY", ""),
+                     "Content-Type": "application/json", "X-Title": "Kritzel action"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=THINK_TIMEOUT_S) as r:
+                upstream = json.load(r)
+        except (OSError, ValueError, urllib.error.HTTPError):
+            return done({"kind": "unknown", "why": ACTION_UNKNOWN})
+        usage = upstream.get("usage") if isinstance(upstream, dict) else None
+        usage = {"cost": _cost(usage.get("cost")), "input_tokens": usage.get("input_tokens"),
+                 "output_tokens": usage.get("output_tokens")} if isinstance(usage, dict) else None
+        cmd = action_command(upstream.get("answers") if isinstance(upstream, dict) else {}, things)
+        if cmd["kind"] != "unknown":
+            if len(ACTION_CACHE) >= 8:
+                for k in [k for k, v in ACTION_CACHE.items() if time.time() - v[0] >= ACTION_CACHE_S]:
+                    ACTION_CACHE.pop(k, None)
+                if len(ACTION_CACHE) >= 8:
+                    ACTION_CACHE.pop(next(iter(ACTION_CACHE)))
+            ACTION_CACHE[key] = (time.time(), cmd)
+        return done(cmd, usage)
+    finally:
+        ACTION_LOCK.release()
 
 
 def read_mode():
@@ -473,6 +638,25 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self.json(think(body))
             except Exception:                    # the contract is {} on any failure, never a dropped request
                 return self.json({})
+        if path == "/api/action":
+            if self.headers.get("X-Kritzel") != "1":
+                return self.json({"ok": False, "error": "forbidden"}, 403)
+            try:
+                n = int(self.headers.get("Content-Length", ""))
+                assert 0 <= n <= 16384
+                body = json.loads(self.rfile.read(n))
+                assert isinstance(body, dict)
+            except (ValueError, AssertionError, TypeError):
+                return self.json({"ok": False, "error": "say what should happen"}, 400)
+            text = _text(body.get("text"), 300).strip()
+            if not text:
+                return self.json({"ok": False, "error": "say what should happen"}, 400)
+            meta = {}
+            try:
+                cmd = action(text, body, meta)
+            except Exception:                    # the world is never half-changed by a mapping failure
+                cmd = {"kind": "unknown", "why": ACTION_UNKNOWN}
+            return self.json({"ok": True, "command": cmd, **meta})
         if path not in ("/api/text-thing", "/api/newworld"):
             return self.json({"error": "not found"}, 404)
         # only the viewer itself: a page on another site can send a plain POST without asking first,
