@@ -65,6 +65,9 @@ test('the bubble words are written as the actor\'s lines.said, inside its lines,
   const b = withSaid("return { actors: [{ id: 'x', lines: { said: { de: 'Hi', en: 'Hi' }, chat: ['a'] } }] };", { text: 'Ich mag Kuchen', en: 'I like cake', kind: 'thought' });
   assert.deepEqual(lines(b), { said: { de: '💭 Ich mag Kuchen', en: '💭 I like cake' }, chat: ['a'] });
   assert.deepEqual(lines(withSaid("return { actors: [{ id: 'x', rig: {} }] };", speech)), { said: { de: 'Hallo!', en: 'Hello!' } });
+  const spotFirst = withSaid("const s = { kind: 'well', lines: ['Plitsch'] }; return { actors: [{ id: 'x', lines: { chat: ['a'] } }], spots: [s] };", speech);
+  assert.match(spotFirst, /lines: \['Plitsch'\]/);                     // a spot's lines before the actor are left alone
+  assert.deepEqual(lines(spotFirst).said, { de: 'Hallo!', en: 'Hello!' });
   assert.equal(withSaid('x', { text: 'Hallo!', kind: 'speech' }), 'x');   // no English from the list: the model's stands
 });
 
