@@ -149,7 +149,8 @@ export async function build(api, prevState = null) {
     let pond = false; e.box.traverse(o => { if (o.userData?.zone) pond = true; });
     if (!portableMod.isPortable({ hx: e.foot.hx, hz: e.foot.hz, top: e.foot.top, lightKinds: e.light.map(l => l.kind), weather: e.weather.length,
       spotKinds: e.spots.map(s => s.kind), actors: e.actors.length, holds: e.holds.length, heldBy: !!e.heldBy, pond })) return;
-    e.portable = { kind: 'portable', name: e.meta?.name, x: e.foot.x, z: e.foot.z, r: Math.max(e.foot.hx, e.foot.hz), carrier: null };
+    e.portable = { kind: 'portable', name: e.meta?.name, x: e.foot.x, z: e.foot.z, r: Math.max(e.foot.hx, e.foot.hz),
+      top: e.foot.top ?? 0, carrier: null };
     e.syncAt = { x: e.foot.x, z: e.foot.z };
     e.spots.push(e.portable);
   }

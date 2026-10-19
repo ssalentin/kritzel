@@ -137,6 +137,10 @@ ACTION_LOCK = threading.Lock()
 ACTION_CACHE = {}
 ACTION_CACHE_S = 3.0
 ACTION_UNKNOWN = "Das habe ich nicht verstanden."
+CAN_LOCK = threading.Lock()
+CAN_CACHE = {}
+CAN_CACHE_S = 3.0
+CAN_UNKNOWN = "Das kann ich nicht sagen."
 
 
 def think_enabled():
@@ -441,6 +445,109 @@ def action(text, body, meta=None):
         ACTION_LOCK.release()
 
 
+def clean_can_actor(x):
+    """The figure's story facts, checked and bounded before they reach the external model."""
+    if not isinstance(x, dict):
+        return None
+    name = _text(x.get("name"), 60).strip()
+    if not name:
+        return None
+    kind = _text(x.get("kind"), 30).strip() or "figure"
+    try:
+        bulk = round(min(5.0, max(0.05, float(x.get("bulk")))), 2)
+    except (TypeError, ValueError):
+        bulk = 1.0
+    return {"name": name, "kind": kind, "bulk": bulk}
+
+
+def clean_can_thing(x):
+    if not isinstance(x, dict):
+        return None
+    name = _text(x.get("name"), 80).strip()
+    if not name:
+        return None
+    try:
+        bulk = round(min(8.0, max(0.05, float(x.get("bulk")))), 2)
+    except (TypeError, ValueError):
+        bulk = 1.0
+    return {"name": name, "bulk": bulk, "contents": _text(x.get("contents"), 120).strip()}
+
+
+def can_payload(actor, thing):
+    """One child-story choice: would a child believe this figure can lift this thing?"""
+    contents = f", containing {thing['contents']}" if thing.get("contents") else ""
+    return {
+        "model": os.environ.get("KRITZEL_THINK_MODEL", THINK_MODEL),
+        "state": {"actor": actor, "thing": thing},
+        "questions": {
+            "can": {
+                "type": "choice",
+                "instructions": (
+                    f"A child is watching a pop-up book. {actor['name']} (a {actor['kind']}, about {actor['bulk']} units tall) "
+                    f"wants to pick up and carry {thing['name']} (about {thing['bulk']} units in size{contents}). "
+                    "Would a child believe this figure could pick it up and carry it in the story? "
+                    "Answer no only if the thing is clearly too big or heavy for this figure."
+                ),
+                "criteria": {"yes": "Yes, the figure could pick it up", "no": "No, the thing is too big or heavy for this figure"},
+            },
+        },
+    }
+
+
+def can(actor, thing, meta=None):
+    """Ask Jev once for a figure/thing pair. Any failure is ok:false; the caller uses its size rule."""
+    started = time.time()
+
+    def done(out):
+        if meta is not None:
+            meta["ms"] = round((time.time() - started) * 1000)
+        return out
+    if not think_enabled():
+        return done({"ok": False, "why": CAN_UNKNOWN})
+    payload = can_payload(actor, thing)
+    key = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    now = time.time()
+    hit = CAN_CACHE.get(key)
+    if hit and now - hit[0] < CAN_CACHE_S:
+        out = dict(hit[1])
+        if meta is not None:
+            meta["ms"] = 0
+        return out
+    if not CAN_LOCK.acquire(blocking=False):
+        return done({"ok": False, "why": "Einen Moment noch."})
+    try:
+        req = urllib.request.Request(
+            os.environ.get("KRITZEL_THINK_URL", THINK_URL),
+            data=json.dumps(payload).encode(), method="POST",
+            headers={"Authorization": "Bearer " + os.environ.get("OPENROUTER_API_KEY", ""),
+                     "Content-Type": "application/json", "X-Title": "Kritzel carry"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=THINK_TIMEOUT_S) as r:
+                upstream = json.load(r)
+        except (OSError, ValueError, urllib.error.HTTPError):
+            return done({"ok": False, "why": CAN_UNKNOWN})
+        answers = upstream.get("answers") if isinstance(upstream, dict) else {}
+        ans = answers.get("can") if isinstance(answers, dict) else None
+        choice = ans.get("choice") if isinstance(ans, dict) else None
+        if choice not in ("yes", "no"):
+            return done({"ok": False, "why": CAN_UNKNOWN})
+        usage = upstream.get("usage") if isinstance(upstream.get("usage"), dict) else {}
+        out = {"ok": True, "can": choice == "yes",
+               "why": "Ja, das könnte ein Kind glauben." if choice == "yes" else "Nein, das ist zu groß für diese Figur.",
+               "usage": {"cost": _cost(usage.get("cost")), "input_tokens": usage.get("input_tokens"),
+                         "output_tokens": usage.get("output_tokens")}}
+        if len(CAN_CACHE) >= 8:
+            for k in [k for k, v in CAN_CACHE.items() if time.time() - v[0] >= CAN_CACHE_S]:
+                CAN_CACHE.pop(k, None)
+            if len(CAN_CACHE) >= 8:
+                CAN_CACHE.pop(next(iter(CAN_CACHE)))
+        CAN_CACHE[key] = (time.time(), out)
+        return done(out)
+    finally:
+        CAN_LOCK.release()
+
+
 def read_mode():
     try:
         m = json.loads(MODE_FILE.read_text()).get("mode")
@@ -657,6 +764,25 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except Exception:                    # the world is never half-changed by a mapping failure
                 cmd = {"kind": "unknown", "why": ACTION_UNKNOWN}
             return self.json({"ok": True, "command": cmd, **meta})
+        if path == "/api/can":
+            if self.headers.get("X-Kritzel") != "1":
+                return self.json({"ok": False, "error": "forbidden"}, 403)
+            try:
+                n = int(self.headers.get("Content-Length", ""))
+                assert 0 <= n <= 16384
+                body = json.loads(self.rfile.read(n))
+                assert isinstance(body, dict)
+            except (ValueError, AssertionError, TypeError):
+                return self.json({"ok": False, "error": "say which figure and thing"}, 400)
+            actor, thing = clean_can_actor(body.get("actor")), clean_can_thing(body.get("thing"))
+            if not actor or not thing:
+                return self.json({"ok": False, "error": "say which figure and thing"}, 400)
+            meta = {}
+            try:
+                out = can(actor, thing, meta)
+            except Exception:
+                out = {"ok": False, "why": CAN_UNKNOWN}
+            return self.json({**out, **meta})
         if path not in ("/api/text-thing", "/api/newworld"):
             return self.json({"error": "not found"}, 404)
         # only the viewer itself: a page on another site can send a plain POST without asking first,
