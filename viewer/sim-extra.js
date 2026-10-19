@@ -494,8 +494,13 @@ export const INTERACTIONS = {
     a.goal = null; a.busyUntil = now() + 0.6;
     a.flee = { from: b, until: now() + 8 };
   },
+  keepAway(a, b, { now }) {                     // the scared one steps away from a scary figure it met again too soon
+    const victim = a.fears?.includes(b.id) ? a : b, boo = victim === a ? b : a;
+    victim.goal = { type: 'flee', target: boo, until: now() + 2.5 }; victim.goalSince = now();
+  },
   spook(a, b, { busy, say, line, bond, now, actors }) {   // the feared one says boo; the scared one slowly gets used to it
     const victim = a.fears?.includes(b.id) ? a : b, boo = victim === a ? b : a;
+    victim.spookedBy = { ...victim.spookedBy, [boo.id]: now() };
     busy(boo, victim, 'wave', 2.2); busy(victim, boo, 'scared', 2.2);
     say(boo, line(boo, 'spook'), 1.8); say(victim, line(victim, 'scared'), 1.8, 0.5);
     bond(boo, victim, 0.18);
@@ -873,7 +878,11 @@ export function choose(a, b, r, api) {
   // a pool dialogue for this pair that fits the moment is offered to any meeting (it used to need a low relationship)
   const poolReady = !(a.kind === 'squid' || b.kind === 'squid') && poolFor(a.name || a.id, b.name || b.id, context(a, b, api));
   const feared = a.fears?.includes(b.id) ? a : b.fears?.includes(a.id) ? b : null;
-  if (feared && rel(feared, feared === a ? b : a) < 0.45) return 'spook';
+  // a scary figure gets one boo per pair per minute: within that, the scared one keeps its distance (no new boo)
+  if (feared && rel(feared, feared === a ? b : a) < 0.45) {
+    const boo = feared === a ? b : a;
+    return api.now() - (feared.spookedBy?.[boo.id] ?? -1e9) > 60 ? 'spook' : 'keepAway';
+  }
   // a carrier who meets a friend may hand the thing over (meeting-based hand-over, GitHub #29): the common way a swap happens
   const holding = x => api.spots().find(s => s.kind === 'portable' && s.carrier === x && !s.throw);
   const carrier = holding(a) ? a : holding(b) ? b : null;
