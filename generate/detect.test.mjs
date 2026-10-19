@@ -47,8 +47,10 @@ test('a drawn bubble is kept only when its words are readable, short, child-safe
 
 test('the bubble words missing from the module are asked for; present (even escaped) they are not', () => {
   assert.deepEqual(unsaid('greet: [{ de: "Hallo!" }]', null), []);
-  assert.deepEqual(unsaid("greet: [{ de: 'Hallo!' }]", { text: 'Hallo!', kind: 'speech' }), []);
-  assert.deepEqual(unsaid("chat: [{ de: 'Ich bin\\'s' }]", { text: "Ich bin's", kind: 'thought' }), []);
+  assert.deepEqual(unsaid("greet: ['Hallo!'], said: { de: 'Hallo!', en: 'Hello!' }", { text: 'Hallo!', kind: 'speech' }), []);
+  assert.deepEqual(unsaid("said: { de: '💭 Ich bin\\'s', en: '💭 It is me' }", { text: "Ich bin's", kind: 'thought' }), []);
+  assert.equal(unsaid("greet: ['Hallo!']", { text: 'Hallo!', kind: 'speech' }).length, 1);   // in greet but not as said
+  assert.equal(unsaid("said: { de: 'Ich mag Kuchen', en: 'I like cake' }", { text: 'Ich mag Kuchen', kind: 'thought' }).length, 1);   // a thought without its 💭
   assert.match(unsaid("greet: [{ de: 'Hi' }]", { text: 'Hallo!', kind: 'speech' })[0], /first greet line .*"Hallo!"/);
   assert.match(unsaid("greet: [{ de: 'Hi' }]", { text: 'Ich mag Kuchen', kind: 'thought' })[0], /first chat line .*💭/);
 });

@@ -196,10 +196,11 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
 // the words in a drawn bubble (list entry's says) are its first line: asked for once, then taken (a figure must not
 // vanish over a missed line)
 export function unsaid(code, says) {
-  if (!says || code.replace(/\\(.)/g, '$1').includes(says.text)) return [];
+  const said = code.replace(/\\(.)/g, '$1').match(/\bsaid\s*:\s*\{[^}]*\}/)?.[0] || '';
+  if (!says || (said.includes(says.text) && (says.kind !== 'thought' || said.includes('💭')))) return [];
   return [says.kind === 'thought'
-    ? `its first chat line must be what it thinks on the paper, starting with 💭: "💭 ${says.text}" (German exactly as written, English a short translation), with // said on the paper: "${says.text}" above the actor`
-    : `its first greet line must be what it says on the paper: "${says.text}" (German exactly as written, English a short translation), with // said on the paper: "${says.text}" above the actor`];
+    ? `its first chat line must be what it thinks on the paper, starting with 💭: "💭 ${says.text}" (German exactly as written, English a short translation), the same words in its lines as said: { de, en } (one string each${says.kind === 'thought' ? ', both starting with 💭' : ''}), and // said on the paper: "${says.text}" above the actor`
+    : `its first greet line must be what it says on the paper: "${says.text}" (German exactly as written, English a short translation), the same words in its lines as said: { de, en } (one string each${says.kind === 'thought' ? ', both starting with 💭' : ''}), and // said on the paper: "${says.text}" above the actor`];
 }
 
 // a module that only shows writing (Sebastian: "Sqichy" in 3D letters): a word alone is never a thing. By what it says

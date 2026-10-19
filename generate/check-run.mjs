@@ -230,7 +230,12 @@ async function buildCheck(file, takenIds) {
       if (g.de.length !== g.en.length) problems.push(`${where}: ${g.de.length} German but ${g.en.length} English lines; give each line its twin`);
       if (![...g.de, ...g.en].every(x => typeof x === 'string' && x.length <= 120)) problems.push(`${where}: lines must be short strings`);
     };
-    for (const a of actors) for (const [k, g] of Object.entries(a?.lines || {})) linesOk(g, `actor ${a?.id} lines.${k}`);
+    // lines.said: the words drawn in its bubble, said once when it arrives (one string each, not a list)
+    const saidOk = (g, where) => {
+      if (!g || typeof g.de !== 'string' || typeof g.en !== 'string' || g.de.length > 120 || g.en.length > 120) return problems.push(`${where}: said is one short line { de: '...', en: '...' }`);
+      if (!safeLine(g.de, 'de') || !safeLine(g.en, 'en')) problems.push(`${where}: not right for children: ${JSON.stringify(g)}`);
+    };
+    for (const a of actors) for (const [k, g] of Object.entries(a?.lines || {})) (k === 'said' ? saidOk : linesOk)(g, `actor ${a?.id} lines.${k}`);
     for (const sp of spots) if (sp?.lines) linesOk(sp.lines, `spot ${sp.kind} lines`);
     for (const o of obstacles) if (!num(o?.x) || !num(o?.z) || !num(o?.r)) { problems.push('obstacles need numeric { x, z, r }'); break; }
     for (const s of spots) if (!s?.kind || !num(s?.x) || !num(s?.z)) { problems.push('spots need { kind, x, z }'); break; }
