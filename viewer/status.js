@@ -123,7 +123,8 @@ export function createStatus({ THREE, scene, el, world, banner, onView = null })
     if (!c.alive) return { tone: 'bad', text: t('captureOff') };
     if (c.state === 'camera-off') return { tone: 'bad', text: t('cameraOff') };
     if (c.state === 'no-camera') return { tone: 'bad', text: t('noCamera') };
-    if (c.state === 'moving') return { tone: 'ok', text: t('moving') };
+    if (c.state === 'no-paper') return { tone: 'warn', text: t('noPaper') };
+    if (c.state === 'moving') return { tone: 'ok', text: c.detail === 'hand on the paper' ? t('handOnPaper') : t('moving') };
     if (now - connectedAt < 3) return { tone: 'ok', text: t('connected') };
     return { tone: 'ok', text: t('watching'), calm: true };
   }

@@ -26,11 +26,12 @@ export function createCamFrame(el) {
       // no picture (no camera chosen, or it is off): no paper hint at all
       const camOn = [...el.querySelectorAll('.pic video, .pic img')].some(x => !x.hidden);
       const hold = camOn && !!c.alive && c.state === 'moving';                          // capture waits for the paper to be still
+      const hand = hold && c.detail === 'hand on the paper';
       // capture has settled a picture: the paper can go (generate already has the JPG)
       const done = camOn && !hold && !!c.alive && c.state === 'watching' && !!c.last && now - c.last.at < DONE_S;
       const mode = hold ? 'hold' : done ? 'done' : 'live';
       if (el.dataset.mode !== mode) el.dataset.mode = mode;
-      const text = hold ? t('camHold') : done ? t('camDone') : v.text;
+      const text = hand ? t('handOnPaper') : hold ? t('camHold') : done ? t('camDone') : v.text;
       if (cap.textContent !== text) cap.textContent = text;
       if (none.textContent !== t('camNone')) none.textContent = t('camNone');
     },

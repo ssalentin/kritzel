@@ -12,10 +12,13 @@ When the settled sheet differs from the last one handed on, it writes
     frames/settled/<YYYYmmdd-HHMMSS>.jpg    then, atomically: the camera's JPEG as it came
 
 No frame while something moves (a drawing hand), none when nothing changed. A small change
-counts once still for STILL_S ("drawn"); a large one (new sheet, moved paper, a resting hand)
+counts once still for STILL_S ("drawn"); a large one (new sheet, moved paper)
 must stay still for BIG_S ("big-change"), or only SHEET_S when the change is scattered all over
-the sheet, as a new sheet's is (a hand, its shadow or one big coloured area is one patch). For a drawing, the snapshot is fetched and checked
-while the still time runs (from EARLY_S on), so it's handed on as soon as STILL_S is up.
+the sheet or fills the picture, as a new sheet's is (a hand, its shadow or one big coloured area
+is one patch). For a drawing, the snapshot is fetched and checked while the still time runs (from
+EARLY_S on), so it's handed on as soon as STILL_S is up.
+A hand resting on the sheet (or a table with no paper) keeps the frame waiting, and says so in
+the status; the sheet is handed on only once the hand is gone.
 
 For the viewer's status pill it keeps frames/status/capture.json up to date (state, since, beat,
 detail, last) and writes frames/status/cutout.png for each drawing handed on: the new ink on
@@ -47,6 +50,7 @@ VIEWER = os.environ.get("VIEWER", "http://127.0.0.1:8765")
 W, H = 320, 180          # compare at this size: averages away sensor noise, keeps pencil lines
 PIXEL = 20               # brightness step (0-255) that counts as a changed pixel
 NEW_PX = 15              # changed pixels that count: vs the still picture = movement, vs the last sheet = new
+SNAP_DIFF = 200          # a full snapshot this far from the preview is another picture, not resampling
 INK_R = 2                # new ink must be this far (thumb px) from ink already there
 SLIDE = 8                # how far (thumb px, ×6 at 1080p) the paper may slide and still be the same sheet
 INK_EDGE, INK_SHARE = 25, 0.25   # local contrast that is ink, not shade; share of a change that must be inky
@@ -60,7 +64,14 @@ OVERLAP, MATCH = 0.15, 0.6   # ...and one slid further, partly out of view: OVER
 SHEET_S, SCATTER, SPAN = 3.0, 0.6, 0.5   # a big change whose biggest patch is under SCATTER of it, spanning over
                                         # SPAN of the picture: a new sheet, handed on after SHEET_S
 EARLY_S = 0.3            # into a still spell: look what's new, and fetch the snapshot of a drawing already
+HOLD_RECHECKS = (0.3, 0.6, 1.2, 2.5)   # a held frame: quick at first for the transition hand, then slow
 SHRINK = f"format=gray,scale=960:540:flags=area,erosion,erosion,scale={W}:{H}:flags=area"   # keeps thin lines
+CW, CH = 96, 54          # colour thumbnail: the sheet and a hand, not the drawing's lines
+PAPER_BLOCK = 4          # the hand check works on blocks this many colour-thumbnail px square
+PAPER_SHARE = 0.05       # this much of the picture being paper-bright is paper (busy drawings count too)
+PAPER_BRIGHT = 155       # ...or a smaller paper-bright field (printed picture, partial sheet)
+PAPER_PLAIN = 0.35       # a big paper field this large stands on its own
+HAND_SHARE, HAND_ON_PAPER = 0.012, 0.15   # a skin blob this large, with this share of it on the sheet
 MAX_BYTES = 20 << 20
 
 
@@ -95,6 +106,250 @@ def small(data):
         print(f"ffmpeg: {e}", file=sys.stderr, flush=True)
         return None
     return centred(px) if len(px) == W * H else None
+
+
+def colour(data):
+    """Small RGB thumbnail of one JPEG: [r, g, b, r, g, b, ...], or None."""
+    try:
+        px = subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "jpeg_pipe", "-i", "-", "-vf",
+                             f"scale={CW}:{CH}:flags=area,format=rgb24", "-f", "rawvideo", "-"],
+                            input=data, capture_output=True, timeout=10).stdout
+    except (subprocess.SubprocessError, OSError) as e:
+        print(f"ffmpeg: {e}", file=sys.stderr, flush=True)
+        return None
+    return list(px) if len(px) == CW * CH * 3 else None
+
+
+def blocks(rgb):
+    """(width, height, mean colour per block)."""
+    bw, bh = CW // PAPER_BLOCK, CH // PAPER_BLOCK
+    means = []
+    for by in range(bh):
+        for bx in range(bw):
+            sums = [0, 0, 0]
+            for y in range(by * PAPER_BLOCK, (by + 1) * PAPER_BLOCK):
+                for x in range(bx * PAPER_BLOCK, (bx + 1) * PAPER_BLOCK):
+                    i = (y * CW + x) * 3
+                    for c in range(3):
+                        sums[c] += rgb[i + c]
+            n = PAPER_BLOCK * PAPER_BLOCK
+            means.append([s / n for s in sums])
+    return bw, bh, means
+
+
+def neighbours(i, w, h):
+    """The 8 blocks around block i (row-major in a w × h grid)."""
+    x, y = i % w, i // w
+    for jy in range(max(0, y - 1), min(h, y + 2)):
+        for jx in range(max(0, x - 1), min(w, x + 2)):
+            j = jy * w + jx
+            if j != i:
+                yield j
+
+
+def paper(rgb):
+    """The sheet in a colour thumbnail: {w, h, mask, colour, area}, or None when no paper is there.
+
+    Paper is white/neutral or coloured away from the wood's warm brown. A big field stands on its
+    own; a smaller one must also be paper-bright, which keeps a dark table reflection out while a
+    coupon or a partly visible sheet still counts. The table colour is learned from the frame edge."""
+    if not rgb:
+        return None
+    bw, bh, means = blocks(rgb)
+    free, blockmask = [], [False] * (bw * bh)
+    for i in range(CW * CH):
+        r, g, b = rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]
+        if not paperish(r, g, b):
+            continue
+        free.append(i)
+        x, y = i % CW // PAPER_BLOCK, i // CW // PAPER_BLOCK
+        if x < bw and y < bh:
+            blockmask[y * bw + x] = True
+    share = len(free) / (CW * CH)
+    bright = statistics.mean((rgb[i * 3] + rgb[i * 3 + 1] + rgb[i * 3 + 2]) / 3 for i in free) if free else 0
+    if not (share >= PAPER_PLAIN or (share >= PAPER_SHARE and bright >= PAPER_BRIGHT)):
+        return None
+    seen, parts = set(), []
+    for i in range(bw * bh):
+        if not blockmask[i] or i in seen:
+            continue
+        seen.add(i)
+        todo, part = [i], []
+        while todo:
+            j = todo.pop()
+            part.append(j)
+            for k in neighbours(j, bw, bh):
+                if blockmask[k] and k not in seen:
+                    seen.add(k)
+                    todo.append(k)
+        parts.append(part)
+    if not parts:
+        return None
+    part = max(parts, key=len)
+    bx = [i % bw for i in part]
+    by = [i // bw for i in part]
+    edge = [i for i in range(bw * bh) if i % bw in (0, bw - 1) or i // bw in (0, bh - 1)]
+    woods = [means[i] for i in edge if wood(means[i])]
+    table = [statistics.median(c[d] for c in woods) for d in range(3)] if len(woods) >= 3 else None
+    colour = [statistics.median(rgb[i * 3 + c] for i in free) for c in range(3)]
+    mask = [False] * (bw * bh)
+    for i in part:
+        mask[i] = True
+    return {"w": bw, "h": bh, "mask": mask, "colour": colour, "area": len(free),
+            "box": (min(bx), min(by), max(bx), max(by)), "table": table}
+
+
+def hue(r, g, b):
+    """Hue in degrees (0 = red, 60 = yellow) for a colour."""
+    mx, mn, d = max(r, g, b), min(r, g, b), max(r, g, b) - min(r, g, b)
+    if d == 0:
+        return 0
+    if mx == r:
+        return 60 * ((g - b) / d % 6)
+    if mx == g:
+        return 60 * (2 + (b - r) / d)
+    return 60 * (4 + (r - g) / d)
+
+
+def wood(colour):
+    """Warm brown, like the table: not white, blue or yellow paper."""
+    r, g, b = colour
+    mx, mn = max(colour), min(colour)
+    return 5 <= hue(r, g, b) <= 34 and (mx - mn) >= 0.22 * max(1, mx) and mx >= 40
+
+
+def paperish(r, g, b):
+    """A paper/print pixel: white/neutral, or coloured away from the wood's warm brown."""
+    mx, mn = max(r, g, b), min(r, g, b)
+    sat = (mx - mn) / mx if mx else 0
+    if 5 <= hue(r, g, b) <= 34:
+        return sat <= 0.12 and mx >= 100      # warm white paper, not a bright wood reflection
+    return mx >= 60 and (sat >= 0.08 or mx >= 140)
+
+
+def skin(r, g, b):
+    """A warm red-orange pixel: skin, not grey paper or yellow paper (which is around hue 44)."""
+    mx, mn = max(r, g, b), min(r, g, b)
+    d = mx - mn
+    if mx < 45 or d < max(18, 0.18 * mx) or not (r > g >= b) or (g - b) > 0.5 * (r - b):
+        return False
+    h = 60 * (g - b) / d                    # r is the largest channel, so hue lies between 0 and 60
+    return 2 <= h <= 38
+
+
+def smooth_rgb(rgb, x, y, r=1, step=24):
+    """Whether the 3x3 pixels around (x, y) are one smooth colour: skin, not wood grain."""
+    lo, hi = [255, 255, 255], [0, 0, 0]
+    for yy in range(max(0, y - r), min(CH, y + r + 1)):
+        for xx in range(max(0, x - r), min(CW, x + r + 1)):
+            i = (yy * CW + xx) * 3
+            for c in range(3):
+                lo[c], hi[c] = min(lo[c], rgb[i + c]), max(hi[c], rgb[i + c])
+    return max(hi[c] - lo[c] for c in range(3)) <= step
+
+
+def blobs(mask, w, h):
+    """Connected (8-neighbour) fields of True in a w × h mask, as lists of pixel indices."""
+    seen, out = set(), []
+    for i, on in enumerate(mask):
+        if not on or i in seen:
+            continue
+        seen.add(i)
+        todo, part = [i], []
+        while todo:
+            j = todo.pop()
+            part.append(j)
+            for k in neighbours(j, w, h):
+                if mask[k] and k not in seen:
+                    seen.add(k)
+                    todo.append(k)
+        out.append(part)
+    return out
+
+
+def filled(mask, w, h):
+    """`mask` with enclosed holes filled: paper around a hand, but not the table at its edge."""
+    out = list(mask)
+    seen, todo = set(), []
+    for i, on in enumerate(mask):
+        if not on and (i % w in (0, w - 1) or i // w in (0, h - 1)):
+            seen.add(i)
+            todo.append(i)
+    while todo:
+        i = todo.pop()
+        for j in neighbours(i, w, h):
+            if not mask[j] and j not in seen:
+                seen.add(j)
+                todo.append(j)
+    for i in range(w * h):
+        if not mask[i] and i not in seen:
+            out[i] = True
+    return out
+
+
+def hand(rgb, sheet, base=None):
+    """A skin-coloured blob lying on (or touching the edge of) the sheet.
+
+    With `base` (the last settled picture), most of the blob must be new: the wooden table is
+    warm and smooth too, but it was already there. Without a base, the blob's middle must be on
+    the sheet, which keeps a table edge out."""
+    if not rgb:
+        return False
+    bw, bh = sheet["w"], sheet["h"]
+    region = filled(sheet["mask"], bw, bh)
+    near, touch = [False] * (bw * bh), [False] * (bw * bh)
+    for i, flat in enumerate(region):
+        if flat:
+            for y in range(max(0, i // bw - 2), min(bh, i // bw + 3)):
+                for x in range(max(0, i % bw - 2), min(bw, i % bw + 3)):
+                    near[y * bw + x] = True
+            for y in range(max(0, i // bw - 1), min(bh, i // bw + 2)):
+                for x in range(max(0, i % bw - 1), min(bw, i % bw + 2)):
+                    touch[y * bw + x] = True
+    # only warm pixels around the sheet can be the hand: the wooden table is warm too, but it is
+    # not on the sheet and must not join the hand's blob
+    at = lambda i: min(i // CW // PAPER_BLOCK, bh - 1) * bw + min(i % CW // PAPER_BLOCK, bw - 1)
+    skin_mask = [skin(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]) and smooth_rgb(rgb, i % CW, i // CW)
+                 and near[at(i)]
+                 for i in range(CW * CH)]
+    x0, y0, x1, y1 = sheet["box"]
+    for part in blobs(skin_mask, CW, CH):
+        if len(part) < max(24, HAND_SHARE * CW * CH) or len(part) > 0.5 * sheet["area"]:
+            continue
+        tableish = False
+        if sheet["table"]:
+            col = [statistics.median(rgb[i * 3 + c] for i in part) for c in range(3)]
+            edge = any(i % CW < 2 or i % CW >= CW - 2 or i // CW < 2 or i // CW >= CH - 2 for i in part)
+            tableish = max(abs(col[c] - sheet["table"][c]) for c in range(3)) <= 60
+            if tableish and (edge or base is None or len(part) < 100):
+                continue                     # the table's own wood, not a hand on the sheet
+        # a hand resting on the sheet has its middle on the sheet; the table beside the sheet
+        # touches its border but its middle stays outside
+        cx = sum(i % CW for i in part) / len(part) / PAPER_BLOCK
+        cy = sum(i // CW for i in part) / len(part) / PAPER_BLOCK
+        at_c = min(int(cy), bh - 1) * bw + min(int(cx), bw - 1)
+        if not (x0 <= cx <= x1 + 1 and y0 <= cy <= y1 + 1):
+            continue
+        if tableish and not region[at_c]:
+            continue
+        if base is not None and len(base) == len(rgb):
+            changed = sum(1 for i in part if max(abs(rgb[i * 3 + c] - base[i * 3 + c]) for c in range(3)) > 30)
+            if changed < (0.5 if tableish else 0.3) * len(part):
+                continue
+        inside = sum(1 for i in part if touch[at(i)])
+        if inside >= HAND_ON_PAPER * len(part):
+            return True
+    return False
+
+
+def look(rgb, base=None):
+    """What the settled picture holds: "paper", "hand" (a hand still on it), or "no-paper"."""
+    sheet = paper(rgb)
+    if sheet is None:
+        return "no-paper"
+    # without a before picture, a skin-coloured drawing looks like a hand; prefer handing the
+    # picture on (one wasted model look) over holding a child's drawing forever
+    return "hand" if base is not None and hand(rgb, sheet, base) else "paper"
 
 
 class Stream:
@@ -484,13 +739,18 @@ class Detector:
         self.fit_due = False                 # a big change in this still spell that fit() should try
         self.spell = 0                       # counts still spells
         self.patchy = None                   # (diff, scattered?) for the diff it was worked out for
+        self.held = None                     # still spell a hand or an empty table keeps from settling
+        self.changed = 0                     # pixels that moved when this still spell began
 
     def feed(self, thumb, t):
-        if self.anchor is None or len(new_marks(thumb, self.anchor)) >= NEW_PX:
+        marks = W * H if self.anchor is None else len(new_marks(thumb, self.anchor))
+        if self.anchor is None or marks >= NEW_PX:
             if self.anchor is not None:
                 self.moved_at = t
             self.anchor, self.still_since, self.shift, self.diff, self.turn = envelope(thumb, 1), t, None, None, 0
             self.fitted = self.far = False
+            self.held = None
+            self.changed = marks
             self.spell += 1
             return None
         if t - self.still_since < EARLY_S:
@@ -503,6 +763,8 @@ class Detector:
                 aligned = moved(thumb, self.shift)
                 self.diff = inky(new_marks(aligned, self.baseline), aligned, self.baseline)
                 self.fit_due = self.big()     # doesn't line up by sliding: the same sheet turned, or slid further?
+        if self.holding():
+            return None
         # lining up a sheet that turned or slid far takes seconds of pure Python: in a thread, started once
         # the big change has been still for STILL_S (a hand pausing on the paper never starts it); the
         # frame waits for its verdict, a sheet waits SHEET_S anyway
@@ -537,7 +799,7 @@ class Detector:
         if len(diff) < NEW_PX:
             return None
         big = self.big()
-        if t - self.still_since < (STILL_S if not big else SHEET_S if self.scattered() else BIG_S):
+        if t - self.still_since < (STILL_S if not big else SHEET_S if (self.scattered() or self.swapped()) else BIG_S):
             return None
         dx, dy = self.shift
         # how the sheet moved since the last one handed on (degrees, thumb px), if that could be measured:
@@ -552,7 +814,20 @@ class Detector:
         self.prev = (self.base, self.baseline)
         self.base, self.baseline, self.still_since, self.shift, self.diff, self.turn = thumb, envelope(thumb), t, (0, 0), [], 0
         self.fitted = self.far = False
+        self.changed = 0
         return ("big-change" if big else "drawn"), diff
+
+    def hold(self):
+        """A hand is on the paper (or there is no paper): this still spell must not settle."""
+        self.held = self.spell
+
+    def holding(self):
+        return self.held == self.spell
+
+    def candidate(self):
+        """The still spell whose settled picture should be checked for a hand or for paper, if any."""
+        return self.spell if (not self.holding()
+                              and ((self.diff and len(self.diff) >= NEW_PX) or self.changed >= BIG * W * H)) else None
 
     def scattered(self):
         """The change is spread over many patches, the biggest under SCATTER of it, and over most of the
@@ -577,6 +852,15 @@ class Detector:
             self.patchy = self.diff, biggest < SCATTER * len(self.diff)
         return self.patchy[1]
 
+    def swapped(self):
+        """The change fills most of the picture in one piece: a new sheet, of any colour, laid over
+        the old one. A hand reaches in from one side and never spans the whole picture."""
+        if not self.diff:
+            return False
+        xs, ys = [i % W for i in self.diff], [i // W for i in self.diff]
+        return (len(self.diff) >= 0.3 * W * H
+                and max(xs) - min(xs) >= 0.8 * W and max(ys) - min(ys) >= 0.8 * H)
+
     def big(self):
         """A large change, or a sheet that slid further than we can line up."""
         return (len(self.diff) > BIG * W * H or self.far
@@ -591,7 +875,7 @@ class Detector:
         """The last emit didn't happen after all: back to the sheet before it, wait for stillness again."""
         self.base, self.baseline = self.prev
         self.anchor, self.still_since, self.shift, self.diff, self.turn, self.fitted = None, t, None, None, 0, False
-        self.far = False
+        self.far, self.held, self.changed = False, None, 0
 
 
 def box(diff, size):
@@ -637,14 +921,16 @@ def camera():
 
 
 class Snapshot:
-    """The full-size picture, fetched (and shrunk for the check) in the background."""
+    """A picture fetched (and shrunk for the check) in the background; `small` for a recheck."""
 
-    def __init__(self, url, spell):
-        self.spell, self.result = spell, None
-        self.thread = threading.Thread(target=self.fetch, args=(url,), daemon=True)
+    def __init__(self, url, spell, small=False):
+        self.spell, self.result, self.checked = spell, None, False
+        self.thread = threading.Thread(target=self.fetch, args=(url, small), daemon=True)
         self.thread.start()
 
-    def fetch(self, url):
+    def fetch(self, url, small_pic):
+        if small_pic:
+            url += ("&" if "?" in url else "?") + "small"
         try:
             with urllib.request.urlopen(url, timeout=10) as r:
                 data = r.read(MAX_BYTES + 1)
@@ -652,10 +938,13 @@ class Snapshot:
             self.result = e if isinstance(e, OSError) else OSError(str(e) or type(e).__name__)
             return
         size = jpeg_size(data)
-        self.result = data, size, size and small(data)
+        self.result = data, size, size and small(data), size and colour(data)
+
+    def ready(self):
+        return not self.thread.is_alive()
 
     def get(self):
-        """(data, size, thumbnail or None), or raises the fetch's OSError."""
+        """(data, size, grey thumbnail or None, colour thumbnail or None), or raises the fetch's OSError."""
         self.thread.join()
         if isinstance(self.result, OSError):
             raise self.result
@@ -775,19 +1064,32 @@ def cutout(data, box_px, size, path, diff=None, side=256):
     return True
 
 
+def held_status(status, held):
+    """Tell the viewer why a settled picture is not being handed on."""
+    if held == "hand":
+        status.set("moving", "hand on the paper")
+    else:
+        status.set("no-paper", "no paper")
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     done = sorted(OUT.glob("*.jpg"))
     previous = done[-1].name if done else None
     det = Detector(small(done[-1].read_bytes()) if done else None)
+    base_rgb = colour(done[-1].read_bytes()) if done else None
     status, stream, url, seq, checked, cam, early = Status(), None, None, 0, 0, None, None
+    held, held_spell, recheck, recheck_at, recheck_step = None, 0, None, 0.0, 0
     while True:
         if time.monotonic() - checked > 1:   # the picker may switch cameras at any time
             checked, cam = time.monotonic(), camera()
             if cam is None or cam[0] != url:
+                if url is not None:
+                    base_rgb = None              # another camera's picture is no base for this one
                 if stream:
                     stream.stop()
                 stream, url, seq, det.anchor = None, cam and cam[0], 0, None
+                early, held, held_spell, recheck, recheck_step = None, None, 0, None, 0
         if cam is None:                       # none chosen (or no camera.json): wait, and say so
             status.set("no-camera")
             time.sleep(0.5)
@@ -811,28 +1113,83 @@ def main():
             continue
         t = time.monotonic()
         got = det.feed(centred(px), t)
-        spell = det.drawing()
-        if spell and (early is None or early.spell != spell):
-            early = Snapshot(url, spell)      # a drawing, still for EARLY_S: fetch it while the still time runs
+        if held and det.spell == held_spell:
+            det.hold()                       # a hand or an empty table still holds this spell
+        spell = det.candidate()
+        if spell and (early is None or (early.spell != spell and early.checked)):
+            early = Snapshot(url, spell)      # settled for EARLY_S: fetch it while the still time runs
+        # once that picture is here, is a hand still on the paper, or is there no paper at all?
+        if early and not early.checked and early.ready():
+            early.checked = True
+            try:
+                _, _, snap, rgb = early.get()
+            except OSError as e:
+                print(f"camera snapshot: {e}", file=sys.stderr, flush=True)
+                snap = rgb = None
+            if rgb:
+                found = look(rgb, base_rgb)
+                if found != "paper":
+                    det.hold()
+                    held, held_spell = found, det.spell
+                    recheck_at, recheck_step = time.monotonic(), 0
+                elif early.spell == det.spell:
+                    held = None               # this settled picture has paper and no hand
+            if early.spell != det.spell:
+                early = None                  # a newer still spell: look at that one next
+        if held:
+            now = time.monotonic()
+            delay = HOLD_RECHECKS[min(recheck_step, len(HOLD_RECHECKS) - 1)]
+            if recheck is None and now - recheck_at >= delay:
+                recheck, recheck_at = Snapshot(url, det.spell, small=True), now
+            if recheck and not recheck.checked and recheck.ready():
+                recheck.checked = True
+                try:
+                    _, _, _, rgb = recheck.get()
+                except OSError as e:
+                    print(f"camera snapshot: {e}", file=sys.stderr, flush=True)
+                    rgb = None
+                if rgb:
+                    found = look(rgb, base_rgb)
+                    if found == "paper":
+                        held, det.held, early, recheck_step = None, None, None, 0
+                    else:
+                        held, held_spell = found, det.spell
+                        recheck_step += 1
+                else:
+                    recheck_step += 1
+                recheck = None
+        if held:
+            held_status(status, held)
+            continue
         if not got:
             status.set("moving" if det.moved_at and t - det.moved_at < STILL_S + 1 else "watching")
             continue
         # hand on the full-size picture, not the thumbnail: the one fetched early in this still
-        # spell, or (a big change, or the stream moved on) one fetched now
-        shot = early if early and early.spell == det.spell and got[0] == "drawn" else Snapshot(url, None)
+        # spell, or (the stream moved on) one fetched now
+        shot = early if early and early.spell == det.spell else Snapshot(url, None)
         early = None
         try:
-            data, size, snap = shot.get()
+            data, size, snap, rgb = shot.get()
         except OSError as e:
             print(f"camera snapshot: {e}", file=sys.stderr, flush=True)
             det.undo(t)                       # don't lose the drawing: let it settle and try again
             continue
-        if not snap or len(new_marks(snap, det.anchor)) >= NEW_PX:
+        if not snap or len(new_marks(snap, det.anchor)) >= SNAP_DIFF:
             # the snapshot isn't the picture that settled (a hand came back): let it settle again
             print("snapshot differs from the settled picture; waiting again", file=sys.stderr, flush=True)
             det.undo(t)
+            early, held = None, None
+            continue
+        found = look(rgb, base_rgb) if rgb else "paper"
+        if found != "paper":
+            det.hold()
+            shot.checked, held, held_spell = True, found, det.spell
+            recheck_at, recheck_step = time.monotonic(), 0
+            early = shot
+            held_status(status, held)
             continue
         previous = hand_on(data, size, *got, cam[1], previous, det.measured if previous else None)
+        base_rgb = rgb
         meta = json.loads((OUT / previous.replace(".jpg", ".json")).read_text())
         try:
             cut = cutout(data, meta["changed_box"], size, STATUS / "cutout.png", got[1])
@@ -841,6 +1198,7 @@ def main():
         status.last = {"frame": previous[:-4], "at": time.time(), "reason": got[0], "box": meta["changed_box"],
                        "width": size[0], "height": size[1], "cutout": cut}
         status.set("settled", previous[:-4])
+        held = None
 
 if __name__ == "__main__":
     try:
