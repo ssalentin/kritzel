@@ -64,6 +64,7 @@ OVERLAP, MATCH = 0.15, 0.6   # ...and one slid further, partly out of view: OVER
 SHEET_S, SCATTER, SPAN = 3.0, 0.6, 0.5   # a big change whose biggest patch is under SCATTER of it, spanning over
                                         # SPAN of the picture: a new sheet, handed on after SHEET_S
 EARLY_S = 0.3            # into a still spell: look what's new, and fetch the snapshot of a drawing already
+HOLD_RECHECK_S = 0.3     # a held frame is looked at again this often: the moving hand may have been in the first shot
 SHRINK = f"format=gray,scale=960:540:flags=area,erosion,erosion,scale={W}:{H}:flags=area"   # keeps thin lines
 CW, CH = 96, 54          # colour thumbnail: the sheet and a hand, not the drawing's lines
 PAPER_BLOCK = 4          # the hand check works on blocks this many colour-thumbnail px square
@@ -1076,7 +1077,7 @@ def main():
     det = Detector(small(done[-1].read_bytes()) if done else None)
     base_rgb = colour(done[-1].read_bytes()) if done else None
     status, stream, url, seq, checked, cam, early = Status(), None, None, 0, 0, None, None
-    held, held_spell = None, 0
+    held, held_spell, recheck, recheck_at = None, 0, None, 0.0
     while True:
         if time.monotonic() - checked > 1:   # the picker may switch cameras at any time
             checked, cam = time.monotonic(), camera()
@@ -1086,7 +1087,7 @@ def main():
                 if stream:
                     stream.stop()
                 stream, url, seq, det.anchor = None, cam and cam[0], 0, None
-                early, held, held_spell = None, None, 0
+                early, held, held_spell, recheck = None, None, 0, None
         if cam is None:                       # none chosen (or no camera.json): wait, and say so
             status.set("no-camera")
             time.sleep(0.5)
@@ -1128,10 +1129,30 @@ def main():
                 if found != "paper":
                     det.hold()
                     held, held_spell = found, det.spell
+                    recheck_at = time.monotonic()
                 elif early.spell == det.spell:
                     held = None               # this settled picture has paper and no hand
             if early.spell != det.spell:
                 early = None                  # a newer still spell: look at that one next
+        if held:
+            now = time.monotonic()
+            if recheck is None and now - recheck_at >= HOLD_RECHECK_S:
+                recheck, recheck_at = Snapshot(url, det.spell), now
+            if recheck and not recheck.checked and recheck.ready():
+                recheck.checked = True
+                try:
+                    _, _, _, rgb = recheck.get()
+                except OSError as e:
+                    print(f"camera snapshot: {e}", file=sys.stderr, flush=True)
+                    rgb = None
+                if rgb:
+                    found = look(rgb, base_rgb)
+                    if found == "paper":
+                        held, det.held = None, None
+                        early = recheck if recheck.spell == det.spell else None
+                    else:
+                        held, held_spell = found, det.spell
+                recheck = None
         if held:
             held_status(status, held)
             continue
@@ -1158,6 +1179,7 @@ def main():
         if found != "paper":
             det.hold()
             shot.checked, held, held_spell = True, found, det.spell
+            recheck_at = time.monotonic()
             early = shot
             held_status(status, held)
             continue
