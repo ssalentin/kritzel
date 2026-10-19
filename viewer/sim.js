@@ -246,6 +246,9 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   const say = (a, text, dur = 2.4, delay = 0) => pending.push({ a, text, at: now + delay, dur: readTime(text, dur) });
   const BUBBLES_MAX = 2;                 // at most this many speech bubbles at once (a dialogue's two always get through)
   const line = (a, group) => {
+    // what the figure says on the paper (lines.said, { de, en }): its first greet or chat, then about one time in three
+    const said = a.lines?.said && (lang() === 'en' ? a.lines.said.en : a.lines.said.de);
+    if (said && (group === 'greet' || group === 'chat') && (!a.saidOnce || R() < 1 / 3)) { a.saidOnce = true; return said; }
     const own = pickLines(a.lines?.[group]);     // a drawn character's own lines: array (German) or { de, en }
     if (own?.length) return pick(own);
     const L = lang() === 'en' ? LINES_EN : LINES;
