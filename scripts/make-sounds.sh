@@ -21,7 +21,10 @@ echo "earshot: $earshot_commit"
 git clone -q https://github.com/Leonxlnx/earshot "$work/earshot"
 git -C "$work/earshot" checkout -q "$earshot_commit"
 python3 -m venv "$work/venv"
-"$work/venv/bin/pip" install -q --disable-pip-version-check numpy scipy soundfile librosa pyloudnorm
+# pinned with the bank: a different numpy/scipy/librosa can move the rendered samples
+"$work/venv/bin/pip" install -q --disable-pip-version-check \
+  numpy==2.4.6 scipy==1.17.1 soundfile==0.14.0 librosa==0.11.0 pyloudnorm==0.2.0
+echo "ffmpeg: $(ffmpeg -version | head -1)"   # Ogg q4 (libvorbis); the bank was rendered with 5.1.9
 
 mkdir -p "$out"
 render() {   # role → earshot id

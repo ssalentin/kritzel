@@ -52,8 +52,8 @@ camera ──► frame ──► generation (generate/) ────────
 `viewer/sounds/*.ogg` is rendered by `scripts/make-sounds.sh` from
 [earshot](https://github.com/Leonxlnx/earshot), a build-time tool only: earshot is not a
 runtime dependency, and the browser just decodes the small Ogg files after the first
-click. The script pins the earshot checkout, installs only the render/measure
-dependencies, renders each role with `earshot sfx render --peak -5` (headroom for the
+click. The script pins the earshot checkout and the render/measure dependency versions,
+renders each role with `earshot sfx render --peak -5` (headroom for the
 Ogg encoder; every file measures below −1 dBTP), and prints `earshot measure` for the
 bank. Re-run it when a role needs a different sound. The procedural effects in
 `sound.js` stay as the fallback for the moment before the bank has decoded.
