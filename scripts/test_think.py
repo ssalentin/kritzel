@@ -46,11 +46,14 @@ class Upstream(BaseHTTPRequestHandler):
             answers["stranger"] = {"type": "choice", "choice": "chat", "confidence": 1}
             answers["__proto__"] = {"type": "choice", "choice": "chat", "confidence": 1}
         out = json.dumps({"answers": answers, "usage": {"cost": 0.0000217, "input_tokens": 500, "output_tokens": 80}}).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(out)))
-        self.end_headers()
-        self.wfile.write(out)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+        except (BrokenPipeError, ConnectionResetError):
+            pass          # the proxy already gave up (the timeout test): no reader is left
 
     def log_message(self, *args):
         pass
