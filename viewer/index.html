@@ -431,6 +431,7 @@ langBtn.addEventListener('click', e => { e.stopPropagation(); setLang(lang() ===
 const textForm = document.getElementById('textThing'), textIn = document.getElementById('textThingIn'), textBtn = textForm.querySelector('button');
 const pillNote = document.querySelector('#status .note');
 let noteTimer = 0;
+let typedUntil = 0;                      // the next thing to arrive gets the typed-arrival chime
 function note(msg, ms = 7000) {          // a short message inside the status pill (the pill's own text is status.js's)
   clearTimeout(noteTimer);
   pillNote.textContent = msg; pillNote.hidden = !msg;
@@ -455,6 +456,7 @@ textForm.addEventListener('submit', async e => {
     const r = await fetch('/api/text-thing', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Kritzel': '1' }, body: JSON.stringify({ text }) });
     if (r.status === 400) error = (await r.json().catch(() => null))?.error || t('textThingRejected');
     else if (!r.ok) error = t('textThingNoServer');       // an old server has no such endpoint: said once, never retried
+    else typedUntil = performance.now() + 90000;          // built asynchronously: its arrival comes within this window
   } catch { error = t('textThingNoServer'); }
   if (error) textIn.value = text;                        // keep what was typed, so it can be changed
   const rest = 700 - (performance.now() - started);      // "wird gebaut …" stays readable for a moment
@@ -492,7 +494,11 @@ const status = createStatus({ THREE, scene, el: document.getElementById('status'
 
 const api = { THREE, scene, world, camera, controls, bubble, shadowAll, mood: lighting,
   reserved: () => status.reserved(), claimSpot: () => status.claimSpot(),
-  arrived: (box, name, foot) => { status.arrived(box, name, foot); sound?.fx('plopp', box); },
+  arrived: (box, name, foot) => {
+    status.arrived(box, name, foot);
+    sound?.fx(performance.now() < typedUntil ? 'typedArrival' : 'arrival', box);
+    typedUntil = 0;
+  },
   report: msg => { errEl.textContent += (errEl.textContent ? '\n' : '') + msg; } };
 const err = document.getElementById('err');
 let current = null;
@@ -698,7 +704,7 @@ canvas.addEventListener('pointerup', e => {
     if (!focus) card.style.display = 'none';
     return;
   }
-  if (who) { try { current.brain().tap?.(who); } catch {} sound?.fx('plopp', who.rig.g); }
+  if (who) { try { current.brain().tap?.(who); } catch {} sound?.fx('tap', who.rig.g); sound?.fx('giggle', who.rig.g); }
   else if (hit) { try { current?.tapThing?.(hit); } catch {} }
 });
 addEventListener('keydown', e => { if (e.key === 'Escape') { focus = null; card.style.display = 'none'; } });
@@ -755,7 +761,8 @@ function newWorldTransition(turn = true) {
   if (morph?.sheet) { scene.remove(morph.sheet.pivot); morph.sheet.geo.dispose(); }   // a turn already running: drop its page
   morph = { t0: performance.now() - (turn ? 0 : 2000), release: null, folds: [], sheet: null };
   if (!turn) { veil.classList.add('on'); return Promise.resolve(); }
-  sound?.fx('melodie');
+  sound?.fx('pageTurn');
+  setTimeout(() => sound?.fx('newWorld'), 560);   // the chime lands as the sheet comes down
   // the old things fold flat into the page, one after another (a pop-up book), not all at once
   let i = 0;
   for (const box of world.children) if (!box.userData.book) { foldBox(box, i * 0.09 + Math.random() * 0.05); i++; }

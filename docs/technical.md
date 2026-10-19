@@ -40,10 +40,23 @@ camera ──► frame ──► generation (generate/) ────────
   relationships; goals are picked by utility.
 - **`viewer/sim-extra.js`** — speech lines and interactions (chats, dances, tag,
   hiding, visiting doors, carrying keys to locks, inspecting newly drawn things).
-- **`viewer/sound.js`** — procedural Web Audio sound, no sound files: Animal-Crossing
-  style babble per speaker, small word-triggered effects, a quiet wind bed, all
-  spatialised relative to the camera. Off until the user clicks.
+- **`viewer/sound.js`** — Web Audio sound: Animal-Crossing style babble per speaker,
+  small word-triggered effects, a quiet wind bed, and a nine-role bank in
+  `viewer/sounds/` (arrival, page turn, tap, giggle, weather sparkle, rain, thunder,
+  new world, typed thing). All of it is spatialised relative to the camera and stays off
+  until the user clicks; the bank is fetched only then.
 - **`viewer/serve.py`** — a no-cache static server on `127.0.0.1:8765`.
+
+### The sound bank
+
+`viewer/sounds/*.ogg` is rendered by `scripts/make-sounds.sh` from
+[earshot](https://github.com/Leonxlnx/earshot), a build-time tool only: earshot is not a
+runtime dependency, and the browser just decodes the small Ogg files after the first
+click. The script pins the earshot checkout, installs only the render/measure
+dependencies, renders each role with `earshot sfx render --peak -5` (headroom for the
+Ogg encoder; every file measures below −1 dBTP), and prints `earshot measure` for the
+bank. Re-run it when a role needs a different sound. The procedural effects in
+`sound.js` stay as the fallback for the moment before the bank has decoded.
 
 The viewer speaks German or English (the world is made for drawing with kids): the DE/EN
 button next to 📷 switches all UI texts and the characters' speech; the choice is kept in
