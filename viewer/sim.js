@@ -187,6 +187,15 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   }
   function separate(dt) {
     const k = Math.min(1, dt * 8);
+    // a crowd must not push a figure into a drawn thing; a special mover (fly/swim/climb) is exempt
+    const nudge = (c, dx, dz, mag) => {
+      if (MV?.special(c, envNow)) { c.pos.x += dx * mag; c.pos.z += dz * mag; return; }
+      const inside = !bodyClear(c.pos.x, c.pos.z, c);
+      const nx = c.pos.x + dx * mag, nz = c.pos.z + dz * mag;
+      if (inside || bodyClear(nx, nz, c)) { c.pos.x = nx; c.pos.z = nz; }
+      else if (bodyClear(nx, c.pos.z, c)) { c.pos.x = nx; }
+      else if (bodyClear(c.pos.x, nz, c)) { c.pos.z = nz; }
+    };
     for (let i = 0; i < actors.length; i++) {
       const a = actors[i];
       if (a.hidden) continue;
@@ -200,8 +209,8 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         const wa = give(a, c), wc = give(c, a);
         if (!wa && !wc) continue;
         const push = (min - d) * k, sa = wa / (wa + wc), sc = wc / (wa + wc);
-        a.pos.x -= dx * push * sa; a.pos.z -= dz * push * sa;
-        c.pos.x += dx * push * sc; c.pos.z += dz * push * sc;
+        nudge(a, -dx, -dz, push * sa);
+        nudge(c, dx, dz, push * sc);
       }
     }
   }
@@ -768,7 +777,9 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
 
   return {
     addActor, removeActor,
-    actors: () => actors, byId: () => byId, spots: () => spots, weather: () => weatherNow, trace: () => picks.slice(), solved: () => X.solvedQuests?.() ?? [],   // read-only views for the UI and tests
+    actors: () => actors, byId: () => byId, spots: () => spots, time: () => now,
+    weather: () => weatherNow, trace: () => picks.slice(), solved: () => X.solvedQuests?.() ?? [],   // read-only views for the UI and tests
+    blockingFeet: () => feet.map(f => ({ x: f.x, z: f.z, hx: f.hx, hz: f.hz })),   // for tests: what the grid treats as solid
     // the director's numbers for a measured run (latency in ms, cost in dollars, fps of the whole page)
     think: () => ({ on: thinkOn, updates, ...thinkStats, latency: thinkStats.latency.slice(), cost: +thinkStats.cost.toFixed(8),
       median: thinkStats.latency.length ? [...thinkStats.latency].sort((p, q) => p - q)[Math.floor(thinkStats.latency.length / 2)] : null, fps }),
