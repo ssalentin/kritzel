@@ -7,9 +7,31 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, exist
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 process.env.PATH = join(import.meta.dirname, 'test-bin') + ':' + process.env.PATH;
+process.env.KRITZEL_PROVIDER = 'claude';
 delete process.env.KRITZEL_MODEL; delete process.env.KRITZEL_DRAFT_MODEL;
 const { processTextRequest } = await import('./generate.mjs');
+const { withThingWrite } = await import('./generate.mjs');
+const { CHANGE_SYSTEM } = await import('./prompts.mjs');
 const snail = readFileSync(join(import.meta.dirname, 'examples', 'schnecke.js'), 'utf8');
+const flyer = `// parts: body = a witch
+// parts: broom = a separate group
+export const meta = { name: 'Hexe', drawing: 'a witch on a broom', paper: { x: 0.5, y: 0.5 } };
+export function build(ctx) {
+  const { THREE, world, mat, bubble, shadowAll } = ctx;
+  const g = new THREE.Group(), broom = new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.3, 1, 8), mat(0x6b4aa8)));
+  broom.add(new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2, 8), mat(0x9a6a3c)));
+  g.position.y = 1.2;
+  shadowAll(g); shadowAll(broom); world.add(g); world.add(broom);
+  const b = bubble(g, 2);
+  function animate() {}
+  function update() { broom.position.copy(g.position); }
+  update();
+  return { actors: [{ id: 'hexe', name: 'Hexe', start: [0, 0], speed: 1, move: 'fly',
+    rig: { kind: 'hexe', g, say: t => b.say(t), animate },
+    lines: { greet: { de: ['Hi'], en: ['Hi'] }, chat: { de: ['Ja'], en: ['Yes'] }, reply: { de: ['Ja'], en: ['Yes'] } } }],
+    obstacles: [], spots: [], update };
+}`;
 const lantern = `// parts: body = a short round base
 // parts: glass = a tall glass box above it
 // parts: roof = a small pointed lid
@@ -151,6 +173,109 @@ test('a correction of an unknown target fails without calling the model', async 
     assert.match(r.error, /no such thing to change/);
     assert.equal(existsSync(log), false);
   } finally { delete process.env.FAKE_CLAUDE_LOG; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a flying support left outside the rig is sent back once for a fix', async () => {
+  const dir = dirs();
+  try {
+    writeFileSync(join(dir, 'things', 'hexe.js'), flyer);
+    writeFileSync(join(dir, 'reply.txt'), `### UPDATE hexe.js\n${flyer}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const r = await processTextRequest(request(dir, 'text-20261019-184019', 'sit on the broom', { mode: 'change', target: 'hexe.js' }),
+      { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    assert.match(r.error, /separate world group/);
+    const fix = r.calls.find(c => c.fix);
+    assert.ok(fix, JSON.stringify(r.calls));
+    assert.match(fix.fixing.join(' '), /separate world group/);
+    assert.equal(readFileSync(join(dir, 'things', 'hexe.js'), 'utf8'), flyer);   // the failed fix leaves the old module
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a flying support put inside the rig passes without a fix', async () => {
+  const dir = dirs();
+  try {
+    writeFileSync(join(dir, 'things', 'hexe.js'), flyer);
+    const fixed = flyer.replace('shadowAll(g); shadowAll(broom); world.add(g); world.add(broom);', 'g.add(broom); shadowAll(g); world.add(g);')
+      .replace('function update() { broom.position.copy(g.position); }', 'function update() {}');
+    writeFileSync(join(dir, 'reply.txt'), `### UPDATE hexe.js\n${fixed}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const r = await processTextRequest(request(dir, 'text-20261019-184020', 'sit on the broom', { mode: 'change', target: 'hexe.js' }),
+      { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    assert.equal(r.error, undefined, r.error);
+    assert.equal(r.calls.some(c => c.fix), false, JSON.stringify(r.calls));
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the correction prompt keeps the child-safety refusal', () => {
+  assert.match(CHANGE_SYSTEM, /weapons, violence, scary or adult/);
+  assert.match(CHANGE_SYSTEM, /UNCLEAR/);
+});
+
+test('the change path rejects UNCLEAR, REMOVE, empty and several sections with the reason', async () => {
+  const replies = {
+    unclear: 'UNCLEAR: a sword | not for the book',
+    remove: '### REMOVE hexe.js\nit was crossed out',
+    empty: '',
+    several: `### UPDATE hexe.js\n${flyer}\n### UPDATE other.js\n${flyer}`,
+  };
+  for (const [name, reply] of Object.entries(replies)) {
+    const dir = dirs();
+    try {
+      writeFileSync(join(dir, 'things', 'hexe.js'), flyer);
+      writeFileSync(join(dir, 'reply.txt'), reply);
+      process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+      const r = await processTextRequest(request(dir, `text-20261019-18403${name.length}`, 'fix it', { mode: 'change', target: 'hexe.js' }),
+        { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+      assert.ok(r.error, name);
+      assert.match(r.error, name === 'unclear' ? /cannot change this/ : name === 'remove' ? /must not remove/ : name === 'several' ? /changed 2 things/ : /no corrected module/, name);
+      assert.equal(readFileSync(join(dir, 'things', 'hexe.js'), 'utf8'), flyer);
+    } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+  }
+});
+
+test('a computed meta name and a non-actor id do not break a correction', async () => {
+  const dir = dirs();
+  try {
+    const computed = `const NAME = 'Hexe';
+const extra = { id: 'not-an-actor' };
+export const meta = { name: NAME, drawing: 'a witch', paper: { x: 0.4, y: 0.5 } };
+export function build(ctx) {
+  const { THREE, world, mat } = ctx;
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.3, 1, 8), mat(0x6b4aa8)));
+  world.add(g);
+  return { actors: [{ id: 'hexe', name: NAME, start: [0, 0], rig: { kind: 'hexe', g, say() {}, animate() {} },
+    lines: { greet: { de: ['Hi'], en: ['Hi'] }, chat: { de: ['Ja'], en: ['Yes'] }, reply: { de: ['Ja'], en: ['Yes'] } } }],
+    obstacles: [], spots: [] };
+}`;
+    writeFileSync(join(dir, 'things', 'hexe.js'), computed);
+    const fixed = computed.replace("const extra = { id: 'not-an-actor' };", "const extra = { id: 'not-an-actor', fixed: true };")
+      .replace("g.add(new THREE.Mesh", "g.add(new THREE.Mesh").replace('world.add(g);', 'world.add(g);');
+    writeFileSync(join(dir, 'reply.txt'), `### UPDATE hexe.js\n${fixed}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const r = await processTextRequest(request(dir, 'text-20261019-184040', 'fix it', { mode: 'change', target: 'hexe.js' }),
+      { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    assert.equal(r.error, undefined, r.error);
+    assert.match(readFileSync(join(dir, 'things', 'hexe.js'), 'utf8'), /fixed: true/);
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('thing writes are serialized, and concurrent new requests get distinct files', async () => {
+  const order = [];
+  await Promise.all([
+    withThingWrite(async () => { order.push('a-start'); await new Promise(ok => setTimeout(ok, 40)); order.push('a-end'); }),
+    withThingWrite(async () => { order.push('b-start'); order.push('b-end'); }),
+  ]);
+  assert.deepEqual(order, ['a-start', 'a-end', 'b-start', 'b-end']);
+  const dir = dirs();
+  try {
+    writeFileSync(join(dir, 'reply.txt'), `### NEW\n${lantern}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const a = processTextRequest(request(dir, 'text-20261019-184041', 'eine Laterne'), { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    const b = processTextRequest(request(dir, 'text-20261019-184042', 'eine Laterne'), { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    await Promise.all([a, b]);
+    assert.deepEqual(readdirSync(join(dir, 'things')).filter(f => f.endsWith('.js')).sort(), ['laterne-2.js', 'laterne.js']);
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('the watcher picks up a request, and a second look at the same id builds it only once', async () => {

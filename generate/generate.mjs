@@ -62,6 +62,13 @@ function freeName(base, taken) {
   return n;
 }
 const atomicWrite = (path, data) => { const tmp = join(dirname(path), '.' + basename(path) + '.tmp'); writeFileSync(tmp, data); renameSync(tmp, path); };
+// One writer at a time: a typed request and a sheet frame must not choose the same name or overwrite each other.
+let thingWriteChain = Promise.resolve();
+export function withThingWrite(fn) {
+  const run = thingWriteChain.then(fn, fn);
+  thingWriteChain = run.catch(() => {});
+  return run;
+}
 
 // changed_box (+ margin) → a JPEG, and where it goes on the island. A tight crop is sharp at 768 px; a whole
 // sheet (no trusted box) goes at up to 1568 px (Claude's own limit), so small drawings stay legible
@@ -138,6 +145,10 @@ const FIX_SLOTS = 2, fixSlot = slots(FIX_SLOTS);
 // most FINAL_SLOTS at once, in the background. Unset: one stage, as before.
 export const DRAFT_MODEL = process.env.KRITZEL_DRAFT_MODEL || null;
 const BUILD = DRAFT_MODEL || MODEL;                    // what lists and builds first
+// Typed requests keep the strong model: DeepSeek v4.1 flash measured 9.2 s (new) and 51.4 s (change),
+// above the 5 s bar. Both can be overridden independently when a two-stage text path is tried.
+export const TEXT_PROVIDER = process.env.KRITZEL_TEXT_PROVIDER || 'claude';
+export const TEXT_MODEL = process.env.KRITZEL_TEXT_MODEL || 'claude-sonnet-5-5';
 const FINAL_SLOTS = +process.env.KRITZEL_FINAL_SLOTS || 4, finalSlot = slots(FINAL_SLOTS);
 const FINAL_RETRY_MS = (+process.env.KRITZEL_FINAL_RETRY_S || 180) * 1000;
 const BUILD_SLOTS = +process.env.KRITZEL_BUILD_SLOTS || (isPiModel(BUILD) ? 8 : 4), buildSlot = slots(BUILD_SLOTS);
@@ -146,12 +157,12 @@ const onlyHolds = problems => problems.length > 0 && problems.every(p => /^(hold
 // deferHolds: when the only problem is a held creature not written yet, say so at once instead of
 // asking for a fix (which would just drop the hold)
 // extra(info) → more problems, from what the check measured (a creature hanging with nothing above it)
-async function finish({ body, model, frame, images, takenIds, keepIds, oldName = null, calls, deferHolds = false, extra = null, says = null, fixModels = [BUILD, FALLBACK_MODEL], source = null, fixIntro = null }) {
+async function finish({ body, model, frame, images, takenIds, keepIds, oldName = null, calls, deferHolds = false, extra = null, says = null, fixModels = [BUILD, FALLBACK_MODEL], source = null, fixIntro = null, provider = null }) {
   let code = body.split('\n').filter(l => !l.startsWith(MARK)).join('\n').trim(), problems, simSkipped = null, info = {};
   for (const fixModel of [null, ...fixModels]) {
     if (fixModel) {
       if (deferHolds && onlyHolds(problems)) return { problems, held: true, info };
-      const r = await fixSlot(() => oneShot({ system: SYSTEM, text: fixText({ problems, code, ...(fixIntro && { intro: fixIntro }) }), images: images.slice(-1), model: fixModel }));   // the area now
+      const r = await fixSlot(() => oneShot({ system: SYSTEM, text: fixText({ problems, code, ...(fixIntro && { intro: fixIntro }) }), images: images.slice(-1), model: fixModel, ...(provider && { provider }) }));   // the area now
       calls.push(callOf(r, { fix: true, fixing: problems }));
       code = stripFences(r.text).replace(/^###.*\n/, '');
       model = r.model;
@@ -182,7 +193,7 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
       if (!problems.length && !fixModel) problems.push(...plainWater(code, info));
       if (!problems.length && !fixModel) problems.push(...unsaid(code, says));
       if (!problems.length && !fixModel && (!DRAFT_MODEL || model === MODEL)) problems.push(...blobs(code, info));
-      if (!problems.length && extra) problems.push(...extra(info, code));
+      if (!problems.length && extra) problems.push(...(await extra(info, code)));
     }
     if (!problems.length) return { code: full, model, info, warnings: [
       ...(info.tris > TRIS ? [`${info.tris} triangles (more than ${TRIS}): heavy for the viewer, which draws every thing at once`] : []),
@@ -232,6 +243,23 @@ export function wordOnly(code) {
 // ---------- a typed wish: frames/requests/<id>.json → one thing ----------
 export const textRequestId = file => basename(file).replace(/\.json$/, '');
 
+// A correction must be exactly one corrected module: a reason (UNCLEAR), a removal or several sections are failures.
+export function changeModule(text) {
+  let sections;
+  try { sections = parseReply(text); } catch (e) {
+    if (!text.trim()) throw new Error('the reply had no corrected module');
+    if (/export\s+const\s+meta\b/.test(text) && /export\s+(async\s+)?function\s+build\b/.test(text)) return stripFences(text);
+    throw e;
+  }
+  const unclear = sections.find(s => s.kind === 'UNCLEAR');
+  if (unclear) throw new Error(`cannot change this: ${unclear.body.split('|')[0].trim().slice(0, 240)}`);
+  if (sections.some(s => s.kind === 'REMOVE')) throw new Error('a correction must not remove the thing');
+  const modules = sections.filter(s => s.kind === 'UPDATE' || s.kind === 'NEW');
+  if (modules.length > 1) throw new Error(`the reply changed ${modules.length} things; a correction changes one`);
+  if (!modules.length) throw new Error('the reply had no corrected module');
+  return modules[0].body;
+}
+
 // The names and actor ids a text request needs, without running every module's top level in a sandbox:
 // readThings (metaOf per file) costs ~0.4 s per thing, and a typed request must not wait seconds for that.
 export function readThingIndex(dir) {
@@ -268,40 +296,58 @@ export async function processTextRequest(reqPath, { thingsDir, reportsDir, onPro
     const existing = readThingIndex(thingsDir);
     const old = mode === 'change' ? existing.find(t => t.file === target) : null;
     if (mode === 'change' && !old) throw new Error(`no such thing to change: ${target}`);
-    const r = await oneShot({ system: mode === 'change' ? CHANGE_SYSTEM : TEXT_SYSTEM,
+    const r = await oneShot({ system: mode === 'change' ? CHANGE_SYSTEM : TEXT_SYSTEM, provider: TEXT_PROVIDER, model: TEXT_MODEL,
       text: mode === 'change' ? changeText({ text, file: target, code: old.code }) : textThingText(text),
       images: [], timeoutMs: 6 * 60_000, model: MODEL });
     report.calls.push(callOf(r));
     report.reply = r.text.slice(0, 4000);
     if (mode === 'change') {
       // the correction keeps the thing: same file, name, actor ids, starts and paper placement
-      let body = stripFences(r.text).trim();
-      try {
-        const sec = parseReply(r.text).find(s => s.kind === 'UPDATE' || s.kind === 'NEW');
-        if (sec) body = sec.body;
-      } catch { /* a bare module is what the prompt asks for */ }
-      const oldName = old.code.match(/\bmeta\s*=\s*\{[^}]*?\bname:\s*['"]([^'"]+)['"]/)?.[1] || old.meta.name;
+      const body = changeModule(r.text);
+      // the target's real meta and actor ids (a computed name or a non-actor id: in the code text is not enough)
+      const oldMeta = (await metaOf(old.code)) || { name: old.meta.name };
+      const oldBuilt = await buildCheck(old.code, { takenIds: [] });
+      const oldIds = oldBuilt.info?.actors || old.ids;
+      const oldName = oldMeta.name;
       const starts = code => [...code.matchAll(/start:\s*\[\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\]/g)].map(m => `${+m[1]},${+m[2]}`);
       const oldStarts = new Set(starts(old.code));
       const paper = old.code.match(/paper:\s*\{\s*x:\s*([-\d.]+)\s*,\s*y:\s*([-\d.]+)/);
-      const extra = (info, codeNow) => {
+      const extra = async (info, codeNow) => {
         const out = [];
-        const name = codeNow.match(/\bmeta\s*=\s*\{[^}]*?\bname:\s*['"]([^'"]+)['"]/)?.[1];
+        // comments must not satisfy the identity checks
+        const clean = codeNow.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+        // the meta is evaluated, so a computed name is compared by its value, not by its source text
+        const name = (await metaOf(codeNow))?.name ?? clean.match(/\bmeta\s*=\s*\{[^}]*?\bname:\s*['"]([^'"]+)['"]/)?.[1];
         if (name !== oldName) out.push(`keep its name "${oldName}": a correction changes the thing, not its name`);
-        const have = new Set(starts(codeNow));
+        const have = new Set(starts(clean));
         for (const s of oldStarts) if (!have.has(s)) out.push(`keep its start position [${s}]`);
-        if (paper && !new RegExp(`paper:\\s*\\{\\s*x:\\s*${paper[1]}\\s*,\\s*y:\\s*${paper[2]}`).test(codeNow))
+        if (paper && !new RegExp(`paper:\\s*\\{\\s*x:\\s*${paper[1]}\\s*,\\s*y:\\s*${paper[2]}`).test(clean))
           out.push(`keep its meta.paper ${paper[1]}, ${paper[2]}`);
+        if (/\bmove:\s*['"]fly['"]/.test(clean)) {
+          // a group that follows the actor from outside its rig stays at the old height when the flyer's lift moves
+          const rig = clean.match(/\brig:\s*\{[^}]*?\bg\s*:\s*([A-Za-z_$][\w$]*)/)?.[1] || 'g';
+          const adds = [...new Set([...clean.matchAll(/\bworld\.add\(\s*([A-Za-z_$][\w$]*)\s*\)/g)].map(m => m[1]))];
+          for (const n of adds) {
+            if (n !== rig && new RegExp(`\\b${n}\\.position\\.copy\\(\\s*${rig}\\.position`).test(clean))
+              out.push(`${n} is a separate world group that follows the actor: put it inside the actor's rig (${rig}.add(${n}) and remove world.add(${n})), or it stays at the old height when the actor flies`);
+          }
+        }
         return out;
       };
       const f = await finish({ body, model: r.model || MODEL, frame: reqPath, images: [],
-        takenIds: existing.filter(t => t.file !== target).flatMap(t => t.ids), keepIds: old.ids, oldName,
+        takenIds: existing.filter(t => t.file !== target).flatMap(t => t.ids), keepIds: oldIds, oldName,
         calls: report.calls, source: `frames/requests/${id}.json`,
-        fixIntro: `The module below is a correction of ${target}: ${JSON.stringify(text)}.`, extra });
+        fixIntro: `The module below is a correction of ${target}: ${JSON.stringify(text)}.`, extra,
+        provider: TEXT_PROVIDER, fixModels: [TEXT_MODEL] });
       if (!f.code) { report.rejected.push({ problems: f.problems }); throw new Error(`rejected after checks: ${f.problems.join('; ').slice(0, 300)}`); }
-      atomicWrite(join(thingsDir, target), f.code);         // only now: a failed rewrite leaves the old file as it was
+      await withThingWrite(async () => {
+        let now = null;
+        try { now = readFileSync(join(thingsDir, target), 'utf8'); } catch { /* gone */ }
+        if (now !== old.code) throw new Error('the thing changed while it was being corrected; try again');
+        atomicWrite(join(thingsDir, target), f.code);       // only now: a failed rewrite leaves the old file as it was
+      });
       const name = f.code.match(/\bmeta\s*=\s*\{[^}]*?\bname:\s*['"]([^'"]+)['"]/)?.[1] || oldName;
-      report.written.push({ kind: 'UPDATE', file: target, name, model: f.model, at: T(), ids: old.ids,
+      report.written.push({ kind: 'UPDATE', file: target, name, model: f.model, at: T(), ids: oldIds,
         ...(f.warnings.length && { warnings: f.warnings }) });
       onProgress({ state: 'changed', id, detail: name });
       log(`${id}: text correction ${JSON.stringify(text)} → REWROTE ${target} (${name}) by ${f.model}`);
@@ -316,25 +362,30 @@ export async function processTextRequest(reqPath, { thingsDir, reportsDir, onPro
     if (wordOnly(sec.body)) throw new Error('a written word alone is not a thing');
     let f = await finish({ body: sec.body, model: r.model || MODEL, frame: reqPath, images: [], takenIds: existing.flatMap(t => t.ids), keepIds: [],
       calls: report.calls, source: `frames/requests/${id}.json`,
-      fixIntro: `The module below was made from this typed request: ${JSON.stringify(text)}.` });
+      fixIntro: `The module below was made from this typed request: ${JSON.stringify(text)}.`, provider: TEXT_PROVIDER, fixModels: [TEXT_MODEL] });
     if (!f.code) { report.rejected.push({ problems: f.problems }); throw new Error(`rejected after checks: ${f.problems.join('; ').slice(0, 300)}`); }
-    let name = f.code.match(/name:\s*['"]([^'"]+)['"]/)?.[1] || 'Ding';
-    const names = new Set(existing.map(t => String(t.meta.name).toLowerCase()));
-    if (names.has(name.toLowerCase())) {
-      const old = name;
-      let n = 2;
-      while (names.has(`${old} ${n}`.toLowerCase())) n++;
-      name = `${old} ${n}`;
-      const q = old.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      f = { ...f, code: f.code.replace(new RegExp(`(name:\\s*)(['"])${q}\\2`, 'g'), (_, a, b) => `${a}${b}${name}${b}`) };
-    }
-    const base = freeName(slug(name), new Set(existing.map(t => t.file.replace(/\.js$/, ''))));
-    const file = base + '.js';
-    atomicWrite(join(thingsDir, file), f.code);
-    report.written.push({ file, name, model: f.model, at: T(), ids: [...f.code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]),
+    const made = await withThingWrite(() => {
+      const now = readThingIndex(thingsDir);
+      let name = f.code.match(/name:\s*['"]([^'"]+)['"]/)?.[1] || 'Ding';
+      let code = f.code;
+      const names = new Set(now.map(t => String(t.meta.name).toLowerCase()));
+      if (names.has(name.toLowerCase())) {
+        const original = name;
+        let n = 2;
+        while (names.has(`${original} ${n}`.toLowerCase())) n++;
+        name = `${original} ${n}`;
+        const q = original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        code = code.replace(new RegExp(`(name:\\s*)(['"])${q}\\2`, 'g'), (_, a, b) => `${a}${b}${name}${b}`);
+      }
+      const base = freeName(slug(name), new Set(now.map(t => t.file.replace(/\.js$/, ''))));
+      const file = base + '.js';
+      atomicWrite(join(thingsDir, file), code);
+      return { file, name, code };
+    });
+    report.written.push({ file: made.file, name: made.name, model: f.model, at: T(), ids: [...made.code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]),
       ...(f.warnings.length && { warnings: f.warnings }) });
-    onProgress({ state: 'new', id, detail: name });
-    log(`${id}: text request ${JSON.stringify(text)} → WROTE ${file} (${name}) by ${f.model}`);
+    onProgress({ state: 'new', id, detail: made.name });
+    log(`${id}: text request ${JSON.stringify(text)} → WROTE ${made.file} (${made.name}) by ${f.model}`);
     return report;
   } catch (e) {
     report.error = e.message.slice(0, 500);
@@ -609,16 +660,41 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
           thingName = unique;
         }
       }
-      if (beforeFirstWrite) await (firstWrite ||= Promise.resolve().then(beforeFirstWrite));
-      const base = old ? old.file.replace(/\.js$/, '') : freeName(slug(thingName), files);
-      files.add(base);
-      const file = base + '.js';
       // a draft says so (meta.draft: true), so the viewer can give it a pencil look until its final, which rewrites the
       // whole module, replaces it
       const isDraft = DRAFT_MODEL && f.model !== MODEL && s.kind === 'NEW';
       if (isDraft) f = { ...f, code: f.code.replace(/export\s+const\s+meta\s*=\s*\{/, m => `${m} draft: true,`) };
       if (s.says) f = { ...f, code: withSaid(f.code, s.says) };
-      atomicWrite(join(thingsDir, file), f.code);
+      // one writer at a time, against what is on disk now: a typed request may have written while this frame was building
+      const written = await withThingWrite(async () => {
+        if (beforeFirstWrite) await (firstWrite ||= Promise.resolve().then(beforeFirstWrite));
+        if (old) {
+          let now = null;
+          try { now = readFileSync(join(thingsDir, old.file), 'utf8'); } catch { /* gone */ }
+          if (now !== old.code) return null;                       // a typed correction won: do not clobber it
+        }
+        const now = readThingIndex(thingsDir);
+        if (!old) {
+          const names = new Set(now.map(t => String(t.meta.name).toLowerCase()));
+          if (names.has(thingName.toLowerCase())) {
+            const original = thingName;
+            let n = 2;
+            while (names.has(`${original} ${n}`.toLowerCase())) n++;
+            thingName = `${original} ${n}`;
+            const q = original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            f = { ...f, code: f.code.replace(new RegExp(`(name:\\s*)(['"])${q}\\2`, 'g'), (_, a, b) => `${a}${b}${thingName}${b}`) };
+          }
+        }
+        const base = old ? old.file.replace(/\.js$/, '') : freeName(slug(thingName), new Set(now.map(t => t.file.replace(/\.js$/, ''))));
+        const file = base + '.js';
+        atomicWrite(join(thingsDir, file), f.code);
+        return { base, file, code: f.code, name: thingName };
+      });
+      if (!written) { log(`${name}: ${old.file} changed meanwhile (typed request won); not overwriting`); return; }
+      const { base, file, code: finalCode, name: finalName } = written;
+      files.add(base);
+      f = { ...f, code: finalCode };
+      thingName = finalName;
       if (f.info?.box) boxes.push({ file, ...f.info.box });
       const pm = f.code.match(/paper:\s*\{\s*x:\s*([\d.]+),\s*y:\s*([\d.]+)/);
       if (pm) { paper[file] = { x: +pm[1], y: +pm[2] }; writePaper(reportsDir, paper); }
