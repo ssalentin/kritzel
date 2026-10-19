@@ -155,7 +155,14 @@ export async function build(api, prevState = null) {
   }
 
   // in a hand, or in the air: not on the grid, not a perch, not dropped to the page
-  const isHeld = e => !!(e.portable && (e.portable.carrier || e.portable.throw));
+  const isHeld = e => !!(e.handHeld || (e.portable && (e.portable.carrier || e.portable.throw)));
+  // the hand can pick up a small drawable thing, or push a free-standing one (not a figure's thing,
+  // not a jail holding someone, not a wall-sized piece of ground)
+  const canPick = file => { const e = loaded.get(file); return !!(e && e.portable && !isHeld(e) && !e.heldBy); };
+  const canPush = file => {
+    const e = loaded.get(file);
+    return !!(e && e.foot && !e.actors.length && !e.portable && !e.heldBy && !pinned(e) && !isHeld(e));
+  };
   // the situation the dialogue writer reads: who carries what, what is in the air, the night, the weather. Sent
   // when it changes and at most every 10 s (serve.py keeps the last one in frames/status/situation.json)
   let sentSituation = '', sentAt = 0;
@@ -360,7 +367,11 @@ export async function build(api, prevState = null) {
     places();
     trees.length = 0;
     const spots = [];
-    for (const e of loaded.values()) { ensurePortable(e); if (!isHeld(e)) trees.push(...e.obstacles); spots.push(...e.spots); }
+    for (const e of loaded.values()) {
+      ensurePortable(e);
+      if (!isHeld(e)) trees.push(...e.obstacles);
+      if (!e.handHeld) spots.push(...e.spots);       // in the hand: not there to be picked up or sat on
+    }
     brain.setWorld({ trees, spots, feet: blockingFeet() });
     brain.setHolds([...loaded.values()].flatMap(e => e.holds));
     attachHeld();
@@ -443,6 +454,66 @@ export async function build(api, prevState = null) {
       }
       return null;
     },
+    // the hand: which thing it can take or push, and the moves that keep the thing's foot,
+    // obstacles and spots together with its box (a push settles once, on release)
+    canPick: canPick,
+    canPush: canPush,
+    fileOf(obj) {
+      for (const [file, e] of loaded) { let o = obj; while (o && o !== e.box) o = o.parent; if (o) return file; }
+      return null;
+    },
+    nudge(file, dx, dz) {
+      if (!canPush(file)) return false;
+      const e = loaded.get(file);
+      shift(e, dx, dz);
+      e.pushed = [(e.pushed?.[0] || 0) + dx, (e.pushed?.[1] || 0) + dz];
+      return true;
+    },
+    settle(file) {
+      const e = loaded.get(file);
+      if (!e) return false;
+      if (e.pushed) {
+        const d0 = placed[file] || [0, 0];
+        savePlace(file, [+(d0[0] + e.pushed[0]).toFixed(2), +(d0[1] + e.pushed[1]).toFixed(2)], true);
+        e.pushed = null;
+      }
+      refreshWorld();
+      return true;
+    },
+    pickThing(file) {
+      if (!canPick(file)) return false;
+      const e = loaded.get(file);
+      e.handHeld = true;
+      e.carryFrom = { x: e.foot?.x ?? e.box.position.x, z: e.foot?.z ?? e.box.position.z };
+      refreshWorld();                         // its spots/obstacles leave the grid while it is in the hand
+      return true;
+    },
+    carryThing(file, x, y, z) {
+      const e = loaded.get(file);
+      if (!e?.handHeld) return false;
+      const dx = x - e.box.position.x, dz = z - e.box.position.z;
+      e.box.position.set(x, y, z);
+      if (e.foot) { e.foot.x += dx; e.foot.z += dz; }
+      for (const o of [...e.obstacles, ...e.spots]) { o.x += dx; o.z += dz; }
+      e.syncAt = { x: e.foot?.x ?? x, z: e.foot?.z ?? z };
+      return true;
+    },
+    dropThing(file, x, z) {
+      const e = loaded.get(file);
+      if (!e?.handHeld) return false;
+      const spot = freeSpot(x, z, e.foot || { hx: 0.4, hz: 0.4 }, file);
+      const dx = spot.x - (e.foot?.x ?? x), dz = spot.z - (e.foot?.z ?? z);
+      e.handHeld = false;
+      shift(e, dx, dz);
+      onPage(e);
+      const d0 = placed[file] || [0, 0];
+      const from = e.carryFrom || { x: e.foot.x - dx, z: e.foot.z - dz };
+      savePlace(file, [+(d0[0] + e.foot.x - from.x).toFixed(2), +(d0[1] + e.foot.z - from.z).toFixed(2)], true);
+      e.carryFrom = null;
+      refreshWorld();
+      return true;
+    },
+    pageY: (x, z) => groundY(x, z),
     freeSpot: (x, z, r) => freeSpot(x, z, r),
     places: () => ({ perches: env.perches, water: env.water }),   // where animals land, climb and swim (for tests)
     box: file => loaded.get(file)?.box,    // a thing's group (for tests)
