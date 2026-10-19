@@ -40,8 +40,11 @@ class Upstream(BaseHTTPRequestHandler):
             self.end_headers()
             return
         answers = {qid: {"type": "choice", "choice": Upstream.choice,
-                         "probabilities": {Upstream.choice: 1}, "confidence": 0.9}
+                         "probabilities": {}, "confidence": 0.9}
                    for qid in body.get("questions", {})}
+        if Upstream.mode == "extra":                  # answers for people who were never asked
+            answers["stranger"] = {"type": "choice", "choice": "chat", "confidence": 1}
+            answers["__proto__"] = {"type": "choice", "choice": "chat", "confidence": 1}
         out = json.dumps({"answers": answers, "usage": {"cost": 0.0000217, "input_tokens": 500, "output_tokens": 80}}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -102,6 +105,18 @@ class Think(unittest.TestCase):
             out = serve.think(state("bana"))
         self.assertEqual(out, {})
 
+    def test_malformed_choice_type_returns_empty(self):
+        for bad in (["chat"], {"chat": 1}):        # a 200 with the wrong type, not a goal
+            Upstream.choice = bad
+            with self.env():
+                self.assertEqual(serve.think(state("bana")), {})
+
+    def test_answers_for_other_ids_are_dropped(self):
+        Upstream.mode = "extra"
+        with self.env():
+            out = serve.think(state("bana"))
+        self.assertEqual(set(out["goals"]), {"bana"})
+
     def test_500_returns_empty(self):
         Upstream.mode = "500"
         with self.env():
@@ -157,10 +172,13 @@ class Routes(unittest.TestCase):
         cls.http = ThreadingHTTPServer(("127.0.0.1", 0), lambda *a, **k: serve.Handler(*a, directory=str(ROOT), **k))
         threading.Thread(target=cls.http.serve_forever, daemon=True).start()
         cls.base = f"http://127.0.0.1:{cls.http.server_port}"
+        cls.up = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+        threading.Thread(target=cls.up.serve_forever, daemon=True).start()
 
     @classmethod
     def tearDownClass(cls):
         cls.http.shutdown()
+        cls.up.shutdown()
 
     def call(self, method, path, body=None, header=False):
         data = json.dumps(body).encode() if body is not None else None
@@ -185,6 +203,16 @@ class Routes(unittest.TestCase):
 
     def test_post_off_answers_empty(self):
         with mock.patch.dict(os.environ, {"KRITZEL_THINK": "0", "OPENROUTER_API_KEY": "test-key"}, clear=False):
+            status, body = self.call("POST", "/api/think", state("bana"), header=True)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {})
+
+    def test_post_with_a_malformed_upstream_reply_answers_empty(self):
+        Upstream.mode, Upstream.choice, Upstream.calls = "ok", ["chat"], []
+        serve.THINK_CACHE.clear()
+        env = {"KRITZEL_THINK": "1", "OPENROUTER_API_KEY": "test-key",
+               "KRITZEL_THINK_URL": f"http://127.0.0.1:{self.up.server_port}/api/alpha/decisions"}
+        with mock.patch.dict(os.environ, env, clear=False):
             status, body = self.call("POST", "/api/think", state("bana"), header=True)
         self.assertEqual(status, 200)
         self.assertEqual(body, {})

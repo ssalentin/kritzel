@@ -331,7 +331,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   // One batched request every ~6 s for 3–5 figures, never more than one in flight. An answer is a
   // preference for that figure's next goal, valid for 8 s; the local utility pick stays the default
   // and the fallback. Off unless the server says KRITZEL_THINK=1 and a key is configured.
-  const THINK_EVERY = 6, THINK_USE_S = 8;
+  const THINK_EVERY = 6, THINK_USE_S = 8, MEET_USE_S = 60;
   let thinkOn = false, thinkProbed = false, thinkAt = -Infinity, thinkBusy = false, thinkCursor = 0, thinkRound = 0;
   let fps = 0, frames = 0, fpsAt = typeof performance === 'undefined' ? 0 : performance.now();
   const thinkStats = { requests: 0, answers: 0, goalsApplied: 0, failed: 0, latency: [], cost: 0 };
@@ -371,6 +371,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         thinkStats.cost += res.usage?.cost || 0;
         let got = 0;
         for (const [id, g] of Object.entries(goals)) {
+          if (!Object.hasOwn(byId, id)) continue;               // never a prototype key: answers come from outside
           const a = byId[id];
           if (!a || a.hidden || !(g.goal in jevGoals)) continue;
           a.think = { goal: g.goal, at: now, round: thinkRound };      // a preference for the next goal, for 8 s
@@ -401,10 +402,11 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   // one of the director's ten words → a goal the sim can run here and now; null when it no longer applies
   const jevGoals = {
     explore: () => groundCells.length ? { type: 'wander', cell: pick(groundCells) } : null,
-    greet: a => { const o = nearestOther(a); return o ? { type: 'approach', target: o } : null; },
-    chat: a => { const o = nearestOther(a); return o ? { type: 'approach', target: o } : null; },
-    play: a => { const o = nearestOther(a); return o ? { type: 'approach', target: o } : null; },
-    dance: a => { const o = nearestOther(a); return o ? { type: 'approach', target: o } : null; },
+    // the four social words walk to someone and then run that interaction, not a random one
+    greet: a => { const o = nearestOther(a); return o ? { type: 'approach', target: o, meet: 'greet' } : null; },
+    chat: a => { const o = nearestOther(a); return o ? { type: 'approach', target: o, meet: 'chat' } : null; },
+    play: a => { const o = nearestOther(a); return o ? { type: 'approach', target: o, meet: 'tagStart' } : null; },
+    dance: a => { const o = nearestOther(a); return o ? { type: 'approach', target: o, meet: 'dance' } : null; },
     eat: a => {
       const sp = spots.find(s => s.kind === 'food') || spots.find(s => s.kind === 'egg' && !s.found), c = sp && spotCell(sp, a);
       return c ? { type: 'eat', spot: sp, cell: c } : null;
@@ -473,6 +475,8 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
       if (g) {
         g.why = 'jev';
         a.think.used = pref.round;
+        // the word is carried to the meeting: arriving is not the intent, the greet/chat/tag/dance is
+        a.meet = g.meet ? { with: g.target.id, what: g.meet, word: pref.goal, at: now } : null;
         thinkStats.goalsApplied++;
         console.info(`[think] ${a.id}: ${pref.goal} instead of ${local?.type ?? 'nothing'}`);
         chosen = g;
@@ -516,8 +520,16 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     a.lastMet[b.id] = b.lastMet[a.id] = now;
     // a figure's drawn words come before anything else: it says them first and the meeting waits a moment (orch)
     for (const p of [a, b]) if (paperText(p) && !p.saidOnce) { say(p, line(p, 'greet'), 2.5); p.busyUntil = now + 2.5; return; }
+    // a Jev word brought this figure here: run that interaction, not whatever the pair happens to feel like
+    const mine = a.meet && a.meet.with === b.id && now - a.meet.at <= MEET_USE_S ? a.meet : null;
+    const theirs = b.meet && b.meet.with === a.id && now - b.meet.at <= MEET_USE_S ? b.meet : null;
+    a.meet = b.meet = null;
+    const want = mine || theirs;
     const r = Math.min(rel(a, b), rel(b, a));
-    if (X.choose) INT[X.choose(a, b, r, api)](a, b);   // without sim-extra.js people just wander
+    if (want && INT[want.what]) {
+      tracePick(a, { type: 'meet', target: { name: want.what }, why: 'jev' });
+      INT[want.what](a, b);
+    } else if (X.choose) INT[X.choose(a, b, r, api)](a, b);   // without sim-extra.js people just wander
   }
 
   function act(a) {

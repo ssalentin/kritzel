@@ -205,20 +205,22 @@ def think_payload(state):
     return {"model": os.environ.get("KRITZEL_THINK_MODEL", THINK_MODEL), "state": state, "questions": questions}
 
 
-def think_answers(upstream):
+def think_answers(upstream, wanted):
     """Jev's answers → {actor id: {goal, confidence}}; anything unexpected is left out."""
     goals = {}
     answers = upstream.get("answers") if isinstance(upstream, dict) else None
     if not isinstance(answers, dict):
         return goals
     for aid, ans in answers.items():
-        if not isinstance(ans, dict) or ans.get("choice") not in THINK_GOALS:
+        aid = _text(aid, 60)
+        choice = ans.get("choice") if isinstance(ans, dict) else None
+        if aid not in wanted or not isinstance(choice, str) or choice not in THINK_GOALS:
             continue
         try:
             confidence = round(float(ans.get("confidence", 0)), 3)
         except (TypeError, ValueError):
             confidence = 0.0
-        goals[_text(aid, 60)] = {"goal": ans["choice"], "confidence": confidence}
+        goals[aid] = {"goal": choice, "confidence": confidence}
     return goals
 
 
@@ -252,7 +254,7 @@ def think(body):
                 upstream = json.load(r)
         except (OSError, ValueError, urllib.error.HTTPError):
             return {}
-        goals = think_answers(upstream)
+        goals = think_answers(upstream, {a["id"] for a in state["actors"]})
         if not goals:
             return {}
         usage = upstream.get("usage") if isinstance(upstream.get("usage"), dict) else {}
@@ -451,7 +453,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 body = json.loads(self.rfile.read(n))
             except (ValueError, AssertionError, TypeError):
                 return self.json({})
-            return self.json(think(body))
+            try:
+                return self.json(think(body))
+            except Exception:                    # the contract is {} on any failure, never a dropped request
+                return self.json({})
         if path != "/api/newworld":
             return self.json({"error": "not found"}, 404)
         # only the viewer itself: a page on another site can send a plain POST without asking first,
