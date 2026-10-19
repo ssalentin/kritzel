@@ -34,6 +34,7 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
   const cur = make('dusk'), goalDir = new THREE.Vector3();
   const css = {};                     // last values written, so a settled sky doesn't repaint every frame
   let name = 'dusk', frame = 0, envApplied = -1;
+  let forcedTime = null;                 // action mode: day/night on request, over a drawn sun or moon
   const sources = new Map();          // thing id → [{ kind, obj, color, intensity, flicker, pl }]
   const tmp = new THREE.Vector3();
 
@@ -145,7 +146,7 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
     lastT = t;
     const all = [...sources.values()].flat();
     const sun = all.find(s => s.kind === 'sun'), moon = all.find(s => s.kind === 'moon');
-    name = sun ? 'day' : moon ? 'night' : 'dusk';
+    name = forcedTime ?? (sun ? 'day' : moon ? 'night' : 'dusk');
     const goal = presets[name];
     goalDir.copy(goal.dir);
     const body = sun || moon;
@@ -206,8 +207,10 @@ export function createMood({ THREE, scene, key, hemi, bounce }) {
 
   return {
     set,
+    // action mode: "es soll Tag/Nacht werden" beats a drawn sun or moon until the next world/reset
+    setTime(value) { forcedTime = value === 'day' || value === 'night' ? value : null; },
     blink(id) { const until = (lastT ?? 0) + 0.8; for (const s of sources.get(id) || []) if (s.pl) s.blinkUntil = until; },
-    reset() { for (const id of [...sources.keys()]) forget(id); for (const id of [...weatherIds]) weather.set(id, []); weatherIds.clear(); },
+    reset() { forcedTime = null; for (const id of [...sources.keys()]) forget(id); for (const id of [...weatherIds]) weather.set(id, []); weatherIds.clear(); },
     // the weather one drawn thing declares ({ kind } or a list; [] removes it)
     setWeather(id, list) { weather.set(id, list); if ([].concat(list || []).length) weatherIds.add(id); else weatherIds.delete(id); },
     weather: () => weather.state(),

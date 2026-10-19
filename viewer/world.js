@@ -7,8 +7,8 @@ export const caption = '';
 export async function build(api, prevState = null) {
   const { THREE, scene, world, camera, controls, bubble, shadowAll, report } = api;
   const v = '?v=' + Date.now();
-  const [sim, bookMod, charMod, extra, waterMod, moves, portableMod] = await Promise.all(
-    ['sim', 'book', 'characters', 'sim-extra', 'water', 'moves', 'portable'].map(f => import(`./${f}.js${v}`)));
+  const [sim, bookMod, charMod, extra, waterMod, moves, portableMod, actionsMod] = await Promise.all(
+    ['sim', 'book', 'characters', 'sim-extra', 'water', 'moves', 'portable', 'actions'].map(f => import(`./${f}.js${v}`)));
   const { GROUND, BASE, FIT_R, groundY, sizeFor } = bookMod;
   let grownAt = BASE.w;                         // the book size the sim was last set up for
 
@@ -373,6 +373,7 @@ export async function build(api, prevState = null) {
     return [...loaded.entries()].map(([file, e]) => {
       box.setFromObject(e.box); box.getCenter(c);
       return { file, name: e.meta?.name || file.replace(/\.js$/, ''), x: c.x, z: c.z, at: e.at || 0,
+        y: c.y,
         actors: e.actors.map(a => a.id), holds: e.holds.map(h => h.actor), heldBy: e.heldBy?.actor || null };
     });
   }
@@ -411,6 +412,10 @@ export async function build(api, prevState = null) {
   brain.setHolds([...loaded.values()].flatMap(e => e.holds));
   attachHeld();
   brain.setThings(thingList());
+  // action mode's local half; the UI posts /api/action and hands the command to window.__applyAction
+  const actions = actionsMod.createActions({ brain: () => brain, mood: api.mood });
+  window.__applyAction = cmd => actions.apply(cmd);
+  window.__actions = actions;
 
   return {
     // engine calls this when only things/ changed: reload just those files
@@ -444,6 +449,7 @@ export async function build(api, prevState = null) {
     book: () => ({ w: GROUND.w, d: GROUND.d }),   // the book's size now (the page turn uses it: index.html has its own module instance)
     feet: () => [...loaded].map(([f, e]) => ({ file: f, foot: e.foot, obstacles: e.obstacles, pinned: !!pinned(e) })),   // for tests   // for the light that shows where a drawing will appear
     brain: () => brain,                   // for UI in index.html (e.g. click a character); sim exposes its actors
+    actions: () => actions,
     update(t, dt) {
       clockNow = t;
       island.update(t);
