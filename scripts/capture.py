@@ -51,6 +51,7 @@ W, H = 320, 180          # compare at this size: averages away sensor noise, kee
 PIXEL = 20               # brightness step (0-255) that counts as a changed pixel
 NEW_PX = 15              # changed pixels that count: vs the still picture = movement, vs the last sheet = new
 SNAP_DIFF = 200          # a full snapshot this far from the preview is another picture, not resampling
+NOISE_SHARE, NOISE_WIDE, NOISE_TALL = 0.02, 0.8, 0.5   # sparse marks spread over most of a restart preview
 INK_R = 2                # new ink must be this far (thumb px) from ink already there
 SLIDE = 8                # how far (thumb px, ×6 at 1080p) the paper may slide and still be the same sheet
 INK_EDGE, INK_SHARE = 25, 0.25   # local contrast that is ink, not shade; share of a change that must be inky
@@ -905,6 +906,15 @@ def box(diff, size):
     return [int(x0 * sx), int(y0 * sy), int(x1 * sx) - int(x0 * sx), int(y1 * sy) - int(y0 * sy)]
 
 
+def sparse_noise(diff):
+    """A few changed pixels spread over most of the picture: a restart preview, not new ink."""
+    if not diff:
+        return False
+    xs, ys = [i % W for i in diff], [i // W for i in diff]
+    return (len(diff) < NOISE_SHARE * W * H
+            and max(xs) - min(xs) >= NOISE_WIDE * W and max(ys) - min(ys) >= NOISE_TALL * H)
+
+
 def camera():
     """The chosen remote camera as (snapshot URL, info), or None."""
     try:
@@ -1187,6 +1197,14 @@ def main():
             recheck_at, recheck_step = time.monotonic(), 0
             early = shot
             held_status(status, held)
+            continue
+        if got[0] == "drawn" and sparse_noise(got[1]):
+            print("sparse wide change looks like camera noise; waiting again", file=sys.stderr, flush=True)
+            if getattr(det, "prev", None) is not None:
+                det.undo(t)
+            else:
+                det.anchor, det.still_since, det.diff = None, t, None
+            early, held = None, None
             continue
         previous = hand_on(data, size, *got, cam[1], previous, det.measured if previous else None)
         base_rgb = rgb
