@@ -83,13 +83,23 @@ New actor ids: a lowercase ascii slug of the name, not one of ${JSON.stringify(t
 ${UPRIGHT}`;
 }
 
-export function fixText({ problems, code }) {
-  return `This image is the part of the paper the module below was made from. The module was rejected:
+export function fixText({ problems, code, intro = 'This image is the part of the paper the module below was made from.' }) {
+  return `${intro} The module was rejected:
 ${problems.map(p => '- ' + p).join('\n')}
 
 ${code}
 
 Reply with only the fixed complete module: plain JavaScript, no section header, no fences.`;
+}
+
+// A typed wish from the viewer: no image. The text is the subject, not writing on the paper.
+export const TEXT_SYSTEM = `${SYSTEM}
+
+A TEXT REQUEST (no image): the person typed the subject in the viewer. That text is the request, not writing on paper. Build exactly that one thing from its name and the parts list you choose for it, centred at x 0, z 0, with meta.paper { x: 0.5, y: 0.5 }, in the book's look. Add a face only when the request names a living thing. If the request asks for something that cannot stand in the book (weapons, violence, scary or adult things, or nothing recognizable), reply UNCLEAR: <why>.`;
+
+export function textThingText(text) {
+  return `The child asked for this thing to appear in the book: ${JSON.stringify(text)}. Build it.
+This is a typed request, not a drawing: build the thing it names as one ### NEW section, centred at x 0, z 0, meta.paper { x: 0.5, y: 0.5 }, with a short German name a child would use. Reply with one SEEN line, then its section.`;
 }
 
 // Detection first (a new sheet): one quick call lists the drawings with where they are, then each one is

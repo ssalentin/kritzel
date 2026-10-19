@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // The generation stage: a settled camera frame → viewer/things/<thing>.js, fast.
 //
-//   node generate/generate.mjs --watch [frames/settled] [--things DIR] [--reports DIR] [--render]
+//   node generate/generate.mjs --watch [frames/settled] [--requests DIR] [--things DIR] [--reports DIR] [--render]
 //   node generate/generate.mjs <frame.jpg> [--box x,y,w,h] [--previous before.jpg] [--things DIR] [--reports DIR] [--render]
 //
 // Per settled frame (format agreed with pipeline-capture: <ts>.jpg renamed in after its <ts>.json
@@ -23,7 +23,7 @@ import { oneShot, MODEL, FALLBACK_MODEL, PI_FALLBACK } from './claude.mjs';
 import { isPiModel, prewarm } from './pi.mjs';
 import { live } from './children.mjs';
 import { staticCheck, buildCheck, metaOf } from './check.mjs';
-import { SYSTEM, userText, fixText, DETECT_SYSTEM, detectText, oneOfText, DRAFT_NOTE } from './prompts.mjs';
+import { SYSTEM, userText, fixText, DETECT_SYSTEM, detectText, oneOfText, DRAFT_NOTE, TEXT_SYSTEM, textThingText } from './prompts.mjs';
 import { islandOf, movePaper } from './place.mjs';
 import { safeLine } from '../viewer/dialogues.js';
 
@@ -146,17 +146,17 @@ const onlyHolds = problems => problems.length > 0 && problems.every(p => /^(hold
 // deferHolds: when the only problem is a held creature not written yet, say so at once instead of
 // asking for a fix (which would just drop the hold)
 // extra(info) → more problems, from what the check measured (a creature hanging with nothing above it)
-async function finish({ body, model, frame, images, takenIds, keepIds, oldName = null, calls, deferHolds = false, extra = null, says = null, fixModels = [BUILD, FALLBACK_MODEL] }) {
+async function finish({ body, model, frame, images, takenIds, keepIds, oldName = null, calls, deferHolds = false, extra = null, says = null, fixModels = [BUILD, FALLBACK_MODEL], source = null, fixIntro = null }) {
   let code = body.split('\n').filter(l => !l.startsWith(MARK)).join('\n').trim(), problems, simSkipped = null, info = {};
   for (const fixModel of [null, ...fixModels]) {
     if (fixModel) {
       if (deferHolds && onlyHolds(problems)) return { problems, held: true, info };
-      const r = await fixSlot(() => oneShot({ system: SYSTEM, text: fixText({ problems, code }), images: images.slice(-1), model: fixModel }));   // the area now
+      const r = await fixSlot(() => oneShot({ system: SYSTEM, text: fixText({ problems, code, ...(fixIntro && { intro: fixIntro }) }), images: images.slice(-1), model: fixModel }));   // the area now
       calls.push(callOf(r, { fix: true, fixing: problems }));
       code = stripFences(r.text).replace(/^###.*\n/, '');
       model = r.model;
     }
-    const full = `${MARK}frames/settled/${basename(frame)} (${model})\n${code}\n`;
+    const full = `${MARK}${source || `frames/settled/${basename(frame)}`} (${model})\n${code}\n`;
     problems = staticCheck(full);
     if (!problems.length) {
       const b = await buildCheck(full, { takenIds });
@@ -227,6 +227,68 @@ const WORD = /^\s*(?:the |a |an )?(?:(?:hand-?written|written|scribbled|pencil|p
 export function wordOnly(code) {
   const drawing = code.match(/drawing:\s*['"]([^'"]*)['"]/)?.[1] || '', name = code.match(/name:\s*['"]([^'"]*)['"]/)?.[1] || '';
   return WORD.test(drawing) || /(?:^|[-\s])(?:wort|schriftzug|titel|text|buchstaben)$/i.test(name);
+}
+
+// ---------- a typed wish: frames/requests/<id>.json → one thing ----------
+export const textRequestId = file => basename(file).replace(/\.json$/, '');
+
+// One request, one model call with no image and the same checks as a drawing. The report is always written,
+// including on failure, so a request never disappears silently.
+export async function processTextRequest(reqPath, { thingsDir, reportsDir, onProgress = () => {} }) {
+  mkdirSync(reportsDir, { recursive: true });
+  const id = textRequestId(reqPath);
+  const t0 = Date.now(), T = () => +((Date.now() - t0) / 1000).toFixed(1);
+  const report = { request: null, started: new Date(t0).toISOString(), calls: [], written: [], rejected: [], timing: {} };
+  const save = () => {
+    for (const c of report.calls) if (c.endedAt) { c.at = +((c.endedAt - t0) / 1000).toFixed(1); delete c.endedAt; }
+    writeFileSync(join(reportsDir, id + '.json'), JSON.stringify(report, null, 1));
+  };
+  try {
+    let req;
+    try { req = JSON.parse(readFileSync(reqPath, 'utf8')); } catch { throw new Error('the request is not valid JSON'); }
+    const text = typeof req?.text === 'string' ? req.text.trim() : '';
+    if (!text || text.length > 80) throw new Error('say what to build (1-80 characters)');
+    report.request = { id, text, lang: req.lang === 'de' ? 'de' : 'en', requested_at: req.requested_at || null };
+    onProgress({ state: 'building', id, detail: text });
+    const existing = await readThings(thingsDir);
+    const r = await oneShot({ system: TEXT_SYSTEM, text: textThingText(text), images: [], timeoutMs: 6 * 60_000, model: MODEL });
+    report.calls.push(callOf(r));
+    report.reply = r.text.slice(0, 4000);
+    let sections;
+    try { sections = parseReply(r.text); } catch (e) { throw new Error(`the reply could not be read: ${e.message.slice(0, 200)}`); }
+    const news = sections.filter(s => s.kind === 'NEW'), unclear = sections.find(s => s.kind === 'UNCLEAR');
+    if (news.length > 1) throw new Error(`the reply made ${news.length} things; one request builds one thing`);
+    const sec = news[0];
+    if (!sec) throw new Error(unclear ? `cannot build this: ${unclear.body.split('|')[0].trim().slice(0, 240)}` : 'the reply had no ### NEW module');
+    if (wordOnly(sec.body)) throw new Error('a written word alone is not a thing');
+    let f = await finish({ body: sec.body, model: r.model || MODEL, frame: reqPath, images: [], takenIds: existing.flatMap(t => t.ids), keepIds: [],
+      calls: report.calls, source: `frames/requests/${id}.json`,
+      fixIntro: `The module below was made from this typed request: ${JSON.stringify(text)}.` });
+    if (!f.code) { report.rejected.push({ problems: f.problems }); throw new Error(`rejected after checks: ${f.problems.join('; ').slice(0, 300)}`); }
+    let name = f.code.match(/name:\s*['"]([^'"]+)['"]/)?.[1] || 'Ding';
+    const names = new Set(existing.map(t => String(t.meta.name).toLowerCase()));
+    if (names.has(name.toLowerCase())) {
+      const old = name;
+      let n = 2;
+      while (names.has(`${old} ${n}`.toLowerCase())) n++;
+      name = `${old} ${n}`;
+      const q = old.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      f = { ...f, code: f.code.replace(new RegExp(`(name:\\s*)(['"])${q}\\2`, 'g'), (_, a, b) => `${a}${b}${name}${b}`) };
+    }
+    const base = freeName(slug(name), new Set(existing.map(t => t.file.replace(/\.js$/, ''))));
+    const file = base + '.js';
+    atomicWrite(join(thingsDir, file), f.code);
+    report.written.push({ file, name, model: f.model, at: T(), ids: [...f.code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]),
+      ...(f.warnings.length && { warnings: f.warnings }) });
+    onProgress({ state: 'new', id, detail: name });
+    log(`${id}: text request ${JSON.stringify(text)} → WROTE ${file} (${name}) by ${f.model}`);
+    return report;
+  } catch (e) {
+    report.error = e.message.slice(0, 500);
+    onProgress({ state: 'failed', id, detail: report.error });
+    log(`${id}: text request failed: ${report.error}`);
+    return report;
+  } finally { report.finished = new Date().toISOString(); report.timing.done = T(); save(); }
 }
 
 // a building or object (by its name) whose parts and drawing mention no face: not a figure. Flying vehicles are
@@ -998,6 +1060,26 @@ async function watch(dir, opts) {
   try { import.meta.resolve('rot-js'); } catch { log('rot-js is missing (run npm ci in generate/): the check will not run things in the sim'); }
   const sleep = ms => new Promise(ok => setTimeout(ok, ms));
   const later = ({ written }) => wantDialogues(opts, `split: ${written.map(w => w.name).join(', ')}`, written.map(w => w.name));
+  // typed wishes (POST /api/text-thing writes frames/requests/<id>.json): one thing each, no image
+  const requestsDir = opts.requestsDir || join(ROOT, 'frames', 'requests');
+  const takenRequests = new Set();
+  const takeRequests = async () => {
+    let files = [];
+    try { files = readdirSync(requestsDir).filter(f => /^[\w.-]+\.json$/.test(f) && !f.startsWith('.')).sort(); } catch { return; }
+    for (const f of files) {
+      const id = f.replace(/\.json$/, '');
+      if (takenRequests.has(id) || existsSync(join(opts.reportsDir, f))) continue;   // handled, or a report already says why not
+      takenRequests.add(id);
+      const r = await processTextRequest(join(requestsDir, f), {
+        thingsDir: opts.thingsDir, reportsDir: opts.reportsDir,
+        onProgress: p => status(p.state, p.id, p.detail || ''),
+      });
+      if (r.written.length) {
+        status('new', id, r.written.map(w => w.name).join(', '), { made: r.written.map(w => ({ de: w.name, en: w.name })) });
+        wantDialogues(opts, `request: ${r.written.map(w => w.name).join(', ')}`, r.written.map(w => w.name));
+      } else status('failed', id, (r.error || 'nothing built').slice(0, 80));
+    }
+  };
   let tries = 0, triesFor = null;           // failed attempts, and for which frame
   let archivedFor = null;                   // switch mode: the sheet whose new world is already set up
   // after a failed frame: true = try the same frame again (after a wait), false = give up on it.
@@ -1016,6 +1098,7 @@ async function watch(dir, opts) {
   // a big change was skipped since lastGenerated: no REMOVEs until a frame is generated (also across a restart)
   let movedSince = frames.some(f => (!lastGenerated || f > lastGenerated) && report(f)?.skipped === 'big-change');
   for (;;) {
+    await takeRequests();
     const newest = list().at(-1);
     if (newest && newest !== last) {
       let side = {};
@@ -1099,19 +1182,20 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const opt = (n, def) => { const i = args.indexOf(n); if (i < 0) return def; const v = args[i + 1]; args.splice(i, 2); return v; };
   const thingsDir = resolve(opt('--things', join(ROOT, 'viewer', 'things')));
   const reportsDir = resolve(opt('--reports', join(ROOT, 'frames', 'generated')));
+  const requestsDir = resolve(opt('--requests', join(ROOT, 'frames', 'requests')));
   const box = opt('--box', null)?.split(',').map(Number) || null;
   const previous = opt('--previous', null);
   const render = flag('--render');
   mkdirSync(reportsDir, { recursive: true });
   if (args[0] === '--watch') {
-    await watch(resolve(args[1] || join(ROOT, 'frames', 'settled')), { thingsDir, reportsDir, render });
+    await watch(resolve(args[1] || join(ROOT, 'frames', 'settled')), { thingsDir, reportsDir, render, requestsDir });
   } else if (args[0]) {
     const r = await processFrame(resolve(args[0]), { thingsDir, reportsDir, box, previous: previous && resolve(previous), render });
     await r.finalsDone;                                         // two stages: the finals too
     console.log(JSON.stringify({ written: r.written, removed: r.removed, rejected: r.rejected, unclear: r.unclear, calls: r.calls, error: r.error }, null, 1));
     if (!render) process.exit(r.error ? 1 : 0);
   } else {
-    console.error('usage: generate.mjs --watch [frames/settled] [--things DIR] [--reports DIR] [--render]\n       generate.mjs <frame.jpg> [--box x,y,w,h] [--previous before.jpg] [--things DIR] [--reports DIR] [--render]');
+    console.error('usage: generate.mjs --watch [frames/settled] [--things DIR] [--reports DIR] [--requests DIR] [--render]\n       generate.mjs <frame.jpg> [--box x,y,w,h] [--previous before.jpg] [--things DIR] [--reports DIR] [--render]');
     process.exit(2);
   }
 }
