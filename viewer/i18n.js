@@ -56,6 +56,7 @@ const S = {
     seenList: l => `👀 Was haben wir denn da? ${l} …`, buildingNow: x => `🎨 Ich baue ${x} …`, coming: x => `🎨 Gleich kommt ${x} …`,
     hello: n => `Hallo ${n}!`, notKnown: '🤷 Hm, das kenne ich noch nicht.', nothingNew: '🙂 Ach, doch nichts Neues.', failedSoft: '😕 Das hat nicht geklappt.', modeAdd: '➕ Hinzufügen', modeSwitch: '🔄 Wechseln', modeTitle: 'Was passiert, wenn ein neues Blatt kommt',
     modeNoteAdd: 'Modus: Neues kommt dazu', modeNoteSwitch: 'Modus: Die Welt ist das Blatt', newWorld: '🌍 Neue Welt', sure: 'Sicher? Nochmal tippen',
+    newTurning: 'Blättert um …', newFailed: 'Das Umblättern hat nicht geklappt. Nochmal?',
   },
   en: {
     whatsNew: "What's new",
@@ -88,6 +89,7 @@ const S = {
     seenList: l => `👀 What have we got here? ${l} …`, buildingNow: x => `🎨 I'm making ${x} …`, coming: x => `🎨 Here comes ${x} …`,
     hello: n => `Hello ${n}!`, notKnown: '🤷 Hm, I don\'t know that one yet.', nothingNew: '🙂 Oh, nothing new after all.', failedSoft: '😕 That didn\'t work.', modeAdd: '➕ Add', modeSwitch: '🔄 Switch', modeTitle: 'What happens when a new sheet comes',
     modeNoteAdd: 'Mode: new drawings are added', modeNoteSwitch: 'Mode: the world is the sheet', newWorld: '🌍 New world', sure: 'Sure? Tap again',
+    newTurning: 'Turning the page …', newFailed: 'Turning the page did not work. Try again?',
   },
 };
 
