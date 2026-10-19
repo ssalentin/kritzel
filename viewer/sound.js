@@ -64,6 +64,8 @@ function readAloud(text, baseHz) {
 export function createSound(THREE, camera) {
   let ctx = null, master = null, wind = null, enabled = false;
   const bank = {};                             // role → decoded AudioBuffer
+  const thingBank = new Map();                 // thing base → { buf } | { wait } | { missing: true }
+  const thingQueue = new Set();                // things that arrived before the first click
   let last = null;                             // the last bank role played (tests/debug)
   const v = new THREE.Vector3();
 
@@ -96,6 +98,8 @@ export function createSound(THREE, camera) {
     src.connect(lp).connect(wind).connect(master);
     src.start(); lfo.start();
     loadBank();
+    for (const base of thingQueue) prepareThing(base);
+    thingQueue.clear();
   }
 
   // stereo pan + distance attenuation for a sound coming from an object
@@ -148,6 +152,47 @@ export function createSound(THREE, camera) {
     return true;
   }
 
+  // A drawn thing's own Ogg, loaded next to the page after the first click. A 404 is cached: the
+  // generic arrival/tap is used from then on. A file that is still loading plays when it is ready,
+  // so the first arrival can use it too instead of both sounds at once.
+  const thingBase = obj => {
+    for (let o = obj; o; o = o.parent) if (o.userData?.thingFile) return String(o.userData.thingFile).replace(/\.js$/, '');
+    return null;
+  };
+  function prepareThing(file) {
+    const base = String(file || '').replace(/\.js$/, '');
+    if (!base) return null;
+    const known = thingBank.get(base);
+    if (known) return known.wait || null;
+    if (!ctx) { thingQueue.add(base); return null; }
+    const wait = fetch(new URL('./sounds/things/' + encodeURIComponent(base) + '.ogg', import.meta.url))
+      .then(r => r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status))))
+      .then(b => ctx.decodeAudioData(b))
+      .then(buf => { const rec = { buf }; thingBank.set(base, rec); return buf; })
+      .catch(() => { const rec = { missing: true }; thingBank.set(base, rec); return null; });
+    thingBank.set(base, { wait });
+    return wait;
+  }
+  function playThing(buf, role, obj) {
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    src.playbackRate.value = 1 + (Math.random() * 2 - 1) * 0.05;      // the same thing, a little different each tap
+    const g = ctx.createGain();
+    g.gain.value = (role === 'tap' ? 0.65 : 0.5) * (0.92 + Math.random() * 0.16);
+    last = { role: 'thing', file: thingBase(obj), targetRole: role, rate: src.playbackRate.value, gain: g.gain.value };
+    src.connect(g).connect(spot(obj));
+    src.start(ctx.currentTime + 0.005);
+    return true;
+  }
+  // the generic bank/procedural role, used when the thing has no Ogg
+  function playRole(name, obj) {
+    const asked = name;
+    if (name in BANK && playBank(name, obj)) return;
+    if (BANK_FALLBACK[name]) name = BANK_FALLBACK[name];
+    if (!FX[name]) return;
+    last = { role: asked, generic: true, effect: name };
+    FX[name](spot(obj), ctx.currentTime + 0.01);
+  }
+
   // pitch per speaker, stable across reloads (hash of the speaker's uuid/name)
   const pitchOf = key => { let h = 0; for (const c of String(key)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return 200 + (h % 340); };
 
@@ -181,13 +226,28 @@ export function createSound(THREE, camera) {
     fx(name, obj) {
       if (name in ALIAS) name = ALIAS[name];
       if (!enabled || !ctx) return;
-      if (name in BANK && playBank(name, obj)) return;
-      if (BANK_FALLBACK[name]) name = BANK_FALLBACK[name];
-      if (!FX[name]) return;
-      FX[name](spot(obj), ctx.currentTime + 0.01);
+      if (name === 'arrival' || name === 'typedArrival' || name === 'tap') {
+        const base = thingBase(obj);
+        if (base) {
+          const rec = thingBank.get(base) || (prepareThing(base), thingBank.get(base));
+          if (rec?.buf) return playThing(rec.buf, name, obj);
+          if (rec?.wait) {
+            rec.wait.then(buf => {
+              if (!enabled || !ctx) return;
+              if (buf) playThing(buf, name, obj);
+              else playRole(name, obj);             // no Ogg after all: today's generic sound
+            });
+            return;                                   // no generic sound under the custom one
+          }
+          if (!rec?.missing) return;                  // not loaded yet (no click): nothing plays
+        }
+      }
+      playRole(name, obj);
     },
     bankLoaded: () => Object.keys(bank),        // tests: which roles are decoded
     lastPlay: () => last,                       // tests: role, playback rate and gain of the last bank sound
+    prepareThing,                               // world.js: start the Ogg fetch when a thing loads
+    thingSound: base => thingBank.get(String(base).replace(/\.js$/, '')),   // tests: buf / wait / missing
     // called for every new speech bubble: the browser reads it aloud in the page's language (a seven-year-old
     // reads slowly), each figure with its own pitch; without a voice for the language, the soft babble as before
     speak(obj, text) {

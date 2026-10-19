@@ -2,7 +2,7 @@
 // node --test viewer/test-sounds.mjs   (scripts/make-sounds.sh renders the files)
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -30,6 +30,8 @@ test('a new-world archive carries the sound bank with the page', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'kritzel-bank-'));
   try {
     cpSync(viewer, join(tmp, 'viewer'), { recursive: true, filter: p => !p.includes('__pycache__') });
+    mkdirSync(join(tmp, 'viewer', 'sounds', 'things'), { recursive: true });
+    writeFileSync(join(tmp, 'viewer', 'sounds', 'things', 'drache.ogg'), readFileSync(join(dir, 'tap.ogg')));
     mkdirSync(join(tmp, 'scripts'));
     cpSync(join(viewer, '..', 'scripts', 'newworld.sh'), join(tmp, 'scripts', 'newworld.sh'));
     execFileSync('bash', [join(tmp, 'scripts', 'newworld.sh'), 'qa'], { cwd: tmp, stdio: 'pipe' });
@@ -39,6 +41,10 @@ test('a new-world archive carries the sound bank with the page', () => {
       assert.ok(existsSync(archived), `${f} is missing from ${archive}`);
       assert.deepEqual(readFileSync(archived), readFileSync(join(dir, f)), f);
     }
+    // a thing's own sound travels with the page too (newworld.sh copies the whole sounds/ tree)
+    const thing = join(tmp, 'worlds', archive, 'sounds', 'things', 'drache.ogg');
+    assert.ok(existsSync(thing), `sounds/things/drache.ogg is missing from ${archive}`);
+    assert.deepEqual(readFileSync(thing), readFileSync(join(dir, 'tap.ogg')));
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

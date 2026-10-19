@@ -284,6 +284,8 @@ export async function build(api, prevState = null) {
   async function loadThing(file, states, live = false, later = null) {
     const before = new Set(world.children);
     const entry = { box: new THREE.Group(), actors: [], obstacles: [], spots: [], holds: [], heldBy: null, update: null, light: [], weather: [] };
+    entry.box.userData.thingFile = file;       // sound.js plays this thing's own Ogg on arrival/tap
+    api.sound?.prepareThing?.(file);           // fetch it now; before the first click it waits in a queue
     let m = null;
     try {
       m = await import('./things/' + file + '?v=' + Date.now());

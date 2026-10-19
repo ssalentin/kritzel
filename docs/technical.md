@@ -58,6 +58,32 @@ Ogg encoder; every file measures below −1 dBTP), and prints `earshot measure` 
 bank. Re-run it when a role needs a different sound. The procedural effects in
 `sound.js` stay as the fallback for the moment before the bank has decoded.
 
+### A sound for each thing
+
+Every thing written by `generate/` also gets a short Ogg of its own,
+`viewer/sounds/things/<file>.ogg`. `scripts/thing_sounds.py` maps the thing's
+`meta.name` (German and English words) and its actor's `move` to a small recipe family — person,
+fly, swim, walk, plant, thing, building, vehicle, light, magic, weather — and renders it with
+only earshot's DSP layer (`earshot.forge.dsp`): no CLAP search, torch, model or API key. The seed
+is the module's file name, so the same thing sounds the same; renders are 0.3–0.9 s mono 48 kHz,
+peak about −3 dBFS, one Ogg q4 under 30 KB. `generate/` renders the sound before it writes the
+module, so the first arrival can already play it; a failed render is logged and never blocks the
+thing.
+
+One-time setup, with network:
+
+```bash
+python3 scripts/thing_sounds.py --ensure
+```
+
+It clones the pinned earshot commit into `.kritzel/earshot` and creates
+`.kritzel/earshot-venv` with numpy, scipy and soundfile only. After that rendering works offline.
+Without the setup a thing is still built and the generate log says why it has no sound;
+`KRITZEL_THING_SOUNDS=0` turns the render off. The viewer fetches a thing's Ogg when it loads,
+plays it on arrival and tap with the same pan/distance as the bank and ±5 % playback rate, and
+caches a 404: a thing without a sound keeps today's `arrival`/`tap`. Nothing is fetched or played
+before the first click. A new world archives the whole `viewer/sounds/` tree, thing sounds included.
+
 The viewer speaks German or English (the world is made for drawing with kids): the DE/EN
 button next to 📷 switches all UI texts and the characters' speech; the choice is kept in
 the browser, and without one the browser's language decides. UI texts live in
@@ -371,11 +397,12 @@ wait behind a sheet that is being built.
 ```
 viewer/          the engine (served at /viewer/)
 viewer/things/   one module per drawn object (empty in the repo)
+viewer/sounds/   the generic bank, and things/ for each thing's generated Ogg
 generate/        the generation stage: frame → things/*.js
 kritzel          setup / start / stop / status / camera: the one entry point
 scripts/         start.sh (server + camera window), dev.sh (server + capture + generate),
                  capture.py (camera → frames/settled/), camera_server.py (shares a camera),
-                 newworld.sh (archive + reset)
+                 newworld.sh (archive + reset), thing_sounds.py (a thing → its Ogg)
 docs/            logo and screenshots for this README (rendered from the live book)
 VERSION          the version the viewer shows (with the commit)
 BACKLOG.md       ideas and requests that are not scheduled work yet

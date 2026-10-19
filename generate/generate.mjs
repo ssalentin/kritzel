@@ -70,6 +70,30 @@ export function withThingWrite(fn) {
   return run;
 }
 
+// ---------- a short sound for each thing (scripts/thing_sounds.py, earshot DSP) ----------
+// Rendered before the module is written, so the first arrival can already play it. A failure is logged
+// and never blocks the thing; no sound means the viewer keeps its generic arrival/tap.
+export function soundFor(file, name, code, info, thingsDir) {
+  if (process.env.KRITZEL_THING_SOUNDS === '0') return null;
+  const script = process.env.KRITZEL_THING_SOUNDS_SCRIPT || join(ROOT, 'scripts', 'thing_sounds.py');
+  const cmd = process.env.KRITZEL_THING_SOUNDS_CMD || 'python3';
+  const base = file.replace(/\.js$/, '');
+  const out = join(dirname(thingsDir), 'sounds', 'things', base + '.ogg');
+  const move = code.match(/\bmove:\s*['"](fly|swim|hop|crawl|climb|walk)['"]/)?.[1] || '';
+  const kind = info?.actors?.length ? 'actor' : '';
+  try {
+    const stdout = execFileSync(cmd, [script, '--name', name || base, '--kind', kind, '--move', move,
+      '--seed', base, '--out', out], { encoding: 'utf8', timeout: 20_000, stdio: ['ignore', 'pipe', 'pipe'] });
+    const made = JSON.parse(stdout.trim().split('\n').at(-1) || '{}');
+    log(`sound ${base}.ogg (${made.family || '?'}${made.preset && made.preset !== made.family ? '/' + made.preset : ''}, ${made.bytes || '?'} bytes, ${made.seconds ?? '?'} s)`);
+    return { file: `sounds/things/${base}.ogg`, family: made.family, preset: made.preset, seconds: made.seconds, bytes: made.bytes };
+  } catch (e) {
+    const why = String(e.stderr || e.message || e).trim().split('\n')[0].slice(0, 200);
+    log(`sound ${base}: ${why} (the thing still arrives)`);
+    return null;
+  }
+}
+
 // changed_box (+ margin) → a JPEG, and where it goes on the island. A tight crop is sharp at 768 px; a whole
 // sheet (no trusted box) goes at up to 1568 px (Claude's own limit), so small drawings stay legible
 function cropOf(frame, box, previous = null) {
@@ -381,10 +405,11 @@ export async function processTextRequest(reqPath, { thingsDir, reportsDir, onPro
           try { now = readFileSync(join(thingsDir, target), 'utf8'); } catch { /* gone: archived or removed */ }
           if (now === null) return { gone: true };
           if (now !== base.code) return { raced: now };
+          const sound = soundFor(target, name, f.code, f.info, thingsDir);
           atomicWrite(join(thingsDir, target), f.code);       // only now: a failed rewrite leaves the old file as it was
           // the report joins the write under the same lock: an archive either sees the thing and its report,
           // or neither, so it never archives a thing the request loop will not build again
-          report.written.push({ kind: 'UPDATE', file: target, name, model: f.model, at: T(), ids: base.ids,
+          report.written.push({ kind: 'UPDATE', file: target, name, model: f.model, at: T(), ids: base.ids, ...(sound && { sound }),
             ...(f.warnings.length && { warnings: f.warnings }) });
           save();
           return { wrote: true };
@@ -443,8 +468,9 @@ export async function processTextRequest(reqPath, { thingsDir, reportsDir, onPro
       }
       const base = freeName(slug(name), new Set(now.map(t => t.file.replace(/\.js$/, ''))));
       const file = base + '.js';
+      const sound = soundFor(file, name, code, f.info, thingsDir);
       atomicWrite(join(thingsDir, file), code);
-      report.written.push({ file, name, model: f.model, at: T(), ids: [...code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]),
+      report.written.push({ file, name, model: f.model, at: T(), ids: [...code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]), ...(sound && { sound }),
         ...(f.warnings.length && { warnings: f.warnings }) });
       save();                                                 // together with the write, for the archive replay
       return { file, name, code };
@@ -767,11 +793,12 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
         }
         const base = old ? old.file.replace(/\.js$/, '') : freeName(slug(thingName), new Set(now.map(t => t.file.replace(/\.js$/, ''))));
         const file = base + '.js';
+        const sound = soundFor(file, thingName, f.code, f.info, thingsDir);
         atomicWrite(join(thingsDir, file), f.code);
-        return { base, file, code: f.code, name: thingName };
+        return { base, file, code: f.code, name: thingName, sound };
       });
       if (!written) { log(`${name}: ${old.file} changed meanwhile (typed request won); not overwriting`); return; }
-      const { base, file, code: finalCode, name: finalName } = written;
+      const { base, file, code: finalCode, name: finalName, sound } = written;
       files.add(base);
       f = { ...f, code: finalCode };
       thingName = finalName;
@@ -782,7 +809,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
       const ids = [...f.code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]);
       const made = kid(thingName, said.seen[s.n]?.name_en || thingName);
       mark('firstWritten');
-      report.written.push({ kind: s.kind, file, name: thingName, model: f.model, latency, at: T(), ids, ...(made && { made }), ...(f.warnings.length && { warnings: f.warnings }) });
+      report.written.push({ kind: s.kind, file, name: thingName, model: f.model, latency, at: T(), ids, ...(made && { made }), ...(sound && { sound }), ...(f.warnings.length && { warnings: f.warnings }) });
       log(`${name}: ${s.kind === 'UPDATE' ? 'UPDATED' : 'WROTE'} ${file} (${thingName}) by ${f.model}, ${latency}s after the frame settled`);
       renders.push({ base, file, code: f.code });
       thingState(s.n, DRAFT_MODEL && f.model !== MODEL && s.kind === 'NEW' ? 'draft' : 'done', file);
@@ -854,6 +881,7 @@ ${draft}`;
           let now = null;
           try { now = readFileSync(path, 'utf8'); } catch { /* removed meanwhile */ }
           if (now !== draft) { log(`${name}: final of ${file} dropped: the thing changed or was removed meanwhile`); return done({ dropped: 'changed meanwhile' }); }
+          const sound = soundFor(file, thingName, f.code, f.info, thingsDir);
           atomicWrite(path, s.says ? withSaid(f.code, s.says) : f.code);
           log(`${name}: FINAL ${file} (${thingName}) by ${MODEL}, ${((Date.now() - settledAt) / 1000).toFixed(1)}s after the frame settled`);
           // the other things the draft had taken for one: written as new things, checked like any
@@ -885,14 +913,15 @@ ${draft}`;
             const base = freeName(slug(partName), new Set([...files, ...readdirSync(thingsDir).map(f => f.replace(/\.js$/, ''))]));
             files.add(base);
             const partFile = base + '.js';
+            const sound = soundFor(partFile, partName, code, g.info, thingsDir);
             atomicWrite(join(thingsDir, partFile), code);
             const pm = code.match(/paper:\s*\{\s*x:\s*([\d.]+),\s*y:\s*([\d.]+)/);
             if (pm) { paper[partFile] = { x: +pm[1], y: +pm[2] }; writePaper(reportsDir, paper); }
-            report.written.push({ kind: 'NEW', file: partFile, name: partName, model: MODEL, at: T(), ids: [...code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(m => m[1]), splitFrom: file });
+            report.written.push({ kind: 'NEW', file: partFile, name: partName, model: MODEL, at: T(), ids: [...code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(m => m[1]), splitFrom: file, ...(sound && { sound }) });
             parts.push(partFile);
             log(`${name}: SPLIT from ${file}: WROTE ${partFile} (${partName}) by ${MODEL}`);
           }
-          done({ model: MODEL, seconds: +r.seconds.toFixed(1), ...(parts.length && { split: parts }) });
+          done({ model: MODEL, seconds: +r.seconds.toFixed(1), ...(parts.length && { split: parts }), ...(sound && { sound }) });
           // the watcher refreshes dialogues from what a frame wrote; these came after it returned
           if (parts.length) try { onLater({ written: report.written.filter(w => parts.includes(w.file)) }); } catch { /* never breaks a final */ }
         } catch (e) { log(`${name}: final of ${file} failed, the draft stays: ${e.message.slice(0, 200)}`); failed({ kept: 'draft', problems: [e.message.slice(0, 200)] }); }
