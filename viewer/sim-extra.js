@@ -3,7 +3,7 @@
 // choose(a, b, r, api) picks the interaction for a pair that just met (r = their lower relationship).
 
 import { sound } from './sound.js';
-import { pickDialogue, fromPool, readTime, personaOf, refreshPool, questPool } from './dialogues.js';
+import { pickDialogue, fromPool, poolFor, readTime, personaOf, refreshPool, questPool } from './dialogues.js';
 import { lang } from './i18n.js';
 
 export const LINES = {
@@ -168,8 +168,10 @@ export function options(a, add, { spots, cover, spotCell, things, nearest, actor
   }
   if (p && actors) {
     // a liked figure: a follower walks after it for a while
-    const liked = actors().find(b => b !== a && !b.hidden && p.likes.some(l => l === b.name || l === b.id));
-    if (liked && p.hobby === 'follow') add(0.7, { type: 'follow', target: liked, why: 'liked' });
+    // only one that is not already close: a follow ends next to its target, and the same pick would repeat at once
+    const liked = actors().find(b => b !== a && !b.hidden && Math.hypot(b.pos.x - a.pos.x, b.pos.z - a.pos.z) > 2.5 && p.likes.some(l => l === b.name || l === b.id));
+    // (GitHub #29) a liked figure beats an ordinary approach or door: it was never picked at 0.7
+    if (liked) add(p.hobby === 'follow' ? 1.6 : 0.6, { type: 'follow', target: liked, why: 'liked' });
   }
 }
 
@@ -216,11 +218,11 @@ export function portable(a, g, api) {
   // on a quest (tickQuests sets g.dest: a figure or a place) it is carried there and offered to nobody on the way
   if (!g.dest && !it.quest) {
     // (a friend who carries something too can swap: the give hands theirs back)
-    const friend = actors().find(b => b !== a && !b.hidden && b.kind !== 'squid' &&
+    const friend = actors().find(b => b !== a && !b.hidden && b.kind !== 'squid' && walks(b) &&
       Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y)) <= 2 && (b.goal?.type ?? 'idle') !== 'give');
     if (friend && R() < 0.4) { a.goal = { type: 'give', item: it, to: friend, until: now() + 8 }; a.goalSince = now(); return; }
     // a throw: a friend a few cells off; it flies in an arc and lands, and is caught if they are still there
-    const far = actors().find(b => b !== a && !b.hidden && b.kind !== 'squid' && !carriedBy(spots, b) && (b.goal?.type ?? 'idle') !== 'give' &&
+    const far = actors().find(b => b !== a && !b.hidden && b.kind !== 'squid' && walks(b) && !carriedBy(spots, b) && (b.goal?.type ?? 'idle') !== 'give' &&
       Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y)) >= 3 && Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y)) <= 6);
     if (far && R() < 0.05) { throwTo(a, it, far, api); return; }   // about one throw a minute, not one every half minute
   }
@@ -492,8 +494,13 @@ export const INTERACTIONS = {
     a.goal = null; a.busyUntil = now() + 0.6;
     a.flee = { from: b, until: now() + 8 };
   },
+  keepAway(a, b, { now }) {                     // the scared one steps away from a scary figure it met again too soon
+    const victim = a.fears?.includes(b.id) ? a : b, boo = victim === a ? b : a;
+    victim.goal = { type: 'flee', target: boo, until: now() + 2.5 }; victim.goalSince = now();
+  },
   spook(a, b, { busy, say, line, bond, now, actors }) {   // the feared one says boo; the scared one slowly gets used to it
     const victim = a.fears?.includes(b.id) ? a : b, boo = victim === a ? b : a;
+    victim.spookedBy = { ...victim.spookedBy, [boo.id]: now() };
     busy(boo, victim, 'wave', 2.2); busy(victim, boo, 'scared', 2.2);
     say(boo, line(boo, 'spook'), 1.8); say(victim, line(victim, 'scared'), 1.8, 0.5);
     bond(boo, victim, 0.18);
@@ -508,6 +515,15 @@ export const INTERACTIONS = {
     }
     const bystander = actors().find(c => c !== boo && c !== victim && !c.hidden && Math.max(Math.abs(c.cell.x - victim.cell.x), Math.abs(c.cell.y - victim.cell.y)) <= 4);
     if (bystander) { bystander.fear = Math.max(bystander.fear, 0.35); say(bystander, line(bystander, 'startled'), 1.6, 1.0); }   // the scare spreads
+  },
+  offer(a, b, api) {                            // the carrier hands its thing to the friend it has just met
+    const { now, say, line } = api;
+    const carrier = api.spots().find(s => s.kind === 'portable' && s.carrier && (s.carrier === a || s.carrier === b) && !s.throw)?.carrier;
+    if (!carrier) return;
+    const to = carrier === a ? b : a, it = api.spots().find(s => s.carrier === carrier && s.kind === 'portable');
+    if (!walks(to)) return;                       // a flier can't take a thing from the ground: no hand-over to it
+    carrier.goal = { type: 'give', item: it, to, until: now() + 8 }; carrier.goalSince = now();
+    say(carrier, line(carrier, 'give'), 2);
   },
   share(a, b, { busy, say, line, bond }) {       // a well-fed friend gives some food to a hungry one
     const [giver, taker] = a.hunger < 0.2 ? [a, b] : [b, a];
@@ -857,9 +873,20 @@ export function showEgg(a, b, { busy, say, line, bond }) {
   bond(giver, friend, 0.25);
 }
 
-export function choose(a, b, r, { R, pick, rel }) {
+export function choose(a, b, r, api) {
+  const { R, pick, rel } = api;
+  // a pool dialogue for this pair that fits the moment is offered to any meeting (it used to need a low relationship)
+  const poolReady = !(a.kind === 'squid' || b.kind === 'squid') && poolFor(a.name || a.id, b.name || b.id, context(a, b, api));
   const feared = a.fears?.includes(b.id) ? a : b.fears?.includes(a.id) ? b : null;
-  if (feared && rel(feared, feared === a ? b : a) < 0.45) return 'spook';
+  // a scary figure gets one boo per pair per minute: within that, the scared one keeps its distance (no new boo)
+  if (feared && rel(feared, feared === a ? b : a) < 0.45) {
+    const boo = feared === a ? b : a;
+    return api.now() - (feared.spookedBy?.[boo.id] ?? -1e9) > 60 ? 'spook' : 'keepAway';
+  }
+  // a carrier who meets a friend may hand the thing over (meeting-based hand-over, GitHub #29): the common way a swap happens
+  const holding = x => api.spots().find(s => s.kind === 'portable' && s.carrier === x && !s.throw);
+  const carrier = holding(a) ? a : holding(b) ? b : null;
+  if (carrier && !holding(carrier === a ? b : a) && walks(carrier === a ? b : a) && rel(a, b) > 0.2 && R() < 0.5) return 'offer';
   const squidInvolved = a.kind === 'squid' || b.kind === 'squid';
   const shaken = a.fear > 0.3 ? a : b.fear > 0.3 ? b : null;
   // a shaken character meets a friend who is not shaken: the friend comforts them
@@ -867,6 +894,7 @@ export function choose(a, b, r, { R, pick, rel }) {
   const hungry = a.hunger > 0.6 ? a : b.hunger > 0.6 ? b : null;
   if (hungry && (hungry === a ? b : a).hunger < 0.2 && rel(a, b) > 0.3) return 'share';
   if ((a.eggs || b.eggs) && rel(a, b) > 0.2) return 'showEgg';
+  if (poolReady && R() < 0.6) return 'talk';
   if (!squidInvolved && rel(a, b) > 0.3 && Math.abs(a.radius - b.radius) > 0.1 && R() < 0.4) return 'chaseSmall';
   if (squidInvolved && R() < 0.3) return 'spar';
   if (r < 0.3) return R() < 0.5 ? 'talk' : 'greet';

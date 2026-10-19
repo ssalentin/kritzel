@@ -116,7 +116,9 @@ export function safeDialogue(d) {
 // ---------- the generated pool (things/dialogues.json next to placement.json, written by generate/dialogues.mjs) ----------
 // { cast: [names], dialogues: [{ between: [nameA, nameB], end, turns: [{ who: name, de, en }] }] }
 let pool = [], poolAt = 0, personas = {}, quests = [];
-const played = new Set();                  // played dialogues, by content (the pool grows and is re-read: an index would shift)
+const played = new Map();                  // played dialogues, by content → when (the pool grows and is re-read: an index would shift)
+const REPLAY_MS = 5 * 60_000;              // a played pool dialogue may come back after five minutes: the supply never runs dry
+const fresh = d => { const at = played.get(contentKey(d)); return at === undefined || Date.now() - at > REPLAY_MS; };
 const contentKey = d => JSON.stringify(d.turns);
 // the figures' personalities (dialogues.json personas, keyed by actor id); refs are names or ids, resolved by the sim
 export const HOBBIES = ['collect', 'guard', 'nap', 'follow', 'wander'];
@@ -177,12 +179,14 @@ export function fitsWhen(when, c) {
   return true;
 }
 // an unplayed generated dialogue for exactly these two, as { turns: [{ speaker, de, en }], end }; else null
+// is there an unplayed pool dialogue for exactly these two that fits the moment (used by the choice of a meeting)
+export const poolFor = (na, nb, c) => pool.some(d => fresh(d) && d.between.includes(na) && d.between.includes(nb) && na !== nb && fitsWhen(d.when, c));
 export function fromPool(c) {
   refreshPool();
   const na = c.a.name || c.a.id, nb = c.b.name || c.b.id;
-  const i = pool.findIndex(d => !played.has(contentKey(d)) && d.between.includes(na) && d.between.includes(nb) && na !== nb && fitsWhen(d.when, c));
+  const i = pool.findIndex(d => fresh(d) && d.between.includes(na) && d.between.includes(nb) && na !== nb && fitsWhen(d.when, c));
   if (i < 0) return null;
-  played.add(contentKey(pool[i]));
+  played.set(contentKey(pool[i]), Date.now());
   const d = pool[i];
   return { end: d.end ?? null, generated: true, turns: d.turns.map(t => ({ speaker: t.who === na ? c.a : c.b, de: t.de, en: t.en })) };
 }
