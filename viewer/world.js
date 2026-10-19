@@ -49,7 +49,9 @@ export async function build(api, prevState = null) {
   // Things are loaded one by one and can be added/changed/removed live — the rest of the
   // world (and every character's position, mood and friendships) keeps running.
   const env = { cover: 0 };
-  // sound for things: ctx.sound.fx(name, object3D) — names: plopp, melodie, buh, mampf, piep, quak, staunen, rascheln, herz
+  // sound for things: ctx.sound.fx(name, object3D) — bank roles: arrival, pageTurn, tap, giggle,
+  // sparkle, rain, thunder, newWorld, typedArrival; procedural: plopp, melodie, buh, mampf, piep,
+  // quak, staunen, rascheln, herz
   const sound = { fx: (name, obj) => api.sound?.fx(name, obj) };
   // water for drawn things: ctx.water.pond(x, z, r), .waterfall(from, to, width), .river(points, width)
   const water = waterMod.makeWater({ THREE, scene });
@@ -430,6 +432,7 @@ export async function build(api, prevState = null) {
         // with the scales it had when loaded, and not while it is still growing in (status.arrived)
         if (!e.wiggle && clockNow - (e.bornAt ?? -9) > 0.8) e.wiggle = { at: clockNow, parts: e.base || e.box.children.map(c => [c, c.scale.clone()]) };
         api.mood?.blink?.(file);
+        api.sound?.fx('tap', e.box);
         try { e.onTap?.(); } catch (err) { report(`things/${file}: onTap: ${err.message}`); }
         return file;
       }

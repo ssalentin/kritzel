@@ -7,6 +7,7 @@ const KINDS = ['rain', 'snow', 'rainbow', 'lightning'];
 const EASE_S = 1.5;
 
 import { groundY } from './book.js';
+import { sound } from './sound.js';
 
 export function createWeather({ THREE, scene }) {
   const wanted = new Map();                    // thing id → Set of kinds
@@ -56,13 +57,20 @@ export function createWeather({ THREE, scene }) {
 
   scene.add(rain, snow, puddles, rainbow, bolt);
 
+  const active = () => new Set([...wanted.values()].flatMap(s => [...s]));
   function set(id, list) {
+    const before = active();
     const kinds = new Set([].concat(list || []).map(w => typeof w === 'string' ? w : w?.kind).filter(k => KINDS.includes(k)));
     if (kinds.size) wanted.set(id, kinds); else wanted.delete(id);
+    const added = [...active()].filter(k => !before.has(k));
+    if (added.length) {
+      if (added.includes('rain')) sound.at().rain();     // the first rain of a drawing starts with rain
+      else sound.at().sparkle();                          // snow, a rainbow, a storm: a little sparkle
+    }
   }
-  const active = () => new Set([...wanted.values()].flatMap(s => [...s]));
 
   function strike() {
+    sound.at().thunder();
     let x = (rnd() - 0.5) * 8, z = (rnd() - 0.5) * 8;
     for (let i = 0; i < 12; i++) {
       const y = 11 - i;
