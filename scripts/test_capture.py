@@ -3,13 +3,19 @@
     python3 -m unittest scripts/test_capture.py
 """
 import math
+import json
+import contextlib
+import io
 import random
 import sys
+import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import capture as c  # noqa: E402
+import jev  # noqa: E402
 
 W, H = c.W, c.H
 CW, CH = c.CW, c.CH
@@ -246,6 +252,106 @@ class Paper(unittest.TestCase):
                 i = (y * CW + x) * 3
                 img[i:i + 3] = [205, 150, 118]
         self.assertEqual(c.look(img), "paper")
+
+
+def jev_reply(**probs):
+    """A Decisions reply with the six Nouls and the Box, as the API returns them."""
+    answers = {k: {"type": "noul", "noul": p} for k, p in probs.items()}
+    answers["box"] = {"type": "box", "box": {"left": 0.25, "top": 0.2, "right": 0.75, "bottom": 0.6},
+                      "confidence": 0.8}
+    return {"answers": answers}
+
+
+class Jev(unittest.TestCase):
+    def ask(self, reply=None, error=None, key="test-key"):
+        posts = []
+
+        def post(body, timeout, k):
+            posts.append((body, timeout, k))
+            if error:
+                raise error
+            return reply
+
+        label = jev.ask(b"\xff\xd8before", b"\xff\xd8after", (1920, 1080), key=key, post=post,
+                        scale=lambda jpeg: jpeg)
+        return label, posts
+
+    def test_a_new_drawing_is_labelled_with_its_box_in_picture_px(self):
+        label, posts = self.ask(jev_reply(new_drawing=0.93, addition=0.2, coloured_in=0.01,
+                                          crossed_out=0.01, relabel=0.01, unchanged=0.02))
+        self.assertEqual(label["kind"], "new")
+        self.assertAlmostEqual(label["changed"], 0.98)
+        self.assertEqual(label["box"], [480, 216, 960, 432])      # ¼..¾ × 1920, ⅕..⅗ × 1080
+        self.assertEqual(label["confidence"], 0.8)
+        self.assertIn("seconds", label)
+        (body, timeout, key), = posts
+        sent = json.loads(body)
+        self.assertEqual(sent["model"], "typesafe/jev-1.14")
+        self.assertEqual(len(sent["state"]), 3)                   # the words, the before, the after
+        self.assertTrue(sent["state"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+        self.assertEqual([q["type"] for q in sent["questions"].values()].count("noul"), 6)
+        self.assertEqual(sent["questions"]["box"]["type"], "box")
+        self.assertLessEqual(timeout, 2.0)
+        self.assertEqual(key, "test-key")
+
+    def test_colouring_in_is_its_own_kind(self):
+        label, _ = self.ask(jev_reply(new_drawing=0.02, addition=0.1, coloured_in=0.88,
+                                      crossed_out=0.01, relabel=0.02, unchanged=0.2))
+        self.assertEqual(label["kind"], "coloured_in")
+
+    def test_a_slow_request_returns_none(self):
+        label, _ = self.ask(error=TimeoutError("timed out"))
+        self.assertIsNone(label)
+
+    def test_a_server_error_returns_none(self):
+        label, _ = self.ask(error=urllib.error.HTTPError(jev.URL, 500, "boom", {}, None))
+        self.assertIsNone(label)
+
+    def test_no_key_means_off_and_no_request(self):
+        label, posts = self.ask(jev_reply(unchanged=1), key="")
+        self.assertIsNone(label)
+        self.assertEqual(posts, [])
+        self.assertFalse(jev.on({"KRITZEL_JEV": "0"}))
+        self.assertTrue(jev.on({}))
+
+    def test_confident_unchanged_is_zero_and_names_no_kind(self):
+        label, _ = self.ask(jev_reply(new_drawing=0.05, addition=0.1, coloured_in=0.02,
+                                      crossed_out=0.01, relabel=0.02, unchanged=0.91))
+        self.assertEqual(label["changed"], 0)
+        self.assertEqual(label["kind"], "unchanged")
+        self.assertTrue(c.skip_frame("drawn", label))
+
+    def test_a_kind_near_the_threshold_is_not_a_confident_skip(self):
+        label, _ = self.ask(jev_reply(new_drawing=0.40, addition=0.2, coloured_in=0.02,
+                                      crossed_out=0.01, relabel=0.02, unchanged=0.61))
+        self.assertAlmostEqual(label["changed"], 0.39)
+        self.assertFalse(c.skip_frame("drawn", label))
+
+    def test_a_big_change_is_never_skipped(self):
+        label = {"changed": 0, "kind": "unchanged"}
+        self.assertFalse(c.skip_frame("big-change", label))
+        self.assertFalse(c.skip_frame("drawn", None))
+
+    def test_a_sure_and_confident_box_becomes_the_crop(self):
+        with tempfile.TemporaryDirectory() as d:
+            was, c.OUT = c.OUT, Path(d)
+            try:
+                sure = {"changed": 0.9, "kind": "new", "box": [10, 10, 20, 20],
+                        "confidence": 0.5, "seconds": 0.4}
+                unsure = dict(sure, confidence=0.3)
+                quiet = contextlib.redirect_stdout(io.StringIO())
+                with quiet:
+                    name = c.hand_on(b"jpeg", (100, 100), "drawn", [1, 2], {}, None, label=sure)
+                meta = json.loads((Path(d) / name.replace(".jpg", ".json")).read_text())
+                self.assertEqual(meta["changed_box"], [10, 10, 20, 20])
+                self.assertIn("pixel_box", meta)              # the detector's own box is kept
+                with quiet:
+                    name = c.hand_on(b"jpeg", (100, 100), "drawn", [1, 2], {}, None, label=unsure)
+                meta = json.loads((Path(d) / name.replace(".jpg", ".json")).read_text())
+                self.assertNotEqual(meta["changed_box"], [10, 10, 20, 20])
+                self.assertNotIn("pixel_box", meta)           # not confident enough: the detector's box stays
+            finally:
+                c.OUT = was
 
 
 if __name__ == "__main__":

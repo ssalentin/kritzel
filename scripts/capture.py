@@ -11,6 +11,12 @@ When the settled sheet differs from the last one handed on, it writes
                                                      changed, changed_box: [x, y, w, h] px}
     frames/settled/<YYYYmmdd-HHMMSS>.jpg    then, atomically: the camera's JPEG as it came
 
+Jev (TypeSafe) labels the change while the picture settles: its `jev` in the JSON says what kind
+it is ({changed, kind, box, confidence, seconds}) and its box becomes the crop generate gets when
+it is sure (changed ≥ 0.6, box confidence ≥ 0.4). A confident "nothing changed" from Jev skips a
+small pixel change instead of handing it on; a big change and a hand on the paper always go their
+own way. KRITZEL_JEV=0 turns the labels off.
+
 No frame while something moves (a drawing hand), none when nothing changed. A small change
 counts once still for STILL_S ("drawn"); a large one (new sheet, moved paper)
 must stay still for BIG_S ("big-change"), or only SHEET_S when the change is scattered all over
@@ -37,6 +43,8 @@ import threading
 import time
 import urllib.request
 from pathlib import Path
+
+import jev
 
 try:                     # lining up a moved sheet takes milliseconds with numpy, seconds without
     import numpy as np
@@ -75,6 +83,8 @@ PAPER_BRIGHT = 155       # ...or a smaller paper-bright field (printed picture, 
 PAPER_PLAIN = 0.35       # a big paper field this large stands on its own
 HAND_SHARE, HAND_ON_PAPER = 0.012, 0.15   # a skin blob this large, with this share of it on the sheet
 MAX_BYTES = 20 << 20
+JEV_WAIT = 0.4           # s the hand-on waits for a label that is still on its way
+JEV_CROP, JEV_CONF = 0.6, 0.4   # Jev's changed share and box confidence that make its box the crop
 
 
 def jpeg_size(data):
@@ -1025,6 +1035,41 @@ class Snapshot:
         return self.result
 
 
+class Triage:
+    """Jev's label for one still spell, asked while the settle time still runs.
+
+    It fetches the camera's small picture itself, in parallel with the full snapshot the hand
+    check and the hand-on need, so the label costs the settle time nothing."""
+
+    def __init__(self, spell, before, url, small):
+        self.spell, self.result, self.after = spell, None, None
+        self.thread = threading.Thread(target=self.work, args=(before, url, small), daemon=True)
+        self.thread.start()
+
+    def work(self, before, url, small):
+        try:
+            with urllib.request.urlopen(url + "?small", timeout=2) as r:
+                self.after = r.read(MAX_BYTES)
+        except Exception:
+            return                       # no small picture: no label; the frame goes on as before
+        before = before if small else jev.shrink(before)
+        self.result = jev.ask(before, self.after, scale=lambda jpeg: jpeg)   # None on any error
+
+    def get(self, wait):
+        """The label, after waiting at most `wait` s for it; None if it is not here by then."""
+        self.thread.join(wait)
+        return None if self.thread.is_alive() else self.result
+
+
+def skip_frame(reason, label):
+    """Jev is sure nothing changed and the pixel detector saw only a small change: don't hand it on.
+
+    A big change (a new sheet, moved paper) always goes through, and the hand check has already
+    said the paper is clear before this is asked."""
+    return (reason == "drawn" and bool(label)
+            and label.get("changed") == 0 and label.get("kind") == "unchanged")
+
+
 def affine(moved_by, size):
     """(degrees, dx, dy) in thumb px, as the Detector measured it → [a, b, c, d, e, f] in picture px."""
     deg, dx, dy = moved_by
@@ -1035,15 +1080,19 @@ def affine(moved_by, size):
     return [r(ca, 4), r(-sa, 4), r(cx - ca * cx + sa * cy + dx * sx), r(sa, 4), r(ca, 4), r(cy - sa * cx - ca * cy + dy * sy)]
 
 
-def hand_on(data, size, reason, diff, info, previous, moved_by=None):
+def hand_on(data, size, reason, diff, info, previous, moved_by=None, label=None):
     now = datetime.datetime.now()
     stem = now.strftime("%Y%m%d-%H%M%S")
+    if label and isinstance(label.get("box"), dict):
+        label["box"] = jev.box_px(label["box"], size)      # Jev's fractions → this frame's px
     meta = {"captured_at": now.astimezone().isoformat(timespec="seconds"), "camera": info,
             "previous": previous, "reason": reason, "changed": round(len(diff) / (W * H), 4),
             "changed_box": box(diff, size), "width": size[0], "height": size[1],
             # previous frame's px → this frame's px (x' = a*x + b*y + c, y' = d*x + e*y + f): a slide, or
             # a turn (up to TURN°) and slide (up to REACH thumb px); null when it could not be measured
-            "affine": moved_by and affine(moved_by, size)}
+            "affine": moved_by and affine(moved_by, size), "jev": label}
+    if label and label["changed"] >= JEV_CROP and label["confidence"] >= JEV_CONF and label["box"]:
+        meta["pixel_box"], meta["changed_box"] = meta["changed_box"], label["box"]
     for name, body in ((f"{stem}.json", json.dumps(meta, indent=2).encode() + b"\n"), (f"{stem}.jpg", data)):
         tmp = OUT / (name + ".tmp")
         tmp.write_bytes(body)
@@ -1155,6 +1204,10 @@ def main():
     restart_base = bool(done)            # this base came from disk, not from the running preview
     status, stream, url, seq, checked, cam, early = Status(), None, None, 0, 0, None, None
     held, held_spell, recheck, recheck_at, recheck_step = None, 0, None, 0.0, 0
+    triage, triage_on, small_before = None, jev.on(), None
+    if triage_on and not jev.api_key():
+        print("jev: OPENROUTER_API_KEY is not set; change labels are off", file=sys.stderr, flush=True)
+        triage_on = False
     while True:
         if time.monotonic() - checked > 1:   # the picker may switch cameras at any time
             checked, cam = time.monotonic(), camera()
@@ -1166,6 +1219,7 @@ def main():
                     stream.stop()
                 stream, url, seq, det.anchor = None, cam and cam[0], 0, None
                 early, held, held_spell, recheck, recheck_step = None, None, 0, None, 0
+                triage, small_before = None, None
         if cam is None:                       # none chosen (or no camera.json): wait, and say so
             status.set("no-camera")
             time.sleep(0.5)
@@ -1194,6 +1248,13 @@ def main():
         spell = det.candidate()
         if spell and (early is None or (early.spell != spell and early.checked)):
             early = Snapshot(url, spell)      # settled for EARLY_S: fetch it while the still time runs
+        if spell and triage_on and previous and (triage is None or triage.spell != spell):
+            # Jev gets the camera's small picture of this very moment, in parallel with that fetch
+            try:
+                before = small_before or (OUT / previous).read_bytes()
+                triage = Triage(spell, before, url, bool(small_before))
+            except OSError:
+                triage = None
         # once that picture is here, is a hand still on the paper, or is there no paper at all?
         if early and not early.checked and early.ready():
             early.checked = True
@@ -1270,9 +1331,23 @@ def main():
             print("restart change is outside the sheet; keeping it as the silent baseline", file=sys.stderr, flush=True)
             restart_base = False
             base_rgb = rgb                # the detector already adopted this picture; keep it
-            early, held = None, None
+            if triage and triage.after:
+                small_before = triage.after
+            early, held, triage = None, None, None
             continue
-        previous = hand_on(data, size, *got, cam[1], previous, det.measured if previous else None)
+        label = triage.get(JEV_WAIT) if triage and triage.spell == det.spell else None
+        if triage and triage.after:
+            small_before = triage.after        # next time Jev compares against this sheet
+        triage = None
+        if skip_frame(got[0], label):
+            print("jev: confident that nothing changed; keeping the sheet as the silent baseline",
+                  file=sys.stderr, flush=True)
+            restart_base = False
+            base_rgb = rgb                # the detector already adopted this picture; keep it
+            early, held = None, None
+            status.set("watching")
+            continue
+        previous = hand_on(data, size, *got, cam[1], previous, det.measured if previous else None, label)
         restart_base = False
         base_rgb = rgb
         meta = json.loads((OUT / previous.replace(".jpg", ".json")).read_text())
@@ -1281,8 +1356,8 @@ def main():
         except (subprocess.SubprocessError, OSError):
             cut = False
         status.last = {"frame": previous[:-4], "at": time.time(), "reason": got[0], "box": meta["changed_box"],
-                       "width": size[0], "height": size[1], "cutout": cut}
-        status.set("settled", previous[:-4])
+                       "width": size[0], "height": size[1], "cutout": cut, "kind": label and label["kind"]}
+        status.set("settled", label["kind"] if label else previous[:-4])
         held = None
 
 if __name__ == "__main__":

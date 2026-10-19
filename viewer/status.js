@@ -119,7 +119,10 @@ export function createStatus({ THREE, scene, el, world, banner, onView = null })
       if (g.state === 'failed') return { tone: 'warn', text: t('failedSoft') };
       if (g.state === 'idle' && last && g.frame === last.frame) return { tone: 'ok', text: t('nothingNew') };
     }
-    if (last && now - last.at < SEEN_S) return { tone: 'busy', text: t('noticed') };
+    if (last && now - last.at < SEEN_S) {
+      // Jev's label for the change, when capture has one ("new drawing", "colouring in", …)
+      return { tone: 'busy', text: last.kind && last.kind !== 'unchanged' ? t('seenKind', t('kind_' + last.kind)) : t('noticed') };
+    }
     if (!c.alive) return { tone: 'bad', text: t('captureOff') };
     if (c.state === 'camera-off') return { tone: 'bad', text: t('cameraOff') };
     if (c.state === 'no-camera') return { tone: 'bad', text: t('noCamera') };
