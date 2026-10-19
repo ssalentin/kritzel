@@ -25,6 +25,8 @@
   #status[data-tone=bad] .dot { background: #d0443a; }
   #status .text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-size: 15px; }
   #status .note { color: #b3261e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-size: 14px; }
+  /* a message of ours (a refused request) takes the pill for its few seconds: nothing is clipped behind the old text */
+  #status:has(.note:not([hidden])) .text, #status:has(.note:not([hidden])) .gen { display: none; }
   #status .gen { color: #b3261e; white-space: nowrap; }
   #status.calm { padding: 5px; }
   #status.calm:has(.note:not([hidden])) { padding: 4px 10px 4px 8px; }
@@ -73,7 +75,7 @@
     background: #6aa65a; color: #fff; cursor: pointer; }
   #textThing[data-busy] button { background: #b9a87c; cursor: default; }
   /* the live camera in a picture frame (camframe.js): a wooden edge, the pipeline's words under it */
-  #frame { box-sizing: border-box; padding: 10px 10px 8px;
+  #frame { position: relative; box-sizing: border-box; padding: 10px 10px 8px;   /* .min is absolute: keep it in the frame, not over the + */
     background: linear-gradient(135deg, #d8b679, #a9773c); border-radius: 6px; box-shadow: 0 8px 20px #0005, inset 0 0 0 2px #f1dca455; font: inherit; }
   #frame .pic { position: relative; aspect-ratio: 4 / 3; background: #f4efe6; border-radius: 3px; overflow: hidden; }
   #frame .pic video, #frame .pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; margin: 0; border-radius: 0; }
@@ -85,11 +87,12 @@
   #frame[data-mode=done] .cap { background: #1f7a43e6; font-weight: 600; }
   #frame .min { position: absolute; top: 2px; right: 2px; width: 26px; height: 26px; border: 0; border-radius: 13px; background: #fff9; font-size: 14px; line-height: 1; cursor: pointer; }
   #frame[data-min="1"] .pic, #frame[data-min="1"] .cap { display: none; }
-  #frame[data-min="1"] { width: auto; padding: 4px; }
+  #frame[data-min="1"] { align-self: flex-end; width: auto; padding: 4px; }   /* a small square at the corner, as before */
   #frame[data-min="1"] .min { position: static; }
   @media (max-width: 560px) { #corner { width: 34vw; right: 10px; bottom: 10px; }
     #textThing { width: min(78vw, 300px); align-self: flex-end; }   /* the field reaches left, the camera frame stays small */
     #frame { padding: 6px; }
+    #status .note { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
     #frame .cap { font-size: 11px; } #status { max-width: calc(100vw - 34vw - 40px); } }
   #card { position: fixed; right: 16px; bottom: calc(min(24vw, 300px) * 0.75 + 84px); max-width: min(280px, calc(100vw - 32px)); display: none;
     background: var(--panel); border-radius: 10px; padding: 8px 12px; }
@@ -416,7 +419,7 @@ onLang(() => {
   document.getElementById('camBtn').textContent = t('cameraBtn');
   document.querySelector('#cam select').setAttribute('aria-label', t('cameraSelect'));
   document.querySelector('#cam .refresh').title = t('cameraRefresh');
-  const camImg = document.querySelector('#cam img');   // camera.js moves it into the picture frame once the panel opens
+  const camImg = document.querySelector('#cam img, #frame img');   // camera.js moves it into the picture frame once the panel opens
   if (camImg) camImg.alt = t('cameraImage');
   langBtn.replaceChildren(...['de', 'en'].flatMap((l, i) => [...(i ? [' | '] : []), Object.assign(document.createElement(l === lang() ? 'b' : 'span'), { textContent: l.toUpperCase() })]));
   langBtn.title = t('langTitle');
@@ -459,7 +462,7 @@ textForm.addEventListener('submit', async e => {
   delete textForm.dataset.busy; textBtn.removeAttribute('aria-busy');
   textIn.placeholder = t('textThingPlaceholder');
   if (error) note(error);
-  textIn.blur();                                          // the book has the keyboard again (not the field)
+  textBtn.blur(); textIn.blur();                          // the book has the keyboard again (not the field or its button)
 });
 
 // world mode (kept on the server, read by the generate watcher) and 'new world' with an inline second tap
