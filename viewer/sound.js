@@ -7,6 +7,34 @@
 // Two ways to use it (both reach the same single instance):
 //  - engine/things: createSound(THREE, camera) → .speak(obj, text), .fx(name, obj), .setEnabled(on)
 //  - sim: import { sound } from './sound.js'; sound.at(obj).mampf()   (plop, tune, buh, chirp, …)
+// a voice of the page's language (de/en from <html lang>), found once the browser has loaded its voices
+const voices = {};
+function voiceFor(lang) {
+  const ss = globalThis.speechSynthesis;
+  if (!ss) return null;
+  if (!(lang in voices)) {
+    const all = ss.getVoices();
+    if (!all.length) return null;                       // not loaded yet: babble this time, try again next bubble
+    const same = all.filter(v => v.lang?.toLowerCase().startsWith(lang));
+    voices[lang] = same.find(v => /natural|neural|premium|enhanced/i.test(v.name)) || same.find(v => v.localService) || same[0] || null;
+  }
+  return voices[lang];
+}
+// reads a bubble aloud; false when no voice is there (then the babble plays). At most one line waits behind
+// the one being spoken, so a chatty moment never piles up a minute of speech.
+function readAloud(text, baseHz) {
+  const ss = globalThis.speechSynthesis, lang = (document.documentElement.lang || 'de').slice(0, 2).toLowerCase();
+  const voice = voiceFor(lang);
+  if (!ss || !voice) return false;
+  if (ss.pending) return true;                          // one waiting already: this line is shown, not spoken
+  const u = new SpeechSynthesisUtterance(text.replace(/[\p{Extended_Pictographic}♥…]/gu, ' ').replace(/\s+/g, ' ').trim());
+  if (!u.text) return true;
+  u.voice = voice; u.lang = voice.lang; u.rate = 0.95;
+  u.pitch = Math.max(0.6, Math.min(1.6, 0.6 + (baseHz - 200) / 300));   // the babble's pitch, as a voice pitch
+  ss.speak(u);
+  return true;
+}
+
 export function createSound(THREE, camera) {
   let ctx = null, master = null, wind = null, enabled = false;
   const v = new THREE.Vector3();
@@ -100,10 +128,12 @@ export function createSound(THREE, camera) {
       if (!enabled || !ctx || !FX[name]) return;
       FX[name](spot(obj), ctx.currentTime + 0.01);
     },
-    // called for every new speech bubble
+    // called for every new speech bubble: the browser reads it aloud in the page's language (a seven-year-old
+    // reads slowly), each figure with its own pitch; without a voice for the language, the soft babble as before
     speak(obj, text) {
       if (!enabled || !ctx || !text) return;
       const out = spot(obj), t0 = ctx.currentTime + 0.01, base = pitchOf(obj?.uuid);
+      if (readAloud(text, base)) return;
       const n = Math.max(2, Math.min(7, Math.round(text.replace(/[^\p{L}]/gu, '').length / 3)));
       for (let i = 0; i < n; i++) {
         const f = base * (1 + (Math.random() - 0.4) * 0.35) * (text.endsWith('?') && i === n - 1 ? 1.3 : 1);
