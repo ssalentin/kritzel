@@ -203,6 +203,15 @@ class Paper(unittest.TestCase):
             with self.subTest(colour=colour):
                 self.assertEqual(c.look(rgb_sheet(colour=colour)), "paper")
 
+    def test_a_busy_colouring_page_is_still_paper(self):
+        img = rgb_sheet()
+        rnd = random.Random(11)
+        for _ in range(2500):                   # dense line art breaks flat fields
+            x, y = rnd.randint(10, 86), rnd.randint(6, 48)
+            i = (y * CW + x) * 3
+            img[i:i + 3] = [rnd.randint(0, 255) for _ in range(3)]
+        self.assertEqual(c.look(img), "paper")
+
     def test_an_empty_table_has_no_paper(self):
         self.assertEqual(c.look(rgb_table()), "no-paper")
 

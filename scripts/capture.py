@@ -66,10 +66,8 @@ SHEET_S, SCATTER, SPAN = 3.0, 0.6, 0.5   # a big change whose biggest patch is u
 EARLY_S = 0.3            # into a still spell: look what's new, and fetch the snapshot of a drawing already
 SHRINK = f"format=gray,scale=960:540:flags=area,erosion,erosion,scale={W}:{H}:flags=area"   # keeps thin lines
 CW, CH = 96, 54          # colour thumbnail: the sheet and a hand, not the drawing's lines
-PAPER_BLOCK = 4          # one flatness sample is this many colour-thumbnail px square
-FLAT = 7                 # largest per-channel spread inside a block that is paper-flat (0-255)
-COLOUR_DIFF = 26         # neighbouring flat blocks this close are the same sheet, not paper beside a hand
-PAPER_SHARE, PAPER_FILL = 0.10, 0.25   # a sheet covers this much of the picture, and this much of its box
+PAPER_BLOCK = 4          # the hand check works on blocks this many colour-thumbnail px square
+PAPER_SHARE = 0.09       # this much of the picture not being table is paper (busy drawings count too)
 HAND_SHARE, HAND_ON_PAPER = 0.008, 0.15   # a skin blob this large, with this share of it on the sheet
 MAX_BYTES = 20 << 20
 
@@ -120,23 +118,20 @@ def colour(data):
 
 
 def blocks(rgb):
-    """(width, height, mean colour per block, whether each block is one flat colour)."""
+    """(width, height, mean colour per block)."""
     bw, bh = CW // PAPER_BLOCK, CH // PAPER_BLOCK
-    means, flat = [], []
+    means = []
     for by in range(bh):
         for bx in range(bw):
-            sums, squares = [0, 0, 0], [0, 0, 0]
+            sums = [0, 0, 0]
             for y in range(by * PAPER_BLOCK, (by + 1) * PAPER_BLOCK):
                 for x in range(bx * PAPER_BLOCK, (bx + 1) * PAPER_BLOCK):
                     i = (y * CW + x) * 3
                     for c in range(3):
                         sums[c] += rgb[i + c]
-                        squares[c] += rgb[i + c] * rgb[i + c]
             n = PAPER_BLOCK * PAPER_BLOCK
-            mean = [s / n for s in sums]
-            means.append(mean)
-            flat.append(max(math.sqrt(max(0, squares[c] / n - mean[c] * mean[c])) for c in range(3)) <= FLAT)
-    return bw, bh, means, flat
+            means.append([s / n for s in sums])
+    return bw, bh, means
 
 
 def neighbours(i, w, h):
@@ -152,51 +147,32 @@ def neighbours(i, w, h):
 def paper(rgb):
     """The sheet in a colour thumbnail: {w, h, mask, colour, area}, or None when no paper is there.
 
-    A sheet is the largest connected field of flat, similarly coloured blocks. It may be any
-    colour (white, yellow, blue, ...); table grain breaks the field, and a hand is its own colour,
-    so neither is taken for paper."""
+    Paper is what is not the table: a colouring page or printed picture is mostly paper-bright
+    (or coloured) pixels, even when ink breaks it into many small fields. The table is warm brown,
+    so enough non-table pixels mean paper. The table colour itself is learned from the frame edge."""
     if not rgb:
         return None
-    bw, bh, means, flat = blocks(rgb)
-    seen, parts = set(), []
-    for i in range(bw * bh):
-        if not flat[i] or i in seen:
+    bw, bh, means = blocks(rgb)
+    free, mask = [], [False] * (bw * bh)
+    for i in range(CW * CH):
+        r, g, b = rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]
+        if wood((r, g, b)):
             continue
-        seen.add(i)
-        todo, part = [i], []
-        while todo:
-            j = todo.pop()
-            part.append(j)
-            for k in neighbours(j, bw, bh):
-                if flat[k] and k not in seen and all(abs(means[j][c] - means[k][c]) <= COLOUR_DIFF for c in range(3)):
-                    seen.add(k)
-                    todo.append(k)
-        parts.append(part)
-    best, colour = None, None
-    for part in sorted(parts, key=len, reverse=True):
-        if len(part) < PAPER_SHARE * bw * bh:
-            continue
-        xs, ys = [i % bw for i in part], [i // bw for i in part]
-        if (max(xs) - min(xs) + 1) < 0.25 * bw or (max(ys) - min(ys) + 1) < 0.25 * bh:
-            continue
-        if len(part) < PAPER_FILL * (max(xs) - min(xs) + 1) * (max(ys) - min(ys) + 1):
-            continue
-        col = [statistics.median(means[i][c] for i in part) for c in range(3)]
-        if wood(col):
-            continue                         # the brown table itself, not a sheet lying on it
-        best, colour = part, col
-        break
-    if best is None:
+        free.append(i)
+        x, y = i % CW // PAPER_BLOCK, i // CW // PAPER_BLOCK
+        if x < bw and y < bh:
+            mask[y * bw + x] = True
+    if len(free) < PAPER_SHARE * CW * CH:
         return None
-    xs, ys = [i % bw for i in best], [i // bw for i in best]
+    xs, ys = [i % CW for i in free], [i // CW for i in free]
     edge = [i for i in range(bw * bh) if i % bw in (0, bw - 1) or i // bw in (0, bh - 1)]
     woods = [means[i] for i in edge if wood(means[i])]
     table = [statistics.median(c[d] for c in woods) for d in range(3)] if len(woods) >= 3 else None
-    mask = [False] * (bw * bh)
-    for i in best:
-        mask[i] = True
-    return {"w": bw, "h": bh, "mask": mask, "colour": colour, "area": len(best) * PAPER_BLOCK * PAPER_BLOCK,
-            "box": (min(xs), min(ys), max(xs), max(ys)), "table": table}
+    colour = [statistics.median(rgb[i * 3 + c] for i in free) for c in range(3)]
+    box = (min(xs) // PAPER_BLOCK, min(ys) // PAPER_BLOCK,
+           min(max(xs) // PAPER_BLOCK, bw - 1), min(max(ys) // PAPER_BLOCK, bh - 1))
+    return {"w": bw, "h": bh, "mask": mask, "colour": colour, "area": len(free),
+            "box": box, "table": table}
 
 
 def hue(r, g, b):
@@ -215,7 +191,7 @@ def wood(colour):
     """Warm brown, like the table: not white, blue or yellow paper."""
     r, g, b = colour
     mx, mn = max(colour), min(colour)
-    return 5 <= hue(r, g, b) <= 34 and (mx - mn) >= 0.15 * max(1, mx) and mx >= 40
+    return 5 <= hue(r, g, b) <= 34 and (mx - mn) >= 0.22 * max(1, mx) and mx >= 40
 
 
 def skin(r, g, b):
@@ -314,7 +290,9 @@ def look(rgb, base=None):
     sheet = paper(rgb)
     if sheet is None:
         return "no-paper"
-    return "hand" if hand(rgb, sheet, base) else "paper"
+    # without a before picture, a skin-coloured drawing looks like a hand; prefer handing the
+    # picture on (one wasted model look) over holding a child's drawing forever
+    return "hand" if base is not None and hand(rgb, sheet, base) else "paper"
 
 
 class Stream:
