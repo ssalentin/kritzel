@@ -14,7 +14,7 @@ const { processTextRequest } = await import('./generate.mjs');
 const { takeRequests } = await import('./generate.mjs');
 const { withThingWrite } = await import('./generate.mjs');
 const { reportsToReplay } = await import('./generate.mjs');
-const { CHANGE_SYSTEM } = await import('./prompts.mjs');
+const { CHANGE_SYSTEM, SYSTEM, TEXT_SYSTEM, textThingText } = await import('./prompts.mjs');
 const snail = readFileSync(join(import.meta.dirname, 'examples', 'schnecke.js'), 'utf8');
 const flyer = `// parts: body = a witch
 // parts: broom = a separate group
@@ -520,4 +520,58 @@ test('a typed request jumps a frame that is already being built', async () => {
     await new Promise(ok => child.once('close', ok));
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+const building = (name, x, y, color) => `// parts: body = a tall building, as wide as it is tall
+// parts: roof = a flat top
+export const meta = { name: '${name}', drawing: 'a tall ${name}', paper: { x: ${x}, y: ${y} } };
+export function build(ctx) {
+  const { THREE, world, mat, shadowAll } = ctx;
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, 2.4, 8), mat(0x${color})));
+  g.position.y = 1.2;
+  shadowAll(g); world.add(g);
+  return { actors: [], obstacles: [{ x: 0, z: 0, r: 0.5 }], spots: [] };
+}`;
+
+test('a typed request with two subjects becomes two things with their own names and paper places', async () => {
+  const dir = dirs();
+  try {
+    writeFileSync(join(dir, 'reply.txt'), `### NEW
+${building('Eiffelturm', 0.4, 0.5, 'b08a5a')}
+### NEW
+${building('Wolkenkratzer', 0.6, 0.5, '8a9ab0')}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const r = await processTextRequest(request(dir, 'text-20261019-210800', 'Eiffelturm und Wolkenkratzer'),
+      { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    assert.equal(r.error, undefined, r.error);
+    assert.deepEqual(r.written.map(w => [w.file, w.name]).sort(), [['eiffelturm.js', 'Eiffelturm'], ['wolkenkratzer.js', 'Wolkenkratzer']]);
+    assert.deepEqual(r.written.map(w => w.paper), [{ x: 0.4, y: 0.5 }, { x: 0.6, y: 0.5 }]);
+    assert.deepEqual(readdirSync(join(dir, 'things')).filter(f => f.endsWith('.js')).sort(), ['eiffelturm.js', 'wolkenkratzer.js']);
+    const saved = JSON.parse(readFileSync(join(dir, 'reports', 'text-20261019-210800.json'), 'utf8'));
+    assert.equal(saved.written.length, 2);
+    assert.deepEqual(saved.written.map(w => w.paper), [{ x: 0.4, y: 0.5 }, { x: 0.6, y: 0.5 }]);
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a compound typed subject stays one thing', async () => {
+  const dir = dirs();
+  try {
+    writeFileSync(join(dir, 'reply.txt'), `### NEW
+${building('Ritter mit Schwert', 0.5, 0.5, '6a7a9a')}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const r = await processTextRequest(request(dir, 'text-20261019-210801', 'Ritter mit Schwert'),
+      { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    assert.equal(r.error, undefined, r.error);
+    assert.deepEqual(r.written.map(w => w.name), ['Ritter mit Schwert']);
+    assert.deepEqual(readdirSync(join(dir, 'things')).filter(f => f.endsWith('.js')), ['ritter-mit-schwert.js']);
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the prompts split separate subjects and keep connected parts together', () => {
+  assert.match(TEXT_SYSTEM, /one ### NEW section per thing/);
+  assert.match(TEXT_SYSTEM, /Ritter mit Schwert/);
+  assert.match(textThingText('Eiffelturm und Wolkenkratzer'), /several separate things/);
+  assert.match(SYSTEM, /two houses drawn apart are two ### NEW sections/);
+  assert.match(SYSTEM, /Parts that touch or join stay together/);
 });
