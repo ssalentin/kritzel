@@ -53,7 +53,9 @@ export function castOf(thingsDir) {
 }
 
 // every pair of figures and how many dialogues it should have: PAIR_LIKELY for the ones likely to meet (one likes
-// the other: favourite or likes; or one is the other's nearest figure on the pages), PAIR_OTHER for the rest
+// the other: favourite or likes; or one is the other's nearest figure on the pages), PAIR_OTHER for the rest. A big
+// cast wants more than POOL_MAX (12 figures: 66 pairs, ~260): then every target shrinks to fit, at least 1 each, or
+// the likely pairs would take the whole pool and every call would ask its most (review of b87b787)
 export function pairsOf(cast, personas = {}) {
   const likes = (a, b) => { const p = personas[a.id]; return [p?.favourite, ...(Array.isArray(p?.likes) ? p.likes : [])].some(x => typeof x === 'string' && [b.name, b.id].some(y => y.toLowerCase() === x.toLowerCase())); };
   const dist = (a, b) => a.at && b.at ? Math.hypot(a.at[0] - b.at[0], a.at[1] - b.at[1]) : Infinity;
@@ -64,6 +66,8 @@ export function pairsOf(cast, personas = {}) {
     const a = cast[i], b = cast[j], likely = likes(a, b) || likes(b, a) || near.get(a) === b || near.get(b) === a;
     out.push({ names: [a.name, b.name], likely, want: likely ? PAIR_LIKELY : PAIR_OTHER });
   }
+  const total = out.reduce((n, p) => n + p.want, 0);
+  if (total > POOL_MAX) for (const p of out) p.want = Math.max(1, Math.floor(p.want * POOL_MAX / total));
   return out.sort((x, y) => y.likely - x.likely);
 }
 const pairKey = names => [...names].sort().join('|');

@@ -291,6 +291,12 @@ test('the pairs likely to meet (one likes the other, or nearest on the pages) wa
     assert.ok(askOf(pairs, new Map()).reduce((n, x) => n + x.n, 0) <= 30);            // one call stays a sane size
     const full = new Map(pairs.map(p => [[...p.names].sort().join('|'), p.want]));
     assert.deepEqual(askOf(pairs, full).map(x => x.n), [2, 2, 2, 2]);                     // a full pool: a few fresh for the likely pairs
+    // a big cast: 12 figures in a row, 66 pairs, every one gets some and all fit in the pool
+    const row = Array.from({ length: 12 }, (_, i) => ({ id: `f${i}`, name: `F${i}`, at: [i, 0] }));
+    const big = pairsOf(row);
+    assert.equal(big.length, 66);
+    assert.ok(big.every(p => p.want >= 1) && big.reduce((n, p) => n + p.want, 0) <= 80);
+    assert.ok(big.filter(p => p.likely).every(p => p.want > 1));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
