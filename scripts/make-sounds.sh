@@ -27,20 +27,27 @@ python3 -m venv "$work/venv"
 echo "ffmpeg: $(ffmpeg -version | head -1)"   # Ogg q4 (libvorbis); the bank was rendered with 5.1.9
 
 mkdir -p "$out"
-render() {   # role → earshot id
-  echo "  $1 <- $2"
-  PYTHONPATH="$work/earshot" "$work/venv/bin/python" -m earshot sfx render "$2" --peak -5 -o "$work/$1.wav" >/dev/null
+render() {   # role → earshot id [earshot options]
+  local role=$1 id=$2 peak=-5 trim= af=
+  shift 2
+  echo "  $role <- $id $*"
+  if [ "$role" = sparkle ]; then peak=-3; fi
+  case "$role" in
+    rain) af="lowpass=f=1200" ;;                                      # a long, low rain bed, not a hiss
+    thunder) trim="-t 3.5"; af="lowpass=f=900,afade=t=out:st=3.0:d=0.5" ;;   # a 3.5 s rumble
+  esac
   # -5 dBFS leaves headroom for the Ogg encoder's overshoot; every file stays below -1 dBTP.
-  ffmpeg -y -loglevel error -i "$work/$1.wav" -ac 1 -ar 48000 -c:a libvorbis -q:a 4 "$out/$1.ogg"
+  PYTHONPATH="$work/earshot" "$work/venv/bin/python" -m earshot sfx render "$id" "$@" --peak "$peak" -o "$work/$role.wav" >/dev/null
+  ffmpeg -y -loglevel error $trim -i "$work/$role.wav" ${af:+-af "$af"} -ac 1 -ar 48000 -c:a libvorbis -q:a 4 "$out/$role.ogg"
 }
 
 render arrival       pop/0
 render page-turn     swipe/paper
 render tap           tap/soft
-render giggle        pro_pop/double
+render giggle        pro_pop/double --dur 0.4
 render sparkle       pro_shimmer/m1
-render rain          pro_whoosh_big/windy
-render thunder       pro_impact/rumble
+render rain          pro_whoosh_big/windy --dur 3
+render thunder       impact/deep
 render new-world     notify/m1
 render typed-arrival pro_notify/ding_2045
 
