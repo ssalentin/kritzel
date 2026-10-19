@@ -173,6 +173,13 @@ export function createSound(THREE, camera) {
     thingBank.set(base, { wait });
     return wait;
   }
+  // a rewritten thing may have a new Ogg (or its first one): forget the old buffer/404 before loading it
+  function forgetThing(file) {
+    const base = String(file || '').replace(/\.js$/, '');
+    if (!base) return;
+    thingBank.delete(base);
+    thingQueue.delete(base);
+  }
   function playThing(buf, role, obj) {
     const src = ctx.createBufferSource(); src.buffer = buf;
     src.playbackRate.value = 1 + (Math.random() * 2 - 1) * 0.05;      // the same thing, a little different each tap
@@ -247,6 +254,7 @@ export function createSound(THREE, camera) {
     bankLoaded: () => Object.keys(bank),        // tests: which roles are decoded
     lastPlay: () => last,                       // tests: role, playback rate and gain of the last bank sound
     prepareThing,                               // world.js: start the Ogg fetch when a thing loads
+    forgetThing,                                // world.js: a changed/removed thing must reload its Ogg
     thingSound: base => thingBank.get(String(base).replace(/\.js$/, '')),   // tests: buf / wait / missing
     // called for every new speech bubble: the browser reads it aloud in the page's language (a seven-year-old
     // reads slowly), each figure with its own pitch; without a voice for the language, the soft babble as before

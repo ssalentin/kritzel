@@ -303,9 +303,11 @@ export async function build(api, prevState = null) {
     try {
       try { entry.update?.(0, 0, env); } catch {}           // a thing that sets its place in update (a cloud) is measured there
       prepare(entry);
+      if (entry.free) entry.free.userData.thingFile = file;  // characters live here, outside entry.box (sound.js walks up)
       if (later) later.push([file, entry, m?.meta]);           // at page load: placed once everything is there
       else place(file, entry, m?.meta, live);
     } catch (e) { report(`things/${file}: placing: ${e.message}`); }
+    for (const a of entry.actors) if (a.rig?.g) a.rig.g.userData.thingFile = file;   // index.html taps who.rig.g
     if (STYLE === 'origami') { origami(THREE, entry.box); if (entry.free) origami(THREE, entry.free); }
     else if (STYLE === 'cutout') { cutout(THREE, entry.box); if (entry.free) cutout(THREE, entry.free); }
     else if (STYLE === 'crayon') { crayon(THREE, entry.box); if (entry.free) crayon(THREE, entry.free); }
@@ -424,6 +426,7 @@ export async function build(api, prevState = null) {
     async reloadThings(changed, removed) {
       const states = brain.snapshot();
       const fresh = new Set(changed.filter(f => !loaded.has(f)));
+      for (const f of [...changed, ...removed]) api.sound?.forgetThing?.(f);   // a rewrite may have a new Ogg
       for (const f of [...changed, ...removed]) unloadThing(f);
       for (const f of removed) if (placed[f]) savePlace(f, null);
       for (const f of changed) await loadThing(f, states, fresh.has(f));
@@ -448,6 +451,7 @@ export async function build(api, prevState = null) {
     freeSpot: (x, z, r) => freeSpot(x, z, r),
     places: () => ({ perches: env.perches, water: env.water }),   // where animals land, climb and swim (for tests)
     box: file => loaded.get(file)?.box,    // a thing's group (for tests)
+    rig: file => loaded.get(file)?.actors?.[0]?.rig?.g || null,   // tests: the group index.html taps for a character
     things: () => [...loaded].map(([file, e]) => ({ file, name: e.meta?.name || file.replace(/\.js$/, '') })),   // for the text field's target picker
     book: () => ({ w: GROUND.w, d: GROUND.d }),   // the book's size now (the page turn uses it: index.html has its own module instance)
     feet: () => [...loaded].map(([f, e]) => ({ file: f, foot: e.foot, obstacles: e.obstacles, pinned: !!pinned(e) })),   // for tests   // for the light that shows where a drawing will appear

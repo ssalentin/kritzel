@@ -7,6 +7,7 @@ import { createSound } from './sound.js';
 
 const started = [];
 let fetches = [];
+let hasStein = false;
 class Param {
   constructor() { this.value = 0; }
   setValueAtTime(v) { this.value = v; }
@@ -37,6 +38,7 @@ globalThis.fetch = async url => {
   const u = String(url);
   fetches.push(u);
   if (u.endsWith('/sounds/things/drache.ogg')) return { ok: true, arrayBuffer: async () => new ArrayBuffer(8) };
+  if (u.endsWith('/sounds/things/stein.ogg') && hasStein) return { ok: true, arrayBuffer: async () => new ArrayBuffer(4) };
   return { ok: false, status: 404 };
 };
 
@@ -72,10 +74,31 @@ test('a thing with an Ogg plays it on arrival and tap; one without keeps the gen
   s.fx('tap', box('drache.js'));
   assert.equal(s.lastPlay().targetRole, 'tap');
 
+  // index.html taps a character with who.rig.g; the rig's parent (entry.free) carries the file
+  const rig = { userData: {}, parent: { userData: { thingFile: 'drache.js' }, parent: null } };
+  s.fx('tap', rig);
+  assert.equal(s.lastPlay().role, 'thing');
+  assert.equal(s.lastPlay().file, 'drache');
+
   await s.prepareThing('stein.js');               // 404: cached as missing
   assert.equal(s.thingSound('stein').missing, true);
   s.fx('arrival', box('stein.js'));
   const generic = s.lastPlay();
   assert.equal(generic.role, 'arrival');
   assert.equal(generic.generic, true);
+
+  // a rewrite invalidates the cache: a new Ogg is fetched, and a cached 404 can become a sound
+  const fetchedBefore = fetches.filter(u => u.endsWith('/sounds/things/drache.ogg')).length;
+  const old = s.thingSound('drache').buf;
+  await s.prepareThing('drache.js');
+  assert.equal(fetches.filter(u => u.endsWith('/sounds/things/drache.ogg')).length, fetchedBefore);
+  s.forgetThing('drache.js');
+  await s.prepareThing('drache.js');
+  assert.equal(fetches.filter(u => u.endsWith('/sounds/things/drache.ogg')).length, fetchedBefore + 1);
+  assert.notEqual(s.thingSound('drache').buf, old);
+  hasStein = true;
+  s.forgetThing('stein.js');
+  await s.prepareThing('stein.js');
+  assert.ok(s.thingSound('stein').buf, 'a 404 that later becomes an Ogg must load after forgetThing');
+  hasStein = false;
 });

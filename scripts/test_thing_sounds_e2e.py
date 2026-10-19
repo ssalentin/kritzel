@@ -28,6 +28,13 @@ export function build({{ THREE, world, mat }}) {{
 }}
 """
 
+HEXE = """export const meta = { name: 'Hexe', drawing: 'a witch', paper: { x: 0.7, y: 0.4 } };
+export function build({ makePerson }) {
+  const rig = makePerson({ shirtColor: 0x5a3a7a });
+  return { actors: [{ id: 'hexe', name: 'Hexe', start: [2, 1], rig, move: 'walk' }] };
+}
+"""
+
 
 def free_port():
     with socket.socket() as s:
@@ -52,7 +59,9 @@ class Things(unittest.TestCase):
         cls.sounds.mkdir(parents=True)
         (cls.things / "drache.js").write_text(THING.format(name="Drache", color="cc6644"))
         (cls.things / "stein.js").write_text(THING.format(name="Stein", color="999999"))
+        (cls.things / "hexe.js").write_text(HEXE)
         shutil.copyfile(ROOT / "viewer" / "sounds" / "tap.ogg", cls.sounds / "drache.ogg")
+        shutil.copyfile(ROOT / "viewer" / "sounds" / "tap.ogg", cls.sounds / "hexe.ogg")
         cls.port = free_port()
         cls.server = subprocess.Popen([sys.executable, str(cls.world / "viewer" / "serve.py")],
                                       cwd=cls.world, env={**os.environ, "PORT": str(cls.port)},
@@ -75,7 +84,7 @@ class Things(unittest.TestCase):
         cls.page.on("request", lambda r: cls.requests.append(r.url) if "sounds/things" in r.url else None)
         cls.page.on("pageerror", lambda e: cls.errors.append(str(e)))
         cls.page.goto(f"http://127.0.0.1:{cls.port}/viewer/?seed=7&cam=12,7,14,0,0.4,0")
-        cls.page.wait_for_function("() => window.__paperSound && window.__paperWorld?.()?.things?.().length === 2",
+        cls.page.wait_for_function("() => window.__paperSound && window.__paperWorld?.()?.things?.().length === 3",
                                    timeout=30000)
 
     @classmethod
@@ -98,6 +107,14 @@ class Things(unittest.TestCase):
         self.page.evaluate("() => window.__paperSound.prepareThing('drache.js')")
         self.page.wait_for_function("() => window.__paperSound.thingSound('drache')?.buf", timeout=10000)
 
+        # a character is tapped through who.rig.g (index.html); rig.g/free carry the thing's file
+        self.page.wait_for_function("() => window.__paperWorld().rig('hexe.js')", timeout=10000)
+        self.page.evaluate("() => window.__paperSound.prepareThing('hexe.js')")
+        self.page.wait_for_function("() => window.__paperSound.thingSound('hexe')?.buf", timeout=10000)
+        self.page.evaluate("() => window.__paperSound.fx('tap', window.__paperWorld().rig('hexe.js'))")
+        tap = self.page.evaluate("() => window.__paperSound.lastPlay()")
+        self.assertEqual((tap["role"], tap["file"], tap["targetRole"]), ("thing", "hexe", "tap"))
+
         # a new thing that arrives with its Ogg plays it (the real arrival call site in index.html)
         shutil.copyfile(ROOT / "viewer" / "sounds" / "tap.ogg", self.sounds / "drache2.ogg")
         (self.things / "drache2.js").write_text(THING.format(name="Drache Zwei", color="aa4444"))
@@ -108,6 +125,18 @@ class Things(unittest.TestCase):
         # tapping it plays the same Ogg with the tap role
         self.page.evaluate("() => window.__paperWorld().tapThing(window.__paperWorld().box('drache2.js'))")
         self.page.wait_for_function("() => window.__paperSound.lastPlay()?.targetRole === 'tap'", timeout=5000)
+
+        # a rewritten thing gets its new Ogg: forget the old buffer on reload, then fetch/decode again
+        old_duration = self.page.evaluate("() => window.__paperSound.thingSound('drache2').buf.duration")
+        self.page.evaluate("() => { window.__oldBox = window.__paperWorld().box('drache2.js'); }")
+        shutil.copyfile(ROOT / "viewer" / "sounds" / "giggle.ogg", self.sounds / "drache2.ogg")
+        (self.things / "drache2.js").write_text(THING.format(name="Drache Zwei", color="aa4444") + "\n// rewritten\n")
+        self.page.wait_for_function("() => window.__paperWorld().box('drache2.js') !== window.__oldBox", timeout=15000)
+        self.page.wait_for_function(
+            "(old) => { const b = window.__paperSound.thingSound('drache2')?.buf; return !!b && b.duration !== old; }",
+            arg=old_duration, timeout=10000)
+        new_duration = self.page.evaluate("() => window.__paperSound.thingSound('drache2').buf.duration")
+        self.assertNotEqual(new_duration, old_duration)
 
         # a new thing without an Ogg falls back to today's arrival and tap bank sounds
         (self.things / "stein2.js").write_text(THING.format(name="Stein Zwei", color="777777"))
