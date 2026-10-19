@@ -197,6 +197,9 @@ test('the words drawn in its bubble are one checked line, lines.said: { de, en }
   assert.deepEqual((await buildCheck(withLines("{ said: { de: '💭 Ich mag Kuchen', en: '💭 I like cake' } }"))).problems, []);
   assert.ok((await buildCheck(withLines("{ said: { de: ['Hallo!'], en: ['Hello!'] } }"))).problems.some(p => p.includes('said is one short line')));
   assert.ok((await buildCheck(withLines("{ said: { de: 'Hallo!', en: 'I hate you' } }"))).problems.some(p => p.includes('not right for children')));
+  const beside = thing(`const g = new ctx.THREE.Group(); g.add(new ctx.THREE.Mesh(new ctx.THREE.BoxGeometry(0.4, 1, 0.4), ctx.mat(1))); ctx.world.add(g);
+    return { actors: [{ id: 'x1', name: 'X', rig: { kind: 'blob', g, say() {}, animate() {} }, lines: { greet: ['Hallo!'] }, said: { de: 'Hallo!', en: 'Hello!' } }] };`);
+  assert.ok((await buildCheck(beside)).problems.some(p => p.includes('said belongs inside its lines')));   // live 130002: the sim never saw it
 });
 
 test('one living figure per module', async () => {

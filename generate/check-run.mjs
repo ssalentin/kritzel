@@ -236,6 +236,7 @@ async function buildCheck(file, takenIds) {
       if (!safeLine(g.de, 'de') || !safeLine(g.en, 'en')) problems.push(`${where}: not right for children: ${JSON.stringify(g)}`);
     };
     for (const a of actors) for (const [k, g] of Object.entries(a?.lines || {})) (k === 'said' ? saidOk : linesOk)(g, `actor ${a?.id} lines.${k}`);
+    for (const a of actors) if (a?.said !== undefined) problems.push(`actor ${a?.id}: said belongs inside its lines: lines: { said: { de, en }, greet: ... }`);
     for (const sp of spots) if (sp?.lines) linesOk(sp.lines, `spot ${sp.kind} lines`);
     for (const o of obstacles) if (!num(o?.x) || !num(o?.z) || !num(o?.r)) { problems.push('obstacles need numeric { x, z, r }'); break; }
     for (const s of spots) if (!s?.kind || !num(s?.x) || !num(s?.z)) { problems.push('spots need { kind, x, z }'); break; }
