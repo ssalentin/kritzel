@@ -34,7 +34,7 @@
   #status.calm .text, #status.calm img { display: none; }
   /* no text, no note: the pill is not there at all (the camera frame owns camera state) */
   #status.silent { display: none; }
-  #status.silent:has(.note:not([hidden])) { display: flex; }
+  #status.silent:has(.note:not([hidden])), #status.silent:has(.gen:not([hidden])) { display: flex; }
   @keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
   @media (max-width: 560px) { #status { top: auto; bottom: 245px; max-width: calc(100vw - 32px); border-radius: 16px; }
     #status .text { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; } }

@@ -19,6 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SHOTS = {
+    "generator-1440": Path("/tmp/ui-panels-generator-1440.png"),
     "idle-1440": Path("/tmp/ui-panels-idle-1440.png"),
     "build-1440": Path("/tmp/ui-panels-build-1440.png"),
     "note-1440": Path("/tmp/ui-panels-note-1440.png"),
@@ -40,6 +41,7 @@ STATUS = {
         ],
     },
 }
+IDLE = {"now": 1000, "capture": {"alive": True, "state": "camera-off"}, "generate": {"alive": True, "state": "idle"}}
 
 
 def free_port():
@@ -97,8 +99,9 @@ class Panels(unittest.TestCase):
         except Exception:
             print(f"({name} screenshot skipped: software renderer too slow)")
 
-    def serve_status(self):
-        self.page.route("**/api/status", lambda route: route.fulfill(json=STATUS))
+    def serve_status(self, data=STATUS):
+        self.page.unroute("**/api/status")
+        self.page.route("**/api/status", lambda route: route.fulfill(json=data))
         self.page.reload()
         self.page.wait_for_function("() => window.__paperWorld?.()?.feet", timeout=30000)
         time.sleep(3)
@@ -122,7 +125,17 @@ class Panels(unittest.TestCase):
         return state
 
     def test_panels(self):
-        # (a) camera off, idle: the top-left is empty and the frame is the camera indicator
+        # the generator warning still owns the pill when the generator is off
+        generator = self.page.evaluate("""() => {
+          const s = document.getElementById('status');
+          return { display: getComputedStyle(s).display, text: s.textContent.trim() };
+        }""")
+        self.assertEqual(generator["display"], "flex", generator)
+        self.assertIn("Generator", generator["text"], generator)
+        self.shot("generator-1440")
+
+        # (a) camera off, pipeline idle: the top-left is empty and the frame is the camera indicator
+        self.serve_status(IDLE)
         idle = self.page.evaluate("""() => {
           const s = document.getElementById('status'), f = document.getElementById('frame');
           return { display: getComputedStyle(s).display, text: s.textContent.trim(), frame: f.textContent };
@@ -137,7 +150,7 @@ class Panels(unittest.TestCase):
             print("(frame screenshot skipped: software renderer too slow)")
 
         # (b) a fake build with two rows
-        self.serve_status()
+        self.serve_status(STATUS)
         built = self.check_layout()
         self.assertEqual(built["status"]["display"], "flex", built)
         self.shot("build-1440")
@@ -168,12 +181,8 @@ class Panels(unittest.TestCase):
         self.shot("note-390")
         idle_phone = self.page.evaluate("""() => { const s = document.getElementById('status'); return getComputedStyle(s).display; }""")
         self.assertEqual(idle_phone, "flex", "the note keeps the pill visible on the phone")
-        # idle again: remove the route and the note by a new page? the build fake stays; hide the note and clear things
-        self.page.evaluate("() => { const n = document.querySelector('#status .note'); n.hidden = true; }")
-        self.page.unroute("**/api/status")
-        self.page.reload()
-        self.page.wait_for_function("() => window.__paperWorld?.()?.feet", timeout=30000)
-        time.sleep(2)
+        # idle again on the phone
+        self.serve_status(IDLE)
         self.shot("idle-390")
         self.assertEqual(self.page.evaluate("() => getComputedStyle(document.getElementById('status')).display"), "none")
         self.assertEqual(self.errors, [])
