@@ -350,7 +350,8 @@ export async function build(api, prevState = null) {
     env.water = water.zones();
   }
   // footprints characters must not stand in (a jail holds its prisoner inside, so it isn't one)
-  const blockingFeet = () => [...loaded.values()].filter(e => e.foot && !e.heldBy && !e.holds.length && !isHeld(e)).map(e => e.foot);
+  // a small pickup is not a wall: it is walked over and picked up (a jail holds its prisoner instead)
+  const blockingFeet = () => [...loaded.values()].filter(e => e.foot && !e.heldBy && !e.holds.length && !isHeld(e) && !e.portable).map(e => e.foot);
   function refreshWorld() {
     for (const e of loaded.values()) ensurePortable(e);     // before places(): a small thing that just arrived is no perch
     for (const e of loaded.values()) if (!isHeld(e)) onPage(e);      // the page's curve moved with the book's size (a carried thing is in a hand)

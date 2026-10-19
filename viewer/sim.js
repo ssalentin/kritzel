@@ -275,11 +275,22 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         const [wx, wz] = toWorld(x, y);
         if (a.hold && Math.hypot(wx - a.hold.x, wz - a.hold.z) > a.hold.r) continue;   // held by a drawn thing (a jail, a fence)
         // wide bodies keep clear of tree trunks too
-        if (trees.every(tr => Math.hypot(wx - tr.x, wz - tr.z) > tr.r + Math.max(0, a.radius - 0.25))) ok.add(k);
+        const clearOfTrees = trees.every(tr => Math.hypot(wx - tr.x, wz - tr.z) > tr.r + Math.max(0, a.radius - 0.25));
+        // a thing's measured footprint is a solid body too: keep the figure's whole width off it, not only its
+        // centre. A little over half a cell extra: a diagonal step between two free cells must not clip a corner.
+        const clearOfFeet = feet.every(f => Math.abs(wx - f.x) > f.hx + a.radius + 0.35 || Math.abs(wz - f.z) > f.hz + a.radius + 0.35);
+        if (clearOfTrees && clearOfFeet) ok.add(k);
       }
       a._pass = (x, y) => ok.has(key(x, y));
     }
     return a._pass;
+  }
+  // the rendered body, not only its cell: a figure easing from cell to cell may cut a corner, so its own
+  // circle is kept off every drawn footprint and tree as it moves (the grid keeps the path, this keeps the body)
+  function bodyClear(x, z, a) {
+    if (feet.some(f => Math.abs(x - f.x) < f.hx + a.radius && Math.abs(z - f.z) < f.hz + a.radius)) return false;
+    if (trees.some(t => Math.hypot(x - t.x, z - t.z) < t.r + Math.max(0, a.radius - 0.25))) return false;
+    return true;
   }
   const dist = (a, b) => Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y));
   const rel = (a, b) => a.rel[b.id] ?? 0;
@@ -925,7 +936,13 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
               }
             }
             const n = Math.hypot(ux, uz) || 1; ux /= n; uz /= n;
-            a.pos.x += ux * step; a.pos.z += uz * step; a.face = Math.atan2(ux, uz);
+            const nx = a.pos.x + ux * step, nz = a.pos.z + uz * step;
+            if (!bodyClear(nx, nz, a)) {                 // slide along the edge instead of cutting its corner
+              if (bodyClear(nx, a.pos.z, a)) { a.pos.x = nx; }
+              else if (bodyClear(a.pos.x, nz, a)) { a.pos.z = nz; }
+              else if (!bodyClear(a.pos.x, a.pos.z, a)) { a.pos.x = nx; a.pos.z = nz; }   // already inside: let it escape
+            } else { a.pos.x = nx; a.pos.z = nz; }
+            a.face = Math.atan2(ux, uz);
           }
           else if (a.partner) a.face = Math.atan2(a.partner.pos.x - a.pos.x, a.partner.pos.z - a.pos.z);
           a.alt = a.move === 'hop' && moving ? Math.abs(Math.sin(now * 8 * a.speed)) * 0.3 : 0;   // hoppers bounce along
