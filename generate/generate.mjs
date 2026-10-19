@@ -309,6 +309,9 @@ const str = (x, n) => typeof x === 'string' && x.trim().length > 0 && x.length <
 // up: from what the list call sees, not what it judges: asked "which way up", DeepSeek said upright for a sun
 // with its eyes below its mouth three times out of three; asked where the eyes are, it saw it every time.
 // A creature drawn hanging head-down (a bat under its branch) has its eyes below its mouth too: not turned.
+// a bubble's words come from whoever draws, in any language, and land as written in the German line: clean in both
+// filters. "die" before a capitalised word is the German article ("Die Katze ist lieb"), not the English verb
+const safeSaid = text => safeLine(text, 'de') && safeLine(text.replace(/(?<!\p{L})[Dd]ie(?=\s+\p{Lu})/gu, ''), 'en');
 export function parseList(text) {
   let j;
   try { j = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)); } catch { return null; }
@@ -320,7 +323,7 @@ export function parseList(text) {
     if (WORD.test(t.what) || /^(?:ein|das|der)\s+(?:wort|schriftzug|titel|text)\b/i.test(t.de)) continue;   // a word alone is no drawing
     out.push({ ...(str(t.in_book, 60) && { inBook: t.in_book }), box: b.map(v => +v.toFixed(3)), up: t.face === 'eyes below mouth' && t.hangs !== true ? 'upside down' : 'upright',
       // the words of its speech or thought bubble, only when they pass the child-safe filter (they become its lines)
-      ...(t.says && typeof t.says.text === 'string' && t.says.text.length <= 60 && safeLine(t.says.text, 'de') && ['speech', 'thought'].includes(t.says.kind) && { says: { text: t.says.text.trim(), kind: t.says.kind } }),
+      ...(t.says && typeof t.says.text === 'string' && t.says.text.length <= 60 && safeSaid(t.says.text) && ['speech', 'thought'].includes(t.says.kind) && { says: { text: t.says.text.trim(), kind: t.says.kind } }),
       what: t.what, de: t.de, en: t.en, den: str(t.den, 60) ? t.den : t.de, the: str(t.the, 60) ? t.the : t.en, name_en: str(t.name_en, 40) ? t.name_en : t.en });
   }
   return out;
