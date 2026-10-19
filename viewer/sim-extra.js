@@ -556,6 +556,9 @@ const QUEST_LIMIT_S = 90, QUEST_COOLDOWN = [120, 240];
 let activeQuest = null, nextQuestAt = 0;
 const questCooldown = now => now + QUEST_COOLDOWN[0] + Math.random() * (QUEST_COOLDOWN[1] - QUEST_COOLDOWN[0]);
 const questLine = text => (lang() === 'en' ? text?.en : text?.de) ?? '';
+// only walkers take part in a quest's fetching or gathering: a sky mover (fly), climber or swimmer can't reach a thing
+// on the ground (moves.js runs it off the grid): the sun's pick loop in the first run
+const walks = b => !/^(fly|climb|swim)$/.test(b.move ?? '');
 // does a wait quest's condition hold now: rain, night, or sun (no rain, night's low)
 const waitHolds = (solve, api) => {
   const w = api.weather() || {}, night = api.night();
@@ -599,7 +602,7 @@ export function tickQuests(actors, api) {
     });
     // helpers: the ones who like the giver come first, then the nearest
     const liked = near.filter(b => personaOf(b.id)?.likes?.includes(q.who) || (giver && personaOf(b.id)?.likes?.includes(giver.id)));
-    activeQuest.helpers = [...liked, ...near.filter(b => !liked.includes(b))].slice(0, 3);
+    activeQuest.helpers = [...liked, ...near.filter(b => !liked.includes(b))].filter(walks).slice(0, 3);
     steerQuest(activeQuest, api);
     return;
   }
@@ -652,7 +655,7 @@ function steerQuest(aq, api) {
       if (close) { if (c.goal?.type !== 'give') { c.goal = { type: 'give', item: it, to: giver, until: t + 30 }; c.goalSince = t; } }
       else if (c.goal?.type !== 'carry' || !c.goal.dest) { c.goal = { type: 'carry', item: it, until: null, dest: giver || thing }; c.goalSince = t; }
     } else if (!c && !it.throw) {
-      const free = helpers.filter(h => !busyNow(h) && h !== giver);
+      const free = helpers.filter(h => walks(h) && !busyNow(h) && h !== giver);
       const h = free.sort((p, q) => Math.hypot(p.pos.x - it.x, p.pos.z - it.z) - Math.hypot(q.pos.x - it.x, q.pos.z - it.z))[0];
       if (h && !(h.goal?.type === 'pick' && h.goal.spot === it)) { h.goal = { type: 'pick', spot: it }; h.goalSince = t; }
     }
