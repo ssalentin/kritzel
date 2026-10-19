@@ -517,7 +517,7 @@ textForm.addEventListener('submit', async e => {
     if (r.ok && textKind === 'action') {
       const c = (await r.json().catch(() => null))?.command || {};
       if (c.kind === 'unknown') said = c.why || t('actionNo');       // understood, not supported: Jev's reason
-      else { said = confirmAction(c); tone = 'ok'; }
+      else { said = confirmAction(c); tone = 'ok'; try { window.__applyAction?.(c); } catch {} }   // actions.js makes the world change
     } else if (r.status === 400) error = (await r.json().catch(() => null))?.error || t('textThingRejected');
     else if (!r.ok) error = t('textThingNoServer');       // an old server has no such endpoint: said once, never retried
   } catch { error = t('textThingNoServer'); }
