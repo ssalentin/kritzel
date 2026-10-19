@@ -261,6 +261,11 @@ class Hand(unittest.TestCase):
         self.assertEqual(self.errors, [])
 
     def test_the_glove_reads_open_and_pinched_at_both_sizes(self):
+        self.page.reload()                           # the tap test leaves the camera following Mira; start from home
+        self.page.wait_for_function("() => window.__paperWorld?.()?.canPush", timeout=30000)
+        time.sleep(3)
+        self.page.evaluate("() => { window.requestAnimationFrame = () => 0; }")
+        time.sleep(0.8)
         self.page.evaluate("""() => {                 // a central figure, away from the panels at both sizes
           const a = window.__paperWorld().brain().actors().find(x => x.id === 'mira');
           a.pos.set(0, 0, 0); a.rig.g.position.set(0, 0, 0); a.rig.g.visible = true; a.goal = null; a.held = null;
@@ -269,8 +274,8 @@ class Hand(unittest.TestCase):
         for w, h, open_shot, pinch_shot in ((1440, 900, SHOT_GLOVE, SHOT_PINCH), (390, 844, SHOT_GLOVE_PHONE, SHOT_PINCH_PHONE)):
             self.page.set_viewport_size({"width": w, "height": h})
             time.sleep(0.3)
-            self.page.mouse.move(w * 0.5, h * 0.52)
-            time.sleep(0.3)
+            self.page.mouse.move(w * 0.42, h * 0.5)
+            time.sleep(0.5)
             self.page.evaluate("() => { for (let i = 0; i < 4; i++) __handRig.update(0.08, i * 0.08, { moving: true }); window.__render(); }")
             state = self.page.evaluate("() => ({ ...__handState(), cursor: getComputedStyle(document.querySelector('canvas')).cursor })")
             self.assertTrue(state["visible"], state)
