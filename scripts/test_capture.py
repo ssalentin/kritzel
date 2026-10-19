@@ -332,6 +332,16 @@ class Jev(unittest.TestCase):
         self.assertFalse(c.skip_frame("big-change", label))
         self.assertFalse(c.skip_frame("drawn", None))
 
+    def test_a_failed_small_fetch_leaves_no_before_image(self):
+        class T:
+            pass
+        triage = T()
+        triage.spell, triage.after = 3, None
+        self.assertIsNone(c.small_base(triage, 3))          # nothing fetched: fall back to disk
+        triage.after = b"small"
+        self.assertEqual(c.small_base(triage, 3), b"small")
+        self.assertIsNone(c.small_base(triage, 4))          # another spell's picture is not this sheet's
+
     def test_a_sure_and_confident_box_becomes_the_crop(self):
         with tempfile.TemporaryDirectory() as d:
             was, c.OUT = c.OUT, Path(d)

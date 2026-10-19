@@ -1070,6 +1070,14 @@ def skip_frame(reason, label):
             and label.get("changed") == 0 and label.get("kind") == "unchanged")
 
 
+def small_base(triage, spell):
+    """The small picture the next label may compare against: this spell's, or none.
+
+    A failed small-preview fetch leaves nothing, and another spell's picture is not this sheet's:
+    the next label then reads the frame just handed on from disk instead of an older sheet."""
+    return triage.after if triage and triage.spell == spell and triage.after else None
+
+
 def affine(moved_by, size):
     """(degrees, dx, dy) in thumb px, as the Detector measured it → [a, b, c, d, e, f] in picture px."""
     deg, dx, dy = moved_by
@@ -1331,13 +1339,11 @@ def main():
             print("restart change is outside the sheet; keeping it as the silent baseline", file=sys.stderr, flush=True)
             restart_base = False
             base_rgb = rgb                # the detector already adopted this picture; keep it
-            if triage and triage.after:
-                small_before = triage.after
+            small_before = small_base(triage, det.spell)
             early, held, triage = None, None, None
             continue
         label = triage.get(JEV_WAIT) if triage and triage.spell == det.spell else None
-        if triage and triage.after:
-            small_before = triage.after        # next time Jev compares against this sheet
+        small_before = small_base(triage, det.spell)   # next time Jev compares against this sheet
         triage = None
         if skip_frame(got[0], label):
             print("jev: confident that nothing changed; keeping the sheet as the silent baseline",
