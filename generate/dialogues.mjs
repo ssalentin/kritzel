@@ -74,9 +74,10 @@ const pairKey = names => [...names].sort().join('|');
 
 // what to ask for this call: each pair's missing dialogues, the likely pairs first, at most PER_CALL in all; a full
 // pool still gets a few fresh ones for the likely pairs, which push out their oldest
-export function askOf(pairs, have) {
+// (perCall: fewer when the same call writes many personas, see makePool)
+export function askOf(pairs, have, perCall = PER_CALL) {
   const ask = [];
-  let left = PER_CALL;
+  let left = perCall;
   for (const p of pairs) { const n = Math.min(left, Math.max(0, p.want - (have.get(pairKey(p.names)) || 0))); if (n) { ask.push({ names: p.names, n }); left -= n; } }
   if (!ask.length) for (const p of pairs.filter(p => p.likely).slice(0, 4)) ask.push({ names: p.names, n: 2 });
   return ask.length ? ask : pairs.slice(0, 4).map(p => ({ names: p.names, n: 2 }));
@@ -219,7 +220,9 @@ export async function makePool({ thingsDir = join(ROOT, 'viewer', 'things'), mod
   const anyTime = (Array.isArray(old.dialogues) ? old.dialogues : []).filter(d => !d.when && safeDialogue(d) && d.between.every(n => names.has(n)));
   const pairs = pairsOf(cast, { ...kept, ...(old.personas || {}) }), have = new Map();
   for (const d of anyTime) have.set(pairKey(d.between), (have.get(pairKey(d.between)) || 0) + 1);
-  const ask = askOf(pairs, have);
+  // a fresh big cast: 11 personas with acts, quests and 30 dialogues in one reply came back empty (QA, 11 figures):
+  // while it writes more than 3 personas a call asks only 12 dialogues; the next calls fill up
+  const ask = askOf(pairs, have, want.length > 3 ? 12 : PER_CALL);
   const text = `The figures' names, to use exactly in "between" and "who" (no other names, not their actor ids): ${cast.map(c => c.name).join(', ')}.
 The figures in the book now (actor id, name: drawing):
 ${cast.map(c => `- ${c.id}, ${c.name}: ${c.drawing}${c.said ? ` (says on the paper: "${c.said}")` : ''}${kept[c.id] ? ` (persona: ${JSON.stringify(kept[c.id])})` : ''}`).join('\n')}
@@ -231,7 +234,8 @@ ${want.length ? `Write personas for: ${want.map(c => c.id).join(', ')}.` : ''}${
   const r = await oneShot({ system: SYSTEM, text, images: [], model, fallback: POOL_FALLBACK, effort: 'low' });
   if (process.env.KRITZEL_POOL_RAW) try { writeFileSync(process.env.KRITZEL_POOL_RAW, r.text); } catch { /* debugging only */ }   // the model's reply, to see what was dropped
   let j = {};
-  try { j = JSON.parse(r.text.slice(r.text.indexOf('{'), r.text.lastIndexOf('}') + 1)); } catch { /* unusable reply: keep what we had */ }
+  let unusable = null;
+  try { j = JSON.parse(r.text.slice(r.text.indexOf('{'), r.text.lastIndexOf('}') + 1)); } catch (e) { unusable = `unusable reply (${r.text.length} chars: ${e.message.slice(0, 60)})`; }   // keep what we had
   const personas = { ...kept };
   // keyed by the actor id as asked, but the model sometimes keys by the name ('Turmwesen' for turmwesen, live: the
   // persona was dropped on every call and every watcher start asked again): any case, id or name
@@ -278,7 +282,7 @@ ${want.length ? `Write personas for: ${want.map(c => c.id).join(', ')}.` : ''}${
   writeFileSync(out + '.tmp', JSON.stringify({ cast: [...names].sort(), model: r.model, made_at: new Date().toISOString(), reason,
     personas, quests, dialogues: pool }, null, 1));
   renameSync(out + '.tmp', out);
-  return { written: dialogues.length, personas: Object.keys(personas).length - Object.keys(kept).length, quests: quests.length - keptQuests.length, offered: offered.length, ...(dropped.length && { dropped: [...new Set(dropped)].slice(0, 5) }),
+  return { written: dialogues.length, personas: Object.keys(personas).length - Object.keys(kept).length, quests: quests.length - keptQuests.length, offered: offered.length, ...(dropped.length && { dropped: [...new Set(dropped)].slice(0, 5) }), ...(unusable && { unusable }),
     seconds: (Date.now() - t0) / 1000, cost: r.cost, model: r.model, ...(r.fellBack && { fellBack: r.fellBack }) };
 }
 
