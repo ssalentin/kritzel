@@ -30,7 +30,7 @@ SHOT = Path("/tmp/kritzel-think-e2e.png")
 FIXTURE = """export const meta = {{ name: 'Qa {n}', drawing: 'a small test figure', paper: {{ x: {x}, y: 0.5 }} }};
 export function build({{ makePerson }}) {{
   const rig = makePerson({{ shirtColor: 0x{color} }});
-  return {{ actors: [{{ id: 'qa-{n}', name: 'Qa {n}', start: [{x}, 0], rig }}] }};
+  return {{ actors: [{{ id: 'qa-{n}', name: 'Qa {n}', start: [{x}, 0], rig, move: '{move}' }}] }};
 }}
 """
 
@@ -78,8 +78,10 @@ class Director(unittest.TestCase):
         shutil.copytree(ROOT / "viewer", cls.world / "viewer", ignore=shutil.ignore_patterns("__pycache__", "things"))
         things = cls.world / "viewer" / "things"
         things.mkdir()
-        for n, (x, color) in enumerate([(-2, "88cc88"), (0, "88aadd"), (2, "ddaa66")], 1):
-            (things / f"qa-{n}.js").write_text(FIXTURE.format(n=n, x=x, color=color))
+        # three walkers and one flyer: the flyer must never be asked (it never runs decide)
+        for n, (x, color, move) in enumerate([(-2, "88cc88", "walk"), (0, "88aadd", "walk"), (2, "ddaa66", "walk"),
+                                              (3, "cc88dd", "fly")], 1):
+            (things / f"qa-{n}.js").write_text(FIXTURE.format(n=n, x=x, color=color, move=move))
         cls.port = free_port()
         env = {**os.environ, "PORT": str(cls.port), "KRITZEL_THINK": "1", "OPENROUTER_API_KEY": "test-key",
                "KRITZEL_THINK_URL": f"http://127.0.0.1:{cls.up.server_port}/api/alpha/decisions"}
@@ -133,6 +135,7 @@ class Director(unittest.TestCase):
         self.assertTrue(3 <= len(first["state"]["actors"]) <= 5, first)
         self.assertEqual(len(first["questions"]), len(first["state"]["actors"]))
         self.assertTrue(all(a["id"] and a["mood"] and a["needs"] for a in first["state"]["actors"]))
+        self.assertNotIn("qa-4", [a["id"] for c in Upstream.calls for a in c["state"]["actors"]])   # the flyer is never asked
 
         # the word has to survive the walk: a Jev dance becomes a dance when the two figures meet
         met = None
@@ -149,14 +152,13 @@ class Director(unittest.TestCase):
             print("(screenshot skipped: the software renderer did not paint in 5 s)")
 
         # the endpoint dies: no answers from now on, but the world keeps running on local goals
+        before = self.sim("think()")
         self.up.shutdown()
-        before = self.sim("trace().length")
         time.sleep(12)
-        after = self.sim("trace().length")
         st2 = self.sim("think()")
-        self.assertGreater(after, before, "the sim stopped making goals after the endpoint died")
-        self.assertGreater(st2["failed"], st["failed"])
-        self.assertGreaterEqual(st2["requests"], st["requests"] + 1)
+        self.assertGreater(st2["updates"], before["updates"], "the sim stopped updating after the endpoint died")
+        self.assertGreater(st2["failed"], before["failed"])
+        self.assertGreaterEqual(st2["requests"], before["requests"] + 1)
         self.assertEqual(self.errors, [])
         print("\n[think] console:\n  " + "\n  ".join(self.lines[-6:]))
         print(f"[think] stats after failover: {json.dumps(st2)}")
