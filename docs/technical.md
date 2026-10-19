@@ -328,7 +328,8 @@ Not automatic yet: archiving the world when a new sheet appears (it is only repo
 Placement uses the camera frame, not a detected paper outline.
 
 **Typed things.** `POST /api/text-thing` with `{"text": "a lantern"}` (1-80 characters, German or
-English) writes `frames/requests/<id>.json`; the watcher also watches that folder. Each request is
+English) and the same `X-Kritzel: 1` header as `/api/newworld` writes `frames/requests/text-<id>.json`;
+the watcher also watches that folder. Each request is
 one model call with **no image**, the same module contract, the same static and real-build checks,
 and the same one-fix retry, and leaves `frames/generated/<id>.json` with the reply, cost and timing.
 The thing is written as `viewer/things/<slug>.js` with `meta.paper { x: 0.5, y: 0.5 }`; the viewer

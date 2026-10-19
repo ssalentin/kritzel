@@ -92,6 +92,7 @@ SITUATION_LEASE_S = 60
 SITUATION = ROOT / "frames" / "status" / "situation.json"   # what the sim reports for the dialogue writer (PUT /api/situation)
 MODE_FILE = ROOT / "viewer" / "things" / "mode.json"     # {"mode": "add" | "switch"}; missing = add (issue #16)
 NEWWORLD_LOCK, NEWWORLD_GAP_S = threading.Lock(), 10
+TEXT_LOCK = threading.Lock()          # request ids are allocated and written under one lock: no same-second race
 last_newworld = [0.0]
 
 
@@ -276,14 +277,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urllib.parse.urlsplit(self.path).path
-        if path == "/api/text-thing":
-            return self.text_thing()
-        if path != "/api/newworld":
+        if path not in ("/api/text-thing", "/api/newworld"):
             return self.json({"error": "not found"}, 404)
         # only the viewer itself: a page on another site can send a plain POST without asking first,
         # but not one with this header (that needs a CORS preflight, which we never grant)
         if self.headers.get("X-Kritzel") != "1":
             return self.json({"error": "forbidden"}, 403)
+        if path == "/api/text-thing":
+            return self.text_thing()
         # a new world: scripts/newworld.sh archives this one to worlds/ (never deletes) and empties things/
         with NEWWORLD_LOCK:
             if time.time() - last_newworld[0] < NEWWORLD_GAP_S:
@@ -310,16 +311,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             assert 1 <= len(text) <= 80
         except (ValueError, AssertionError, KeyError, TypeError):
             return self.json({"ok": False, "error": "say what to build (1-80 characters)"}, 400)
-        REQUESTS.mkdir(parents=True, exist_ok=True)
-        base = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
-        req_id, k = base, 2
-        while (REQUESTS / f"{req_id}.json").exists():
-            req_id, k = f"{base}-{k}", k + 1
-        req = {"text": text, "lang": guess_lang(text), "requested_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-               "id": req_id}
-        tmp = REQUESTS / f".{req_id}.json.tmp"
-        tmp.write_text(json.dumps(req, ensure_ascii=False) + "\n")
-        tmp.replace(REQUESTS / f"{req_id}.json")
+        with TEXT_LOCK:
+            REQUESTS.mkdir(parents=True, exist_ok=True)
+            # a text- namespace: never the same name as a capture frame report (frames/generated/<ts>.json)
+            base = "text-" + time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+            req_id, k = base, 2
+            while (REQUESTS / f"{req_id}.json").exists():
+                req_id, k = f"{base}-{k}", k + 1
+            req = {"text": text, "lang": guess_lang(text), "requested_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                   "id": req_id}
+            tmp = REQUESTS / f".{req_id}.json.tmp"
+            tmp.write_text(json.dumps(req, ensure_ascii=False) + "\n")
+            tmp.replace(REQUESTS / f"{req_id}.json")
         return self.json({"ok": True, "id": req_id})
 
     def do_PUT(self):

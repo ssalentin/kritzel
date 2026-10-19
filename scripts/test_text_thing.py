@@ -13,6 +13,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
@@ -47,10 +48,13 @@ class TextThing(unittest.TestCase):
             self.p.kill()
         self.tmp.cleanup()
 
-    def post(self, body, raw=None):
+    def post(self, body, raw=None, same_site=True):
         data = raw if raw is not None else json.dumps(body).encode()
+        headers = {"Content-Type": "application/json"}
+        if same_site:
+            headers["X-Kritzel"] = "1"
         req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/text-thing", data=data,
-                                     headers={"Content-Type": "application/json"}, method="POST")
+                                     headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=5) as r:
                 return r.status, json.load(r)
@@ -61,6 +65,7 @@ class TextThing(unittest.TestCase):
         code, out = self.post({"text": "  eine Laterne  "})
         self.assertEqual(code, 200)
         self.assertEqual(out["ok"], True)
+        self.assertTrue(out["id"].startswith("text-"))
         f = self.root / "frames" / "requests" / f"{out['id']}.json"
         req = json.loads(f.read_text())
         self.assertEqual(req["text"], "eine Laterne")
@@ -80,6 +85,20 @@ class TextThing(unittest.TestCase):
         _, b = self.post({"text": "eine Laterne"})
         self.assertNotEqual(a["id"], b["id"])
         self.assertTrue((self.root / "frames" / "requests" / f"{b['id']}.json").exists())
+
+    def test_concurrent_posts_all_get_their_own_file(self):
+        with ThreadPoolExecutor(24) as ex:
+            out = list(ex.map(lambda i: self.post({"text": f"ding {i}"}), range(24)))
+        ids = [b["id"] for code, b in out if code == 200]
+        self.assertEqual(len(ids), 24)
+        self.assertEqual(len(set(ids)), 24)
+        self.assertEqual(len(list((self.root / "frames" / "requests").glob("*.json"))), 24)
+
+    def test_a_post_without_the_same_site_header_is_forbidden(self):
+        code, out = self.post({"text": "a lantern"}, same_site=False)
+        self.assertEqual(code, 403)
+        self.assertEqual(out, {"error": "forbidden"})
+        self.assertFalse((self.root / "frames" / "requests").exists())
 
     def test_missing_empty_and_too_long_text_are_400(self):
         for body in ({}, {"text": ""}, {"text": "   "}, {"text": "x" * 81}, {"text": 3}):
