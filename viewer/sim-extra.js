@@ -139,7 +139,7 @@ export function options(a, add, { spots, cover, spotCell, things, nearest, actor
     if (sp.kind === 'portable' && sp.carrier === a) add(5, { type: 'carry', item: sp, until: null });
     if (sp.kind === 'portable' && !sp.carrier && a.traits.curiosity > 0.3 && !carriedBy(spots, a) &&
         spots().filter(s => s.kind === 'portable' && s.carrier).length < CARRY_MAX)
-      add(0.3 + a.traits.curiosity * 0.4 + (p?.hobby === 'collect' ? 0.8 : 0), { type: 'pick', spot: sp });
+      { if (walks(a)) add(0.3 + a.traits.curiosity * 0.4 + (p?.hobby === 'collect' ? 0.8 : 0), { type: 'pick', spot: sp }); }   // a sky mover can't pick up from the ground (the sun carried the Keks in a run)
     if (sp.kind === 'door' && spotCell(sp, a)) add(0.2 + (1 - a.energy) * 0.8 + (cover() > 0.5 ? 0.6 : cover() > 0.3 ? 0.25 : 0), { type: 'visit', spot: sp, cell: spotCell(sp, a), phase: 'walk' });
     if (sp.kind === 'item' && sp.carrier === a) {       // carrying a key: keep bringing it to the lock
       const lock = spots().find(l => l.kind === 'lock' && l.needs === sp.item && !l.opened);
@@ -212,9 +212,9 @@ export function portable(a, g, api) {
   }
   // carry: wander about with it; now and then a friend close by is offered it
   // the carry lasts CARRY_FOR from the pick-up or hand-over, kept on the thing (goals are re-decided meanwhile)
-  if (now() > (it.carryUntil ??= now() + CARRY_FOR)) return drop();
+  if (!it.quest && now() > (it.carryUntil ??= now() + CARRY_FOR)) return drop();
   // on a quest (tickQuests sets g.dest: a figure or a place) it is carried there and offered to nobody on the way
-  if (!g.dest) {
+  if (!g.dest && !it.quest) {
     // (a friend who carries something too can swap: the give hands theirs back)
     const friend = actors().find(b => b !== a && !b.hidden && b.kind !== 'squid' &&
       Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y)) <= 2 && (b.goal?.type ?? 'idle') !== 'give');
@@ -250,7 +250,7 @@ export function frame(actors, api) {
   for (const it of spots().filter(s => s.kind === 'portable' && s.carrier)) {
     if (!actors.includes(it.carrier) || it.carrier.hidden) { it.carrier = null; continue; }   // gone or hidden: let go
     // a brief talk or greeting keeps it; a goal that stays something else for over a second lets it go
-    if (/^(carry|give)$/.test(it.carrier.goal?.type ?? '')) it.letGoAt = null;
+    if (it.quest || /^(carry|give)$/.test(it.carrier.goal?.type ?? '')) it.letGoAt = null;   // a quest's item is kept (quest = its bring)
     else if (it.letGoAt == null) it.letGoAt = now();
     // an interaction (chase, approach, follow) may pre-empt a give for a while: the thing is kept through it
     const grace = /^(chase|approach|follow)$/.test(it.carrier.goal?.type ?? '') ? 8 : 1;
@@ -592,6 +592,7 @@ export function tickQuests(actors, api) {
     if (giver && (giver.goal?.type === 'chase' || giver.goal?.type === 'flee')) { nextQuestAt = t + 10; return; }
     activeQuest = { q, giver, thing, since: t, helpers: [], waitHeld: waitHolds(q.solve, api),
       item: q.solve.kind === 'bring' ? freeThing(q.solve.what) : null, place: q.solve.kind === 'visit' ? thingOf(q.solve.at) : null };
+    if (activeQuest.item) activeQuest.item.quest = activeQuest;   // exempt from timeout, swap and throw while it runs
     if (giver) { say(giver, questLine(q.start), 3.2); busy(giver, null, 'talk', 3); }
     const near = actors.filter(b => b !== giver && !b.hidden && b.kind !== 'squid' && within(b.pos, at, 8));
     near.slice(0, 4).forEach((b, i) => {
@@ -607,7 +608,7 @@ export function tickQuests(actors, api) {
     return;
   }
   const aq = activeQuest, { q, giver } = aq, at = giver ? giver.pos : aq.thing;
-  const endQuest = solved => { if (solved) solvedLog.push({ who: q.who, at: Date.now() / 1000 }); activeQuest = null; nextQuestAt = questCooldown(t); return solved; };
+  const endQuest = solved => { if (solved) solvedLog.push({ who: q.who, at: Date.now() / 1000 }); if (aq.item?.quest === aq) aq.item.quest = null; activeQuest = null; nextQuestAt = questCooldown(t); return solved; };
   if (giver ? (giver.hidden || !actors.includes(giver)) : !thingOf(q.who)) return endQuest(false);
   if (t - aq.since > QUEST_LIMIT_S) return endQuest(false);
   const here = aq.helpers.filter(h => !h.hidden && within(h.pos, at, reachOf(giver || aq.thing)));
