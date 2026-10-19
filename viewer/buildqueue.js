@@ -10,6 +10,7 @@ const WORD = { listed: 'buildWait', building: 'buildNow', draft: 'buildAlmost', 
 export function createBuildQueue(el) {
   const doneAt = new Map();              // row key → when it was first seen finished
   let busyUntil = 0;                     // the last time a thing was still being built (or waiting)
+  let last = '';                         // what is on screen now: rebuilt only when it changes (update runs every frame)
   const say = x => typeof x === 'string' ? x : x?.[lang()] || x?.de || '';
 
   return {
@@ -29,6 +30,9 @@ export function createBuildQueue(el) {
       if (shown.some(r => r.state === 'listed' || r.state === 'building' || r.state === 'draft')) busyUntil = now;
       const gone = shown.length === 0 || now - busyUntil > VANISH_S && shown.every(r => r.state === 'done' || r.state === 'failed');
       el.hidden = gone;
+      const key = gone ? '' : JSON.stringify(shown.map(r => [r.name, r.state]));
+      if (key === last) return;                                            // same rows: no DOM churn, the dots keep beating
+      last = key;
       if (gone) { el.replaceChildren(); return; }
       el.replaceChildren(...shown.map(r => {
         const row = document.createElement('div');
