@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 process.env.PATH = join(import.meta.dirname, 'test-bin') + ':' + process.env.PATH;
 delete process.env.KRITZEL_MODEL; delete process.env.KRITZEL_DETECT_MODEL;
-const { processFrame, parseList, unsaid, slots } = await import('./generate.mjs');
+const { processFrame, parseList, unsaid, withSaid, slots } = await import('./generate.mjs');
 
 const stone = `export const meta = { name: 'Stein', drawing: 'a round stone', paper: { x: 0.3, y: 0.5 } };
 export function build(ctx) {
@@ -43,6 +43,8 @@ test('a drawn bubble is kept only when its words are readable, short, child-safe
   assert.equal(says({ text: 'x'.repeat(61), kind: 'speech' }), undefined);   // too long to be a bubble's words
   assert.equal(says({ text: 'Hallo', kind: 'shout' }), undefined);
   assert.equal(says({ text: 3, kind: 'speech' }), undefined);
+  assert.deepEqual(says({ text: 'Hallo!', en: 'Hello!', kind: 'speech' }), { text: 'Hallo!', en: 'Hello!', kind: 'speech' });
+  assert.deepEqual(says({ text: 'Hallo!', en: 'I hate you', kind: 'speech' }), { text: 'Hallo!', kind: 'speech' });   // its English left out, not the bubble
 });
 
 test('the bubble words missing from the module are asked for; present (even escaped) they are not', () => {
@@ -51,6 +53,19 @@ test('the bubble words missing from the module are asked for; present (even esca
   assert.deepEqual(unsaid("chat: [{ de: 'Ich bin\\'s' }]", { text: "Ich bin's", kind: 'thought' }), []);
   assert.match(unsaid("greet: [{ de: 'Hi' }]", { text: 'Hallo!', kind: 'speech' })[0], /first greet line .*"Hallo!"/);
   assert.match(unsaid("greet: [{ de: 'Hi' }]", { text: 'Ich mag Kuchen', kind: 'thought' })[0], /first chat line .*💭/);
+});
+
+test('the bubble words are written as the actor\'s lines.said, inside its lines, whatever the model did', async () => {
+  const lines = c => Function(`return ${c.match(/actors:\s*\[\s*(\{[\s\S]*\})\s*\]/)[1]}`)().lines;
+  const speech = { text: 'Hallo!', en: 'Hello!', kind: 'speech' };
+  const a = withSaid("return { actors: [{ id: 'x', lines: { greet: { de: ['Hi'], en: ['Hi'] } } }] };", speech);
+  assert.deepEqual(lines(a).said, { de: 'Hallo!', en: 'Hello!' });
+  assert.deepEqual(lines(a).greet, { de: ['Hi'], en: ['Hi'] });
+  // one the model wrote inside its lines is replaced by the list's words (one beside them is check-run's problem)
+  const b = withSaid("return { actors: [{ id: 'x', lines: { said: { de: 'Hi', en: 'Hi' }, chat: ['a'] } }] };", { text: 'Ich mag Kuchen', en: 'I like cake', kind: 'thought' });
+  assert.deepEqual(lines(b), { said: { de: '💭 Ich mag Kuchen', en: '💭 I like cake' }, chat: ['a'] });
+  assert.deepEqual(lines(withSaid("return { actors: [{ id: 'x', rig: {} }] };", speech)), { said: { de: 'Hallo!', en: 'Hello!' } });
+  assert.equal(withSaid('x', { text: 'Hallo!', kind: 'speech' }), 'x');   // no English from the list: the model's stands
 });
 
 async function sheet(list, reply) {
