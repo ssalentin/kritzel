@@ -289,6 +289,7 @@ test('the pairs likely to meet (one likes the other, or nearest on the pages) wa
     const ask = askOf(pairs, new Map([['Affe|Maus', 7], ['Affe|Igel', 5]]));
     assert.deepEqual(ask.map(x => x.n), [2, 7, 7, 3, 3]);                              // what each pair lacks
     assert.ok(askOf(pairs, new Map()).reduce((n, x) => n + x.n, 0) <= 30);            // one call stays a sane size
+    assert.equal(askOf(pairs, new Map(), 12).reduce((n, x) => n + x.n, 0), 12);       // a call that also writes many personas asks fewer
     const full = new Map(pairs.map(p => [[...p.names].sort().join('|'), p.want]));
     assert.deepEqual(askOf(pairs, full).map(x => x.n), [2, 2, 2, 2]);                     // a full pool: a few fresh for the likely pairs
     // a big cast: 12 figures in a row, 66 pairs, every one gets some and all fit in the pool
@@ -321,5 +322,9 @@ test('the pool keeps each pair\'s newest dialogues up to what it wants, and asks
     const asked = readFileSync(join(dir, 'prompts.jsonl'), 'utf8');
     assert.match(asked, /Affe & Maus: 7/);                                               // liked: 7 wanted, none there
     assert.doesNotMatch(asked, /(?:Kuh & Maus|Maus & Kuh): \d/);                         // it has its 3 (4 even): none asked
+    writeFileSync(join(dir, 'reply.txt'), '{"personas": {}, "dialogues": [{"between": ["Affe", ');   // cut off
+    const r = await makePool({ thingsDir: dir, model: 'claude-haiku-5-5' });
+    assert.match(r.unusable, /^unusable reply \(\d+ chars/);                              // the log says why nothing was written
+    assert.equal(JSON.parse(readFileSync(join(dir, 'dialogues.json'), 'utf8')).dialogues.length, 4);   // and the pool stays
   } finally { process.env.PATH = path; delete process.env.FAKE_CLAUDE_LOG; rmSync(dir, { recursive: true, force: true }); }
 });
