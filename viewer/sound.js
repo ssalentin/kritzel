@@ -13,8 +13,9 @@
 // a voice of the page's language (de/en from <html lang>), found once the browser has loaded its voices
 const voices = {};
 // The bank: decoded once after the first click, then reused. Each role gets a measured gain
-// (earshot measure, balanced to about -26 LUFS momentary before the master gain) and a small
-// random playback rate so repeats do not sound identical.
+// (earshot measure, balanced to about -26 LUFS momentary before the master gain; the sparkle is
+// a little brighter so it is not lost under the tap) and a small random playback rate so repeats
+// do not sound identical.
 const BANK = {
   arrival: 'arrival.ogg',
   pageTurn: 'page-turn.ogg',
@@ -27,8 +28,8 @@ const BANK = {
   typedArrival: 'typed-arrival.ogg',
 };
 const BANK_GAIN = {
-  arrival: 0.63, pageTurn: 0.58, tap: 0.9, giggle: 0.71, sparkle: 0.81,
-  rain: 0.36, thunder: 0.69, newWorld: 0.53, typedArrival: 0.29,
+  arrival: 0.63, pageTurn: 0.58, tap: 0.9, giggle: 0.75, sparkle: 1.2,
+  rain: 0.5, thunder: 0.6, newWorld: 0.53, typedArrival: 0.29,
 };
 // before the bank is ready every role still has the procedural sound it replaces
 const BANK_FALLBACK = {
