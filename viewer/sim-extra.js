@@ -658,6 +658,8 @@ function steerQuest(aq, api) {
       const free = helpers.filter(h => walks(h) && !busyNow(h) && h !== giver);
       const h = free.sort((p, q) => Math.hypot(p.pos.x - it.x, p.pos.z - it.z) - Math.hypot(q.pos.x - it.x, q.pos.z - it.z))[0];
       if (h && !(h.goal?.type === 'pick' && h.goal.spot === it)) { h.goal = { type: 'pick', spot: it }; h.goalSince = t; }
+      // a walk to a far thing takes longer than act()'s 15 s goal limit: the fetcher's pick is kept while the quest runs
+      else if (h) h.goalSince = t;
     }
     for (const h of helpers) if (h !== c) come(h);
     return;
