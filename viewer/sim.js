@@ -401,7 +401,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   function interact(a, b) {
     a.lastMet[b.id] = b.lastMet[a.id] = now;
     // a figure's drawn words come before anything else: it says them first and the meeting waits a moment (orch)
-    for (const p of [a, b]) if (paperText(p) && !p.saidOnce) { say(p, line(p, 'greet'), 2.5); p.busyUntil = now + 2.5; return; }
+    for (const p of [a, b]) if (paperText(p) && !p.saidOnce) { if (!p.paperQueued) { p.paperQueued = true; say(p, line(p, 'greet'), 2.5); } p.busyUntil = now + 2.5; return; }
     const r = Math.min(rel(a, b), rel(b, a));
     if (X.choose) INT[X.choose(a, b, r, api)](a, b);   // without sim-extra.js people just wander
   }
@@ -737,13 +737,17 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         const p = pending[i];
         if (now < p.at) continue;
         pending.splice(i, 1);
+        // a figure with paper words says them first: its other bubbles wait until they have been said (six seconds at most)
+        const paper = paperText(p.a);
+        if (paper && !p.a.saidOnce && p.text !== paper) { p.holdSince ??= now; if (now - p.holdSince < 6) { p.at = now + 0.3; pending.push(p); continue; } }
         // a dialogue is on: nobody next to the two talks over them
-        if (stage && now < stage.until && p.a !== stage.a && p.a !== stage.b &&
+        const isPaper = !!paper && p.text === paper && !p.a.saidOnce;   // the paper words are never dropped before they show
+        if (!isPaper && stage && now < stage.until && p.a !== stage.a && p.a !== stage.b &&
           Math.hypot(p.a.pos.x - (stage.a.pos.x + stage.b.pos.x) / 2, p.a.pos.z - (stage.a.pos.z + stage.b.pos.z) / 2) < 3.5) continue;
         // few bubbles at once, so each can be read: a spontaneous line waits for a free one (or is dropped when stale)
         const onStage = stage && now < stage.until && (p.a === stage.a || p.a === stage.b);
         if (!onStage && actors.filter(o => o !== p.a && o.sayUntil > now).length >= BUBBLES_MAX) {
-          if (now - p.at < 4) { p.at = now + 0.5; pending.push(p); }
+          if (isPaper || now - p.at < 4) { p.at = now + 0.5; pending.push(p); }
           continue;
         }
         guarded(p.a, () => { p.a.rig.say(p.text); p.a.sayUntil = now + p.dur; if (p.text === paperText(p.a)) p.a.saidOnce = true; });
@@ -751,6 +755,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
 
       separate(dt);
       for (const a of actors) guarded(a, () => {
+        if (!a.paperQueued && !a.saidOnce && paperText(a)) { a.paperQueued = true; say(a, paperText(a), 2.5, 0.3); }   // its paper words, first
         if (a.sayUntil && now > a.sayUntil) { a.rig.say(''); a.sayUntil = 0; }
         let moving;
         // in a dialogue (or another moment with a partner): stay put and keep facing them until it ends
