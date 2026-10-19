@@ -67,7 +67,7 @@ export function build({ THREE, world, mat }) {
   }
   g.position.set(-6, 0, 4);
   world.add(g);
-  return { actors: [], obstacles: [], holds: [{ actor: 'gaffer', x: -6, z: 4, r: 0.8 }] };
+  return { actors: [], obstacles: [], holds: [{ actor: 'gaffer', x: -6, z: 4, r: 0.45 }] };
 }
 """
 
@@ -233,6 +233,24 @@ class Collisions(unittest.TestCase):
         self.assertLessEqual(out["maxPen"], 0.02, f"a crowd pushed a body into the beam: {out}")
         print("\n[collisions] crowding " + json.dumps(out))
 
+    def test_a_body_already_inside_is_never_pushed_deeper(self):
+        """A saved state may leave a figure inside a thing; its next step must not make it worse."""
+        out = self.page.evaluate("""() => {
+          const w = window.__paperWorld(), b = w.brain(), foot = w.feet().find(e => e.file === 'balken.js').foot;
+          const a = b.actors().find(x => x.id === 'wide'), c = b.actors().find(x => x.id === 'wide2');
+          if (c) { c.pos.set(-7, 0, 5); c.cell = { x: 19, y: 46 }; c.goal = { type: 'idle', until: 1e9 }; }
+          const pen = x => foot.hx + a.radius - Math.abs(x - foot.x);      // the x axis into the beam
+          a.hidden = false; a.hold = null; a.alt = 0; a.busyUntil = 0; a.partner = null; a.flee = null;
+          a.pos.set(foot.x - 0.2, 0, foot.z + 2.5); a.cell = { x: Math.round(foot.x / 0.45 + 35), y: Math.round(foot.z / 0.45 + 35) };
+          const before = pen(a.pos.x), t = b.time();
+          a.goal = { type: 'idle', until: t + 1e9 };
+          a.goalSince = t + 1e9;
+          w.update(t + 1 / 60, 1 / 60);
+          return { before, after: pen(a.pos.x), pos: [a.pos.x, a.pos.z] };
+        }""")
+        self.assertLessEqual(out["after"], out["before"] + 1e-4, f"the body was pushed deeper: {out}")
+        print("\n[collisions] already-inside " + json.dumps(out))
+
     def test_portable_food_and_a_held_prisoner_are_not_walls(self):
         out = self.page.evaluate("""() => {
           const w = window.__paperWorld(), b = w.brain();
@@ -286,6 +304,33 @@ export function build({ THREE, world, mat }) {
         self.assertFalse(gone["feet"], gone)
         self.assertFalse(gone["blocking"], gone)
         print("\n[collisions] grid rebuild on add/remove ok")
+
+    def test_a_crowd_does_not_push_the_prisoner_out_of_the_jail(self):
+        out = self.page.evaluate("""() => {
+          const w = window.__paperWorld(), b = w.brain();
+          const g = b.actors().find(a => a.id === 'gaffer'), h = g.hold;
+          if (!h) return { error: 'the prisoner has no hold' };
+          const a = b.actors().find(x => x.id === 'wide'), c = b.actors().find(x => x.id === 'wide2');
+          const cell = (x, z) => ({ x: Math.round(x / 0.45 + 35), y: Math.round(z / 0.45 + 35) });
+          const gc = cell(h.x, h.z), gw = [(gc.x - 35) * 0.45, (gc.y - 35) * 0.45];
+          g.cell = gc; g.pos.set(gw[0], 0, gw[1]); g.hidden = false; g.busyUntil = 0; g.goal = null;
+          const start = [gw[0], gw[1]];
+          for (const p of [a, c]) { p.hidden = false; p.hold = null; p.alt = 0; p.busyUntil = 0; p.goal = null; p.flee = null; }
+          a.pos.set(gw[0] + 0.4, 0, gw[1]); Object.assign(a.cell, cell(a.pos.x, a.pos.z));
+          c.pos.set(gw[0] + 1.4, 0, gw[1]); Object.assign(c.cell, cell(c.pos.x, c.pos.z));
+          let t = b.time(), maxOut = 0;
+          for (let i = 0; i < 60 * 5; i++) {
+            a.partner = c; a.partnerUntil = t + 1e6; a.goal = null;
+            c.goal = { type: 'idle', until: t + 1e6 };
+            g.goal = { type: 'idle', until: t + 1e6 };
+            w.update(t += 1 / 60, 1 / 60);
+            maxOut = Math.max(maxOut, Math.hypot(g.pos.x - start[0], g.pos.z - start[1]));
+          }
+          return { maxOut, r: h.r, g: [g.pos.x, g.pos.z], h: [h.x, h.z] };
+        }""")
+        self.assertNotIn("error", out, out)
+        self.assertLessEqual(out["maxOut"], 0.02, f"the crowd moved the prisoner: {out}")
+        print("\n[collisions] prisoner " + json.dumps(out))
 
 
 if __name__ == "__main__":
