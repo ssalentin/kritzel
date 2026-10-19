@@ -3,14 +3,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, copyFileSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 process.env.PATH = join(import.meta.dirname, 'test-bin') + ':' + process.env.PATH;
 process.env.KRITZEL_PROVIDER = 'claude';
+process.env.KRITZEL_TEXT_MODEL = 'claude-haiku-5-5';
 delete process.env.KRITZEL_MODEL; delete process.env.KRITZEL_DRAFT_MODEL;
 const { processTextRequest } = await import('./generate.mjs');
 const { withThingWrite } = await import('./generate.mjs');
+const { reportsToReplay } = await import('./generate.mjs');
 const { CHANGE_SYSTEM } = await import('./prompts.mjs');
 const snail = readFileSync(join(import.meta.dirname, 'examples', 'schnecke.js'), 'utf8');
 const flyer = `// parts: body = a witch
@@ -80,6 +82,7 @@ test('a typed request becomes things/laterne.js, with a report of the call and t
     assert.equal(saved.request.lang, 'de');
     assert.equal(saved.written[0].file, 'laterne.js');
     assert.equal(saved.calls.length, 1);
+    assert.equal(saved.calls[0].model, 'claude-haiku-5-5');           // TEXT_MODEL, not the frame MODEL
     assert.equal(typeof saved.calls[0].seconds, 'number');
     assert.equal(saved.error, undefined);
     assert.equal(saved.finished !== undefined, true);
@@ -276,6 +279,19 @@ test('thing writes are serialized, and concurrent new requests get distinct file
     await Promise.all([a, b]);
     assert.deepEqual(readdirSync(join(dir, 'things')).filter(f => f.endsWith('.js')).sort(), ['laterne-2.js', 'laterne.js']);
   } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('an archive replays only the text reports written while the sheet was arriving', () => {
+  const dir = dirs();
+  try {
+    const old = join(dir, 'reports', 'text-20261019-100000.json');
+    const fresh = join(dir, 'reports', 'text-20261019-190000.json');
+    writeFileSync(old, '{}'); writeFileSync(fresh, '{}');
+    const now = Date.now() / 1000;
+    utimesSync(old, now - 3600, now - 3600);
+    utimesSync(fresh, now, now);
+    assert.deepEqual(reportsToReplay(join(dir, 'reports'), (now - 60) * 1000), ['text-20261019-190000']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('the watcher picks up a request, and a second look at the same id builds it only once', async () => {

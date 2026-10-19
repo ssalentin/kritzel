@@ -243,6 +243,15 @@ export function wordOnly(code) {
 // ---------- a typed wish: frames/requests/<id>.json → one thing ----------
 export const textRequestId = file => basename(file).replace(/\.json$/, '');
 
+// Text things written while a switch-mode archive was arriving are in the old world: after the archive their
+// reports are dropped so the request worker builds them again into the new world (the request files stay).
+export function reportsToReplay(reportsDir, sinceMs) {
+  let names = [];
+  try { names = readdirSync(reportsDir).filter(f => /^text-.*\.json$/.test(f)); } catch { return []; }
+  return names.filter(f => { try { return statSync(join(reportsDir, f)).mtimeMs >= sinceMs; } catch { return false; } })
+    .map(f => f.replace(/\.json$/, ''));
+}
+
 // A correction must be exactly one corrected module: a reason (UNCLEAR), a removal or several sections are failures.
 export function changeModule(text) {
   let sections;
@@ -298,7 +307,7 @@ export async function processTextRequest(reqPath, { thingsDir, reportsDir, onPro
     if (mode === 'change' && !old) throw new Error(`no such thing to change: ${target}`);
     const r = await oneShot({ system: mode === 'change' ? CHANGE_SYSTEM : TEXT_SYSTEM, provider: TEXT_PROVIDER, model: TEXT_MODEL,
       text: mode === 'change' ? changeText({ text, file: target, code: old.code }) : textThingText(text),
-      images: [], timeoutMs: 6 * 60_000, model: MODEL });
+      images: [], timeoutMs: 6 * 60_000 });
     report.calls.push(callOf(r));
     report.reply = r.text.slice(0, 4000);
     if (mode === 'change') {
@@ -1251,7 +1260,13 @@ async function watch(dir, opts) {
           catch (e) { log(`${newest}: newworld.sh failed, no new world: ${e.message}`); throw new Error(`newworld.sh failed: ${e.message.slice(0, 120)}`); }   // the old world stays: nothing is written into it
           archivedFor = newest;
           writePaper(opts.reportsDir, { _through: newest });        // a new world has no old paper positions
+          // a typed thing that landed in the old world while this sheet arrived must live in the new one:
+          // drop its report, keep its request file, and let the request worker build it again
+          const replay = reportsToReplay(opts.reportsDir, frameStartedMs);
+          for (const id of replay) { try { rmSync(join(opts.reportsDir, id + '.json'), { force: true }); takenRequests.delete(id); } catch { /* gone */ } }
+          if (replay.length) log(`${newest}: ${replay.length} typed request(s) were archived: rebuilding them in the new world`);
         };
+        const frameStartedMs = Date.now();
         const r = await processFrame(join(dir, newest), { ...opts, onLater: later, box: null, previous: null, newSheet: 'switch', onProgress: status.more, beforeFirstWrite: archive });
         if (r.error) { status('failed', newest, r.error.slice(0, 80)); if (await retrySame(r.error, newest)) continue; last = newest; continue; }
         if (!r.written.length && r.rejected.some(x => /newworld\.sh failed/.test((x.problems || []).join(' ')))) status('failed', newest, 'neue Welt fehlgeschlagen');
