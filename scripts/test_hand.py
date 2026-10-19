@@ -24,6 +24,7 @@ SHOT_DROP = Path("/tmp/kritzel-hand-drop.png")
 SHOT_GLOVE = Path("/tmp/kritzel-hand-glove-open-1440.png")
 SHOT_PINCH = Path("/tmp/kritzel-hand-glove-pinch-1440.png")
 SHOT_OPEN_AFTER = Path("/tmp/kritzel-hand-glove-open-after-1440.png")
+SHOT_MID = Path("/tmp/kritzel-hand-glove-mid-1440.png")
 SHOT_GLOVE_PHONE = Path("/tmp/kritzel-hand-glove-open-390.png")
 SHOT_PINCH_PHONE = Path("/tmp/kritzel-hand-glove-pinch-390.png")
 
@@ -294,6 +295,12 @@ class Hand(unittest.TestCase):
                 self.page.mouse.move(p["x"] + 6 * i, p["y"] - 3 * i)
                 self.page.wait_for_timeout(40)
             self.step()                                   # the carried figure's rig follows the pinch point
+            if w == 1440:                                 # one short step: the cross-fade halfway
+                self.page.evaluate("() => { __handRig.update(0.03, 1.0, { carrying: true, pressing: true, moving: true }); window.__render(); }")
+                try:
+                    self.page.screenshot(path=str(SHOT_MID), timeout=120000)
+                except Exception:
+                    print("(mid-fade screenshot skipped: software renderer too slow)")
             self.page.evaluate("() => { for (let i = 0; i < 8; i++) __handRig.update(0.08, 1 + i * 0.08, { carrying: true, pressing: true, moving: true }); window.__render(); }")
             pinch = self.page.evaluate("() => __handState()")
             self.assertEqual(pinch["carry"]["who"], "mira", pinch)
