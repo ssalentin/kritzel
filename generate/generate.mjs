@@ -196,11 +196,27 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
 // the words in a drawn bubble (list entry's says) are its first line: asked for once, then taken (a figure must not
 // vanish over a missed line)
 export function unsaid(code, says) {
-  const said = code.replace(/\\(.)/g, '$1').match(/\bsaid\s*:\s*\{[^}]*\}/)?.[0] || '';
-  if (!says || (said.includes(says.text) && (says.kind !== 'thought' || said.includes('💭')))) return [];
+  if (!says || code.replace(/\\(.)/g, '$1').includes(says.text)) return [];
   return [says.kind === 'thought'
-    ? `its first chat line must be what it thinks on the paper, starting with 💭: "💭 ${says.text}" (German exactly as written, English a short translation), the same words in its lines as said: { de, en } (one string each${says.kind === 'thought' ? ', both starting with 💭' : ''}), and // said on the paper: "${says.text}" above the actor`
-    : `its first greet line must be what it says on the paper: "${says.text}" (German exactly as written, English a short translation), the same words in its lines as said: { de, en } (one string each${says.kind === 'thought' ? ', both starting with 💭' : ''}), and // said on the paper: "${says.text}" above the actor`];
+    ? `its first chat line must be what it thinks on the paper, starting with 💭: "💭 ${says.text}" (German exactly as written, English a short translation), and // said on the paper: "${says.text}" above the actor`
+    : `its first greet line must be what it says on the paper: "${says.text}" (German exactly as written, English a short translation), and // said on the paper: "${says.text}" above the actor`];
+}
+
+// the words drawn in its bubble as the actor's lines.said { de, en }, which the sim says first: written here from the
+// list, not left to the model (QA, 2026-10-19: it left them out in 4 of 4 builds, or put them beside its lines). A said
+// the model wrote is replaced; a module without lines gets them on its first actor. No English from the list: unchanged.
+export function withSaid(code, says) {
+  if (!says?.en) return code;
+  const mark = says.kind === 'thought' ? '💭 ' : '';
+  const lit = `said: ${JSON.stringify({ de: mark + says.text, en: mark + says.en })}`;
+  const li = code.search(/\blines:\s*\{/);
+  if (li < 0) return code.replace(/\bactors:\s*\[\s*\{/, m => `${m} lines: { ${lit} },`);
+  const open = code.indexOf('{', li);
+  let end = -1;
+  for (let d = 0, i = open; i < code.length; i++) if (code[i] === '{') d++; else if (code[i] === '}' && !--d) { end = i; break; }
+  if (end < 0) return code;
+  const block = code.slice(open + 1, end).replace(/\bsaid\s*:\s*\{[^{}]*\}\s*,?/, '');
+  return `${code.slice(0, open + 1)} ${lit},${block}${code.slice(end)}`;
 }
 
 // a module that only shows writing (Sebastian: "Sqichy" in 3D letters): a word alone is never a thing. By what it says
@@ -327,7 +343,8 @@ export function parseList(text) {
     if (WORD.test(t.what) || /^(?:ein|das|der)\s+(?:wort|schriftzug|titel|text)\b/i.test(t.de)) continue;   // a word alone is no drawing
     out.push({ ...(str(t.in_book, 60) && { inBook: t.in_book }), box: b.map(v => +v.toFixed(3)), up: t.face === 'eyes below mouth' && t.hangs !== true ? 'upside down' : 'upright',
       // the words of its speech or thought bubble, only when they pass the child-safe filter (they become its lines)
-      ...(t.says && typeof t.says.text === 'string' && t.says.text.length <= 60 && safeSaid(t.says.text) && ['speech', 'thought'].includes(t.says.kind) && { says: { text: t.says.text.trim(), kind: t.says.kind } }),
+      ...(t.says && typeof t.says.text === 'string' && t.says.text.length <= 60 && safeSaid(t.says.text) && ['speech', 'thought'].includes(t.says.kind) && { says: { text: t.says.text.trim(), kind: t.says.kind,
+        ...(typeof t.says.en === 'string' && t.says.en.trim() && t.says.en.length <= 80 && safeLine(t.says.en, 'en') && { en: t.says.en.trim() }) } }),
       what: t.what, de: t.de, en: t.en, den: str(t.den, 60) ? t.den : t.de, the: str(t.the, 60) ? t.the : t.en, name_en: str(t.name_en, 40) ? t.name_en : t.en });
   }
   return out;
@@ -483,6 +500,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
       // whole module, replaces it
       const isDraft = DRAFT_MODEL && f.model !== MODEL && s.kind === 'NEW';
       if (isDraft) f = { ...f, code: f.code.replace(/export\s+const\s+meta\s*=\s*\{/, m => `${m} draft: true,`) };
+      if (s.says) f = { ...f, code: withSaid(f.code, s.says) };
       atomicWrite(join(thingsDir, file), f.code);
       if (f.info?.box) boxes.push({ file, ...f.info.box });
       const pm = f.code.match(/paper:\s*\{\s*x:\s*([\d.]+),\s*y:\s*([\d.]+)/);
@@ -563,7 +581,7 @@ ${draft}`;
           let now = null;
           try { now = readFileSync(path, 'utf8'); } catch { /* removed meanwhile */ }
           if (now !== draft) { log(`${name}: final of ${file} dropped: the thing changed or was removed meanwhile`); return done({ dropped: 'changed meanwhile' }); }
-          atomicWrite(path, f.code);
+          atomicWrite(path, s.says ? withSaid(f.code, s.says) : f.code);
           log(`${name}: FINAL ${file} (${thingName}) by ${MODEL}, ${((Date.now() - settledAt) / 1000).toFixed(1)}s after the frame settled`);
           // the other things the draft had taken for one: written as new things, checked like any
           const parts = [];
