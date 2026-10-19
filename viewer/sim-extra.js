@@ -3,7 +3,7 @@
 // choose(a, b, r, api) picks the interaction for a pair that just met (r = their lower relationship).
 
 import { sound } from './sound.js';
-import { pickDialogue, fromPool, readTime, personaOf, refreshPool, questPool } from './dialogues.js';
+import { pickDialogue, fromPool, poolFor, readTime, personaOf, refreshPool, questPool } from './dialogues.js';
 import { lang } from './i18n.js';
 
 export const LINES = {
@@ -870,6 +870,8 @@ export function showEgg(a, b, { busy, say, line, bond }) {
 
 export function choose(a, b, r, api) {
   const { R, pick, rel } = api;
+  // a pool dialogue for this pair that fits the moment is offered to any meeting (it used to need a low relationship)
+  const poolReady = !(a.kind === 'squid' || b.kind === 'squid') && poolFor(a.name || a.id, b.name || b.id, context(a, b, api));
   const feared = a.fears?.includes(b.id) ? a : b.fears?.includes(a.id) ? b : null;
   if (feared && rel(feared, feared === a ? b : a) < 0.45) return 'spook';
   // a carrier who meets a friend may hand the thing over (meeting-based hand-over, GitHub #29): the common way a swap happens
@@ -883,6 +885,7 @@ export function choose(a, b, r, api) {
   const hungry = a.hunger > 0.6 ? a : b.hunger > 0.6 ? b : null;
   if (hungry && (hungry === a ? b : a).hunger < 0.2 && rel(a, b) > 0.3) return 'share';
   if ((a.eggs || b.eggs) && rel(a, b) > 0.2) return 'showEgg';
+  if (poolReady && R() < 0.6) return 'talk';
   if (!squidInvolved && rel(a, b) > 0.3 && Math.abs(a.radius - b.radius) > 0.1 && R() < 0.4) return 'chaseSmall';
   if (squidInvolved && R() < 0.3) return 'spar';
   if (r < 0.3) return R() < 0.5 ? 'talk' : 'greet';

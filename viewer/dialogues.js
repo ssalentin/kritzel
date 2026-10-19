@@ -177,6 +177,8 @@ export function fitsWhen(when, c) {
   return true;
 }
 // an unplayed generated dialogue for exactly these two, as { turns: [{ speaker, de, en }], end }; else null
+// is there an unplayed pool dialogue for exactly these two that fits the moment (used by the choice of a meeting)
+export const poolFor = (na, nb, c) => pool.some(d => !played.has(contentKey(d)) && d.between.includes(na) && d.between.includes(nb) && na !== nb && fitsWhen(d.when, c));
 export function fromPool(c) {
   refreshPool();
   const na = c.a.name || c.a.id, nb = c.b.name || c.b.id;
