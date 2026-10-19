@@ -251,3 +251,19 @@ export function build(ctx) { const { THREE, world, mat } = ctx; const g = new TH
   assert.equal((await buildCheck(small, { takenIds: [] })).info.portable, true);
   assert.equal((await buildCheck(big, { takenIds: [] })).info.portable, false);
 });
+
+test('the check counts hand-built shapes whose faces point inward (they render black); wound outward they are fine', async () => {
+  const tetra = order => `export const meta = { name: 'Hügel', drawing: 'a hill' };
+export function build(ctx) {
+  const { THREE, world, mat } = ctx;
+  const p = [[-1, 0, -1], [1, 0, -1], [0, 0, 1], [0, 1.2, 0]].flat();
+  const faces = ${order};
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(p, 3)); geo.setIndex(faces); geo.computeVertexNormals();
+  const g = new THREE.Group(); g.add(new THREE.Mesh(geo, mat(0xe8a46a))); world.add(g);
+  return { actors: [] };
+}`;
+  const outward = '[0, 1, 2, 0, 3, 1, 1, 3, 2, 2, 3, 0]', inward = '[0, 2, 1, 0, 1, 3, 1, 2, 3, 2, 0, 3]';
+  assert.equal((await buildCheck(tetra(inward), { takenIds: [] })).info.inwardMeshes, 1);   // reported; generate asks once (advisory)
+  assert.equal((await buildCheck(tetra(outward), { takenIds: [] })).info.inwardMeshes, 0);
+});

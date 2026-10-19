@@ -18,6 +18,30 @@ registerHooks({ resolve: (spec, ctx, next) => next(spec, spec === 'rot-js' ? { .
 const VIEWER = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'viewer');
 // the world is an open pop-up book: two pages, x -9..9 (spine at x = 0), z -6.5..6.5, ground y = 0 (= BOOK in place.mjs)
 const PAGE_X = 9, PAGE_Z = 6.5;
+// the share of a geometry's triangle area that faces inward (its normal against the direction from its centre); a
+// flat geometry (thinnest side under 5% of the longest) counts as 0, and triangles nearly side-on are not counted
+function inwardShare(geo) {
+  const pos = geo.attributes?.position, idx = geo.index;
+  if (!pos) return 0;
+  geo.computeBoundingBox();
+  const size = geo.boundingBox.getSize(new THREE.Vector3()), dims = [size.x, size.y, size.z].sort((p, q) => p - q);
+  if (dims[0] < 0.05 * dims[2]) return 0;
+  const c = geo.boundingBox.getCenter(new THREE.Vector3()), a = new THREE.Vector3(), b = new THREE.Vector3(), d = new THREE.Vector3(), n = new THREE.Vector3(), m = new THREE.Vector3();
+  const tris = idx ? idx.count / 3 : pos.count / 3;
+  let inward = 0, counted = 0;
+  for (let t = 0; t < tris; t++) {
+    const [i, j, k] = idx ? [idx.getX(3 * t), idx.getX(3 * t + 1), idx.getX(3 * t + 2)] : [3 * t, 3 * t + 1, 3 * t + 2];
+    a.fromBufferAttribute(pos, i); b.fromBufferAttribute(pos, j); d.fromBufferAttribute(pos, k);
+    n.subVectors(b, a).cross(m.subVectors(d, a));
+    const area = n.length();
+    m.copy(a).add(b).add(d).divideScalar(3).sub(c);
+    if (!area || !m.lengthSq()) continue;
+    const cos = n.dot(m) / (area * m.length());
+    if (Math.abs(cos) < 0.2) continue;                     // side-on to the centre: says nothing
+    counted += area; if (cos < 0) inward += area;
+  }
+  return counted ? inward / counted : 0;
+}
 
 // The book's real sim moves one actor a while and plays every animation state on it. Returns what it
 // throws ({ error }), if anything: in the book, one rig that throws there stops every figure after it.
@@ -231,6 +255,13 @@ async function buildCheck(file, takenIds) {
     }
     // light (the engine's light contract): one object or a list of { kind, object3D, color, intensity, range, flicker }
     const lights = r.light == null ? [] : [].concat(r.light);
+    // a hand-built shape (a raw BufferGeometry: a lofted hill, a ridge) whose faces wind inward renders black from
+    // outside (10-19: 2 of 6 hills, orange material, came out black). Flat meshes have no inside and are left out
+    {
+      let inwardMeshes = 0;
+      ctx.world.traverse(o => { if (o.isMesh && o.geometry?.type === 'BufferGeometry' && inwardShare(o.geometry) > 0.6) inwardMeshes++; });
+      info.inwardMeshes = inwardMeshes;                    // advisory: generate asks once for a fix (finish)
+    }
     info.lights = lights.map(l => ({ kind: l?.kind, glows: !!l?.object3D?.isObject3D }));   // a luminous drawing must have one
     // could a figure pick it up? the viewer decides by the same rule (portable.js); the quest writer asks for 'bring'
     {
