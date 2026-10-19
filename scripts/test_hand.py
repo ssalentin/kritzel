@@ -274,7 +274,7 @@ class Hand(unittest.TestCase):
         for w, h, open_shot, pinch_shot in ((1440, 900, SHOT_GLOVE, SHOT_PINCH), (390, 844, SHOT_GLOVE_PHONE, SHOT_PINCH_PHONE)):
             self.page.set_viewport_size({"width": w, "height": h})
             time.sleep(0.3)
-            self.page.mouse.move(w * 0.42, h * 0.5)
+            self.page.mouse.move(w * 0.3, h * 0.55)
             time.sleep(0.5)
             self.page.evaluate("() => { for (let i = 0; i < 4; i++) __handRig.update(0.08, i * 0.08, { moving: true }); window.__render(); }")
             state = self.page.evaluate("() => ({ ...__handState(), cursor: getComputedStyle(document.querySelector('canvas')).cursor })")
@@ -293,6 +293,7 @@ class Hand(unittest.TestCase):
             for i in range(1, 7):
                 self.page.mouse.move(p["x"] + 6 * i, p["y"] - 3 * i)
                 self.page.wait_for_timeout(40)
+            self.step()                                   # the carried figure's rig follows the pinch point
             self.page.evaluate("() => { for (let i = 0; i < 8; i++) __handRig.update(0.08, 1 + i * 0.08, { carrying: true, pressing: true, moving: true }); window.__render(); }")
             pinch = self.page.evaluate("() => __handState()")
             self.assertEqual(pinch["carry"]["who"], "mira", pinch)
@@ -304,6 +305,7 @@ class Hand(unittest.TestCase):
                 print("(pinch screenshot skipped: software renderer too slow)")
             self.page.mouse.up()
             time.sleep(0.3)
+            self.step()
             self.page.evaluate("() => { for (let i = 0; i < 8; i++) __handRig.update(0.08, 2 + i * 0.08, { moving: true }); window.__render(); }")
             opened = self.page.evaluate("() => __handState()")
             self.assertLess(opened["pinch"], 0.2, opened)

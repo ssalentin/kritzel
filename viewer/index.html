@@ -796,11 +796,11 @@ function pickAt(e) {
   const hit = ray.intersectObjects(world.children, true)[0]?.object;
   return { who: (hit && actorsNow().find(a => isUnder(hit, a.rig.g))) || null, file: hit ? current?.fileOf?.(hit) : null };
 }
-// the fingertip is the rig's origin: put it on the page point and turn the hand toward the camera
+// the fingertip is the sprite anchor: put it on the page point (the sprites always face the camera)
 function showHand(p) {
   hand.visible = !!p;
   if (p) {
-    hand.position.set(p.x, p.y + 0.02, p.z);
+    hand.position.set(p.x, p.y + (handCarry ? 0.85 : 0.02), p.z);   // while carrying, pinch at the figure's body
   }
 }
 let handMovedAt = 0;
@@ -1013,7 +1013,6 @@ function animate() {
   stepFolds(performance.now());        // a removed thing folds away on its own, with or without a page turn
   stepMorph();
   layoutBubbles(dt);
-  if (hand.visible) hand.quaternion.copy(camera.quaternion);   // the glove faces the viewer
   handRig.update(dt, clock.elapsedTime, { carrying: !!handCarry, pressing: !!handGrab && !handCarry,
     moving: performance.now() - handMovedAt < 250 });
   lighting.update(clock.elapsedTime, dt);
