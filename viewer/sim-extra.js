@@ -168,8 +168,10 @@ export function options(a, add, { spots, cover, spotCell, things, nearest, actor
   }
   if (p && actors) {
     // a liked figure: a follower walks after it for a while
-    const liked = actors().find(b => b !== a && !b.hidden && p.likes.some(l => l === b.name || l === b.id));
-    if (liked && p.hobby === 'follow') add(0.7, { type: 'follow', target: liked, why: 'liked' });
+    // only one that is not already close: a follow ends next to its target, and the same pick would repeat at once
+    const liked = actors().find(b => b !== a && !b.hidden && Math.hypot(b.pos.x - a.pos.x, b.pos.z - a.pos.z) > 2.5 && p.likes.some(l => l === b.name || l === b.id));
+    // (GitHub #29) a liked figure beats an ordinary approach or door: it was never picked at 0.7
+    if (liked) add(p.hobby === 'follow' ? 1.6 : 0.9, { type: 'follow', target: liked, why: 'liked' });
   }
 }
 
