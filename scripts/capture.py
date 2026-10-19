@@ -68,6 +68,8 @@ HOLD_RECHECKS = (0.3, 0.6, 1.2, 2.5)   # a held frame: quick at first for the tr
 SHRINK = f"format=gray,scale=960:540:flags=area,erosion,erosion,scale={W}:{H}:flags=area"   # keeps thin lines
 CW, CH = 96, 54          # colour thumbnail: the sheet and a hand, not the drawing's lines
 PAPER_BLOCK = 4          # the hand check works on blocks this many colour-thumbnail px square
+FLAT, COLOUR_DIFF = 7, 26   # a flat paper block, and how close neighbouring blocks are the same sheet
+SHEET_CONFIDENT = 0.20  # a flat sheet field this large is trustworthy for restart-noise checks
 PAPER_SHARE = 0.05       # this much of the picture being paper-bright is paper (busy drawings count too)
 PAPER_BRIGHT = 155       # ...or a smaller paper-bright field (printed picture, partial sheet)
 PAPER_PLAIN = 0.35       # a big paper field this large stands on its own
@@ -135,6 +137,26 @@ def blocks(rgb):
             n = PAPER_BLOCK * PAPER_BLOCK
             means.append([s / n for s in sums])
     return bw, bh, means
+
+
+def flat_blocks(rgb):
+    """(width, height, mean colour, flat flag) blocks, for finding the sheet against the table."""
+    bw, bh = CW // PAPER_BLOCK, CH // PAPER_BLOCK
+    means, flat = [], []
+    for by in range(bh):
+        for bx in range(bw):
+            sums, squares = [0, 0, 0], [0, 0, 0]
+            for y in range(by * PAPER_BLOCK, (by + 1) * PAPER_BLOCK):
+                for x in range(bx * PAPER_BLOCK, (bx + 1) * PAPER_BLOCK):
+                    i = (y * CW + x) * 3
+                    for c in range(3):
+                        sums[c] += rgb[i + c]
+                        squares[c] += rgb[i + c] * rgb[i + c]
+            n = PAPER_BLOCK * PAPER_BLOCK
+            mean = [s / n for s in sums]
+            means.append(mean)
+            flat.append(max(math.sqrt(max(0, squares[c] / n - mean[c] * mean[c])) for c in range(3)) <= FLAT)
+    return bw, bh, means, flat
 
 
 def neighbours(i, w, h):
@@ -285,6 +307,58 @@ def filled(mask, w, h):
         if not mask[i] and i not in seen:
             out[i] = True
     return out
+
+
+def sheet_region(rgb):
+    """The flat sheet field against the table, or None when it is not clear enough to judge noise."""
+    if not rgb:
+        return None
+    bw, bh, means, flat = flat_blocks(rgb)
+    n = bw * bh
+    seen, parts = set(), []
+    for i in range(n):
+        if not flat[i] or i in seen:
+            continue
+        seen.add(i)
+        todo, part = [i], []
+        while todo:
+            j = todo.pop()
+            part.append(j)
+            for k in neighbours(j, bw, bh):
+                if flat[k] and k not in seen and all(abs(means[j][c] - means[k][c]) <= COLOUR_DIFF for c in range(3)):
+                    seen.add(k)
+                    todo.append(k)
+        parts.append(part)
+    for part in sorted(parts, key=len, reverse=True):
+        if len(part) < SHEET_CONFIDENT * n:
+            continue
+        xs, ys = [i % bw for i in part], [i // bw for i in part]
+        if (max(xs) - min(xs) + 1) < 0.25 * bw or (max(ys) - min(ys) + 1) < 0.25 * bh:
+            continue
+        if len(part) < 0.25 * (max(xs) - min(xs) + 1) * (max(ys) - min(ys) + 1):
+            continue
+        colour = [statistics.median(means[i][c] for i in part) for c in range(3)]
+        if wood(colour):
+            continue
+        mask = [False] * n
+        for i in part:
+            mask[i] = True
+        return filled(mask, bw, bh), bw, bh
+    return None
+
+
+def restart_noise(diff, rgb):
+    """A restart change almost entirely outside the sheet: cable, table or tile grout, not ink."""
+    region = sheet_region(rgb)
+    if not region or not diff:
+        return False
+    blocksheet, bw, bh = region
+    inside = 0
+    for i in diff:
+        x, y = (i % W) * CW // W // PAPER_BLOCK, (i // W) * CH // H // PAPER_BLOCK
+        if x < bw and y * bw + x < len(blocksheet) and blocksheet[y * bw + x]:
+            inside += 1
+    return inside < NEW_PX
 
 
 def hand(rgb, sheet, base=None):
@@ -1078,6 +1152,7 @@ def main():
     previous = done[-1].name if done else None
     det = Detector(small(done[-1].read_bytes()) if done else None)
     base_rgb = colour(done[-1].read_bytes()) if done else None
+    restart_base = bool(done)            # this base came from disk, not from the running preview
     status, stream, url, seq, checked, cam, early = Status(), None, None, 0, 0, None, None
     held, held_spell, recheck, recheck_at, recheck_step = None, 0, None, 0.0, 0
     while True:
@@ -1086,6 +1161,7 @@ def main():
             if cam is None or cam[0] != url:
                 if url is not None:
                     base_rgb = None              # another camera's picture is no base for this one
+                    restart_base = False
                 if stream:
                     stream.stop()
                 stream, url, seq, det.anchor = None, cam and cam[0], 0, None
@@ -1132,6 +1208,7 @@ def main():
                     det.hold()
                     held, held_spell = found, det.spell
                     recheck_at, recheck_step = time.monotonic(), 0
+                    restart_base = False
                 elif early.spell == det.spell:
                     held = None               # this settled picture has paper and no hand
             if early.spell != det.spell:
@@ -1185,10 +1262,18 @@ def main():
             det.hold()
             shot.checked, held, held_spell = True, found, det.spell
             recheck_at, recheck_step = time.monotonic(), 0
+            restart_base = False
             early = shot
             held_status(status, held)
             continue
+        if restart_base and got[0] == "drawn" and restart_noise(got[1], rgb):
+            print("restart change is outside the sheet; keeping it as the silent baseline", file=sys.stderr, flush=True)
+            restart_base = False
+            base_rgb = rgb                # the detector already adopted this picture; keep it
+            early, held = None, None
+            continue
         previous = hand_on(data, size, *got, cam[1], previous, det.measured if previous else None)
+        restart_base = False
         base_rgb = rgb
         meta = json.loads((OUT / previous.replace(".jpg", ".json")).read_text())
         try:
