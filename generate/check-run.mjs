@@ -260,7 +260,7 @@ async function buildCheck(file, takenIds) {
     {
       let inwardMeshes = 0;
       ctx.world.traverse(o => { if (o.isMesh && o.geometry?.type === 'BufferGeometry' && inwardShare(o.geometry) > 0.6) inwardMeshes++; });
-      if (inwardMeshes) problems.push(`${inwardMeshes} hand-built shape${inwardMeshes > 1 ? 's' : ''} with its faces pointing inward (it renders black from outside): wind each triangle the other way (a, c, b instead of a, b, c), or build it with ExtrudeGeometry or LatheGeometry`);
+      info.inwardMeshes = inwardMeshes;                    // advisory: generate asks once for a fix (finish)
     }
     info.lights = lights.map(l => ({ kind: l?.kind, glows: !!l?.object3D?.isObject3D }));   // a luminous drawing must have one
     // could a figure pick it up? the viewer decides by the same rule (portable.js); the quest writer asks for 'bring'

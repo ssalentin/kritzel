@@ -73,3 +73,26 @@ export function build(ctx) {
     assert.match(fixes[0].fixing.join(' '), /spheres and boxes/);
   } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a hill wound inward gets one fix call, then is taken as it is (never lost over shading)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kritzel-inward-'));
+  try {
+    for (const d of ['things', 'reports']) mkdirSync(join(dir, d));
+    const frame = join(dir, '20261017-120003.jpg');
+    execFileSync('convert', ['-size', '640x480', 'xc:white', frame]);
+    const hill = `export const meta = { name: 'Hügel', drawing: 'a hill', paper: { x: 0.5, y: 0.5 } };
+export function build(ctx) {
+  const { THREE, world, mat } = ctx;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute([-1, 0, -1, 1, 0, -1, 0, 0, 1, 0, 1.2, 0], 3));
+  geo.setIndex([0, 2, 1, 0, 1, 3, 1, 2, 3, 2, 0, 3]); geo.computeVertexNormals();
+  const g = new THREE.Group(); g.add(new THREE.Mesh(geo, mat(0xe8a46a))); world.add(g);
+  return { actors: [], obstacles: [{ x: 0, z: 0, r: 1 }] };
+}`;
+    writeFileSync(join(dir, 'reply.txt'), `### NEW\n${hill}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const r = await processFrame(frame, { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports'), box: [100, 100, 200, 200] });
+    assert.equal(r.written[0]?.name, 'Hügel', JSON.stringify(r.rejected));
+    assert.deepEqual(r.calls.filter(c => c.fix).map(c => /faces pointing inward/.test(c.fixing.join(' '))), [true]);
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});

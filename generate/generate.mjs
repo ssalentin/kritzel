@@ -177,6 +177,8 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
       // caterpillar of balls), so after a fix whatever passes the other checks is taken. Not for a draft (speed)
       // the glow is a look, not correctness: asked for once, then taken (a candle must not vanish over a missing glow)
       if (!problems.length && !fixModel) problems.push(...unlit(code, info));
+      // a hand-built shape wound inward renders black: asked once to rewind, then taken (a hill must not vanish over shading)
+      if (!problems.length && !fixModel && info.inwardMeshes) problems.push(`${info.inwardMeshes} hand-built shape${info.inwardMeshes > 1 ? 's' : ''} with its faces pointing inward (it renders black from outside): wind each triangle the other way (a, c, b instead of a, b, c), or build it with ExtrudeGeometry or LatheGeometry`);
       if (!problems.length && !fixModel) problems.push(...plainWater(code, info));
       if (!problems.length && !fixModel && (!DRAFT_MODEL || model === MODEL)) problems.push(...blobs(code, info));
       if (!problems.length && extra) problems.push(...extra(info));
