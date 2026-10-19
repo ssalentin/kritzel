@@ -209,7 +209,9 @@ export function withSaid(code, says) {
   if (!says?.en) return code;
   const mark = says.kind === 'thought' ? '💭 ' : '';
   const lit = `said: ${JSON.stringify({ de: mark + says.text, en: mark + says.en })}`;
-  const li = code.search(/\blines:\s*\{/);
+  const ai = code.search(/\bactors:\s*\[/);              // its own lines, not a spot's before it
+  if (ai < 0) return code;
+  const at = code.slice(ai).search(/\blines:\s*\{/), li = at < 0 ? -1 : ai + at;
   if (li < 0) return code.replace(/\bactors:\s*\[\s*\{/, m => `${m} lines: { ${lit} },`);
   const open = code.indexOf('{', li);
   let end = -1;
