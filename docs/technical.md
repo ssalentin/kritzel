@@ -347,6 +347,12 @@ The thing is written as `viewer/things/<slug>.js` with `meta.paper { x: 0.5, y: 
 on the page spreads it to a free spot like any new thing. A failed request always leaves a report
 and sets the generate status line to `failed`; the same id is never built twice.
 
+With `"mode": "change"` and a `target` (a bare filename in `viewer/things/`, e.g. `hexe.js`), the
+request rewrites that module in place: the model gets the correction and the current module, the
+checks keep its name, actor ids, starts and `meta.paper`, and a failed rewrite leaves the old file
+untouched and the failure in the report. Requests run in their own loop, so a typed wish does not
+wait behind a sheet that is being built.
+
 ## Repository layout
 
 ```

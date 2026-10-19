@@ -2,13 +2,39 @@
 // without building the same id twice (fake claude, test-bin/).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync } from 'node:fs';
+import { spawn, execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, copyFileSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 process.env.PATH = join(import.meta.dirname, 'test-bin') + ':' + process.env.PATH;
+process.env.KRITZEL_PROVIDER = 'claude';
+process.env.KRITZEL_TEXT_MODEL = 'claude-haiku-5-5';
 delete process.env.KRITZEL_MODEL; delete process.env.KRITZEL_DRAFT_MODEL;
 const { processTextRequest } = await import('./generate.mjs');
+const { takeRequests } = await import('./generate.mjs');
+const { withThingWrite } = await import('./generate.mjs');
+const { reportsToReplay } = await import('./generate.mjs');
+const { CHANGE_SYSTEM } = await import('./prompts.mjs');
+const snail = readFileSync(join(import.meta.dirname, 'examples', 'schnecke.js'), 'utf8');
+const flyer = `// parts: body = a witch
+// parts: broom = a separate group
+export const meta = { name: 'Hexe', drawing: 'a witch on a broom', paper: { x: 0.5, y: 0.5 } };
+export function build(ctx) {
+  const { THREE, world, mat, bubble, shadowAll } = ctx;
+  const g = new THREE.Group(), broom = new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.3, 1, 8), mat(0x6b4aa8)));
+  broom.add(new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2, 8), mat(0x9a6a3c)));
+  g.position.y = 1.2;
+  shadowAll(g); shadowAll(broom); world.add(g); world.add(broom);
+  const b = bubble(g, 2);
+  function animate() {}
+  function update() { broom.position.copy(g.position); }
+  update();
+  return { actors: [{ id: 'hexe', name: 'Hexe', start: [0, 0], speed: 1, move: 'fly',
+    rig: { kind: 'hexe', g, say: t => b.say(t), animate },
+    lines: { greet: { de: ['Hi'], en: ['Hi'] }, chat: { de: ['Ja'], en: ['Yes'] }, reply: { de: ['Ja'], en: ['Yes'] } } }],
+    obstacles: [], spots: [], update };
+}`;
 const lantern = `// parts: body = a short round base
 // parts: glass = a tall glass box above it
 // parts: roof = a small pointed lid
@@ -57,6 +83,7 @@ test('a typed request becomes things/laterne.js, with a report of the call and t
     assert.equal(saved.request.lang, 'de');
     assert.equal(saved.written[0].file, 'laterne.js');
     assert.equal(saved.calls.length, 1);
+    assert.equal(saved.calls[0].model, 'claude-haiku-5-5');           // TEXT_MODEL, not the frame MODEL
     assert.equal(typeof saved.calls[0].seconds, 'number');
     assert.equal(saved.error, undefined);
     assert.equal(saved.finished !== undefined, true);
@@ -103,6 +130,331 @@ test('a frame report with the same timestamp does not swallow a text request', a
   } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('a correction rewrites the same module in place and keeps name, id, start and paper', async () => {
+  const dir = dirs();
+  try {
+    const target = join(dir, 'things', 'schnecke.js');
+    writeFileSync(target, snail);
+    const fixed = snail.replace("start: [-2, 1], speed: 0.45,", "start: [-2, 1], speed: 0.45, move: 'fly',");
+    writeFileSync(join(dir, 'reply.txt'), `### UPDATE schnecke.js\n${fixed}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const r = await processTextRequest(request(dir, 'text-20261019-184016', 'it flies', { mode: 'change', target: 'schnecke.js' }),
+      { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    assert.equal(r.error, undefined, r.error);
+    assert.deepEqual(r.written.map(w => [w.kind, w.file]), [['UPDATE', 'schnecke.js']]);
+    const code = readFileSync(target, 'utf8');
+    assert.match(code, /move: 'fly'/);
+    assert.match(code, /name: 'Schnecke'/);
+    assert.match(code, /id: 'schnecke'/);
+    assert.match(code, /start: \[-2, 1\]/);
+    assert.match(code, /paper: \{ x: 0\.3, y: 0\.6 \}/);
+    const saved = JSON.parse(readFileSync(join(dir, 'reports', 'text-20261019-184016.json'), 'utf8'));
+    assert.deepEqual([saved.request.mode, saved.request.target], ['change', 'schnecke.js']);
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a correction that breaks the thing leaves the old module untouched', async () => {
+  const dir = dirs();
+  try {
+    const target = join(dir, 'things', 'schnecke.js');
+    writeFileSync(target, snail);
+    writeFileSync(join(dir, 'reply.txt'), `### UPDATE schnecke.js\n${snail.replace("start: [-2, 1], speed: 0.45,", "start: [3, 3], speed: 0.45, move: 'fly',")}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const r = await processTextRequest(request(dir, 'text-20261019-184017', 'it flies', { mode: 'change', target: 'schnecke.js' }),
+      { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    assert.match(r.error, /rejected after checks/);
+    assert.equal(readFileSync(target, 'utf8'), snail);
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a correction of an unknown target fails without calling the model', async () => {
+  const dir = dirs();
+  const log = join(dir, 'prompts.jsonl');
+  try {
+    process.env.FAKE_CLAUDE_LOG = log;
+    const r = await processTextRequest(request(dir, 'text-20261019-184018', 'it flies', { mode: 'change', target: 'nope.js' }),
+      { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    assert.match(r.error, /no such thing to change/);
+    assert.equal(existsSync(log), false);
+  } finally { delete process.env.FAKE_CLAUDE_LOG; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a flying support left outside the rig is sent back once for a fix', async () => {
+  const dir = dirs();
+  try {
+    writeFileSync(join(dir, 'things', 'hexe.js'), flyer);
+    writeFileSync(join(dir, 'reply.txt'), `### UPDATE hexe.js\n${flyer}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const r = await processTextRequest(request(dir, 'text-20261019-184019', 'sit on the broom', { mode: 'change', target: 'hexe.js' }),
+      { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    assert.match(r.error, /separate world group/);
+    const fix = r.calls.find(c => c.fix);
+    assert.ok(fix, JSON.stringify(r.calls));
+    assert.match(fix.fixing.join(' '), /separate world group/);
+    assert.equal(readFileSync(join(dir, 'things', 'hexe.js'), 'utf8'), flyer);   // the failed fix leaves the old module
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a flying support put inside the rig passes without a fix', async () => {
+  const dir = dirs();
+  try {
+    writeFileSync(join(dir, 'things', 'hexe.js'), flyer);
+    const fixed = flyer.replace('shadowAll(g); shadowAll(broom); world.add(g); world.add(broom);', 'g.add(broom); shadowAll(g); world.add(g);')
+      .replace('function update() { broom.position.copy(g.position); }', 'function update() {}');
+    writeFileSync(join(dir, 'reply.txt'), `### UPDATE hexe.js\n${fixed}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const r = await processTextRequest(request(dir, 'text-20261019-184020', 'sit on the broom', { mode: 'change', target: 'hexe.js' }),
+      { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    assert.equal(r.error, undefined, r.error);
+    assert.equal(r.calls.some(c => c.fix), false, JSON.stringify(r.calls));
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the correction prompt keeps the child-safety refusal', () => {
+  assert.match(CHANGE_SYSTEM, /weapons, violence, scary or adult/);
+  assert.match(CHANGE_SYSTEM, /UNCLEAR/);
+});
+
+test('the change path rejects UNCLEAR, REMOVE, empty and several sections with the reason', async () => {
+  const replies = {
+    unclear: 'UNCLEAR: a sword | not for the book',
+    remove: '### REMOVE hexe.js\nit was crossed out',
+    empty: '',
+    several: `### UPDATE hexe.js\n${flyer}\n### UPDATE other.js\n${flyer}`,
+  };
+  for (const [name, reply] of Object.entries(replies)) {
+    const dir = dirs();
+    try {
+      writeFileSync(join(dir, 'things', 'hexe.js'), flyer);
+      writeFileSync(join(dir, 'reply.txt'), reply);
+      process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+      const r = await processTextRequest(request(dir, `text-20261019-18403${name.length}`, 'fix it', { mode: 'change', target: 'hexe.js' }),
+        { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+      assert.ok(r.error, name);
+      assert.match(r.error, name === 'unclear' ? /cannot change this/ : name === 'remove' ? /must not remove/ : name === 'several' ? /changed 2 things/ : /no corrected module/, name);
+      assert.equal(readFileSync(join(dir, 'things', 'hexe.js'), 'utf8'), flyer);
+    } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+  }
+});
+
+test('a computed meta name and a non-actor id do not break a correction', async () => {
+  const dir = dirs();
+  try {
+    const computed = `const NAME = 'Hexe';
+const extra = { id: 'not-an-actor' };
+export const meta = { name: NAME, drawing: 'a witch', paper: { x: 0.4, y: 0.5 } };
+export function build(ctx) {
+  const { THREE, world, mat } = ctx;
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.3, 1, 8), mat(0x6b4aa8)));
+  world.add(g);
+  return { actors: [{ id: 'hexe', name: NAME, start: [0, 0], rig: { kind: 'hexe', g, say() {}, animate() {} },
+    lines: { greet: { de: ['Hi'], en: ['Hi'] }, chat: { de: ['Ja'], en: ['Yes'] }, reply: { de: ['Ja'], en: ['Yes'] } } }],
+    obstacles: [], spots: [] };
+}`;
+    writeFileSync(join(dir, 'things', 'hexe.js'), computed);
+    const fixed = computed.replace("const extra = { id: 'not-an-actor' };", "const extra = { id: 'not-an-actor', fixed: true };")
+      .replace("g.add(new THREE.Mesh", "g.add(new THREE.Mesh").replace('world.add(g);', 'world.add(g);');
+    writeFileSync(join(dir, 'reply.txt'), `### UPDATE hexe.js\n${fixed}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const r = await processTextRequest(request(dir, 'text-20261019-184040', 'fix it', { mode: 'change', target: 'hexe.js' }),
+      { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    assert.equal(r.error, undefined, r.error);
+    assert.match(readFileSync(join(dir, 'things', 'hexe.js'), 'utf8'), /fixed: true/);
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a correction keeps start and paper by value, even computed or reordered', async () => {
+  const positioned = `const START = [1.5, -2];
+const PAPER = { y: 0.6, x: 0.3 };
+// start: [0, 0] paper: { x: 0.9, y: 0.9 }
+export const meta = { drawing: 'a snail', name: 'Schnecke', paper: PAPER };
+export function build(ctx) {
+  const { THREE, world, mat } = ctx;
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.SphereGeometry(0.4, 12, 8), mat(0xd9b06a)));
+  world.add(g);
+  return { actors: [{ id: 'schnecke', name: 'Schnecke', start: START, rig: { kind: 'schnecke', g, say() {}, animate() {} },
+    lines: { greet: { de: ['Hi'], en: ['Hi'] }, chat: { de: ['Ja'], en: ['Yes'] }, reply: { de: ['Ja'], en: ['Yes'] } } }],
+    obstacles: [], spots: [] };
+}`;
+  const cases = [
+    ['start', 'const START = [3, 3];', /keep actor schnecke's start position \[1\.5, -2\]/],
+    ['paper', 'const PAPER = { y: 0.6, x: 0.4 };', /keep its meta\.paper 0\.3, 0\.6/],
+  ];
+  for (const [name, change, problem] of cases) {
+    const dir = dirs();
+    try {
+      writeFileSync(join(dir, 'things', 'schnecke.js'), positioned);
+      writeFileSync(join(dir, 'reply.txt'), `### UPDATE schnecke.js\n${positioned.replace(name === 'start' ? 'const START = [1.5, -2];' : 'const PAPER = { y: 0.6, x: 0.3 };', change)}`);
+      process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+      const r = await processTextRequest(request(dir, `text-20261019-18405${name.length}`, 'make it bigger', { mode: 'change', target: 'schnecke.js' }),
+        { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+      assert.match(r.error, problem, name);
+      assert.equal(readFileSync(join(dir, 'things', 'schnecke.js'), 'utf8'), positioned);
+    } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+  }
+  // the same values, written another way (reordered paper keys, computed start), are the same place
+  const dir = dirs();
+  try {
+    writeFileSync(join(dir, 'things', 'schnecke.js'), positioned);
+    const same = positioned.replace('const PAPER = { y: 0.6, x: 0.3 };', 'const PAPER = { x: 0.3, y: 0.6 };')
+      .replace('// start: [0, 0] paper: { x: 0.9, y: 0.9 }', '// a correction that only changes the colour');
+    writeFileSync(join(dir, 'reply.txt'), `### UPDATE schnecke.js\n${same}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const r = await processTextRequest(request(dir, 'text-20261019-184059', 'make its shell red', { mode: 'change', target: 'schnecke.js' }),
+      { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    assert.equal(r.error, undefined, r.error);
+    assert.match(readFileSync(join(dir, 'things', 'schnecke.js'), 'utf8'), /only changes the colour/);
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a computed meta name in the book still makes a new name unique', async () => {
+  const dir = dirs();
+  try {
+    writeFileSync(join(dir, 'things', 'laterne.js'), `const NAME = 'Laterne';
+export const meta = { name: NAME, drawing: 'a lantern', paper: { x: 0.5, y: 0.5 } };
+export function build(ctx) {
+  const { THREE, world, mat } = ctx;
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.8, 8), mat(0xffcc88)));
+  world.add(g);
+  return { actors: [], obstacles: [], spots: [] };
+}`);
+    writeFileSync(join(dir, 'reply.txt'), `### NEW\n${lantern}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const r = await processTextRequest(request(dir, 'text-20261019-184060', 'eine Laterne'), { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    assert.equal(r.error, undefined, r.error);
+    assert.deepEqual(r.written.map(w => w.file), ['laterne-2.js']);
+    assert.match(readFileSync(join(dir, 'things', 'laterne-2.js'), 'utf8'), /name: 'Laterne 2'/);
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a correction whose target changed meanwhile is built again against the new module', async () => {
+  const dir = dirs();
+  const log = join(dir, 'prompts.jsonl');
+  try {
+    const target = join(dir, 'things', 'schnecke.js');
+    writeFileSync(target, snail);
+    const v2 = snail.replace('speed: 0.45,', 'speed: 0.6,') + '\n// v2 from the frame\n';
+    const corrected = v2.replace('speed: 0.6,', "speed: 0.6, move: 'fly',");
+    writeFileSync(join(dir, 'reply.txt'), `### UPDATE schnecke.js\n${corrected}`);
+    Object.assign(process.env, { FAKE_CLAUDE_REPLY: join(dir, 'reply.txt'), FAKE_CLAUDE_LOG: log,
+      FAKE_CLAUDE_SLOW_TEXT: 'The child wants to correct an existing thing', FAKE_CLAUDE_SLOW_MS: '400' });
+    const done = processTextRequest(request(dir, 'text-20261019-184061', 'it flies', { mode: 'change', target: 'schnecke.js' }),
+      { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    for (let i = 0; i < 100 && !existsSync(log); i++) await new Promise(ok => setTimeout(ok, 20));
+    assert.ok(existsSync(log), 'the correction never called the model');
+    writeFileSync(target, v2);                       // the frame wrote the newer drawing while the model ran
+    const r = await done;
+    assert.equal(r.error, undefined, r.error);
+    assert.equal(r.calls.length, 2, JSON.stringify(r.calls));
+    const code = readFileSync(target, 'utf8');
+    assert.match(code, /\/\/ v2 from the frame/);
+    assert.match(code, /move: 'fly'/);
+  } finally {
+    for (const k of ['FAKE_CLAUDE_REPLY', 'FAKE_CLAUDE_LOG', 'FAKE_CLAUDE_SLOW_TEXT', 'FAKE_CLAUDE_SLOW_MS']) delete process.env[k];
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a correction of a thing the archive removed fails with a clear reason', async () => {
+  const dir = dirs();
+  const log = join(dir, 'prompts.jsonl');
+  try {
+    const target = join(dir, 'things', 'schnecke.js');
+    writeFileSync(target, snail);
+    writeFileSync(join(dir, 'reply.txt'), `### UPDATE schnecke.js\n${snail.replace('speed: 0.45,', "speed: 0.45, move: 'fly',")}`);
+    Object.assign(process.env, { FAKE_CLAUDE_REPLY: join(dir, 'reply.txt'), FAKE_CLAUDE_LOG: log,
+      FAKE_CLAUDE_SLOW_TEXT: 'The child wants to correct an existing thing', FAKE_CLAUDE_SLOW_MS: '300' });
+    const done = processTextRequest(request(dir, 'text-20261019-184062', 'it flies', { mode: 'change', target: 'schnecke.js' }),
+      { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    for (let i = 0; i < 100 && !existsSync(log); i++) await new Promise(ok => setTimeout(ok, 20));
+    assert.ok(existsSync(log), 'the correction never called the model');
+    rmSync(target);                                   // the new sheet archived the old world meanwhile
+    const r = await done;
+    assert.match(r.error, /archived or removed while it was being corrected/);
+    assert.equal(r.written.length, 0);
+  } finally {
+    for (const k of ['FAKE_CLAUDE_REPLY', 'FAKE_CLAUDE_LOG', 'FAKE_CLAUDE_SLOW_TEXT', 'FAKE_CLAUDE_SLOW_MS']) delete process.env[k];
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('thing writes are serialized, and concurrent new requests get distinct files', async () => {
+  const order = [];
+  await Promise.all([
+    withThingWrite(async () => { order.push('a-start'); await new Promise(ok => setTimeout(ok, 40)); order.push('a-end'); }),
+    withThingWrite(async () => { order.push('b-start'); order.push('b-end'); }),
+  ]);
+  assert.deepEqual(order, ['a-start', 'a-end', 'b-start', 'b-end']);
+  const dir = dirs();
+  try {
+    writeFileSync(join(dir, 'reply.txt'), `### NEW\n${lantern}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const a = processTextRequest(request(dir, 'text-20261019-184041', 'eine Laterne'), { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    const b = processTextRequest(request(dir, 'text-20261019-184042', 'eine Laterne'), { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    await Promise.all([a, b]);
+    assert.deepEqual(readdirSync(join(dir, 'things')).filter(f => f.endsWith('.js')).sort(), ['laterne-2.js', 'laterne.js']);
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('an archive carries only text requests that landed after the switch began; a change stays archived', () => {
+  const dir = dirs();
+  try {
+    const old = join(dir, 'reports', 'text-20261019-100000.json');
+    const fresh = join(dir, 'reports', 'text-20261019-190000.json');
+    const change = join(dir, 'reports', 'text-20261019-190001.json');
+    writeFileSync(old, JSON.stringify({ request: { mode: 'new' } }));
+    writeFileSync(fresh, JSON.stringify({ request: { mode: 'new' } }));
+    writeFileSync(change, JSON.stringify({ request: { mode: 'change', target: 'hexe.js' } }));
+    const now = Date.now() / 1000;
+    utimesSync(old, now - 3600, now - 3600);
+    utimesSync(fresh, now, now);
+    utimesSync(change, now, now);
+    assert.deepEqual(reportsToReplay(join(dir, 'reports'), (now - 60) * 1000), ['text-20261019-190000']);
+    // a request that settled just before the sheet switch began belongs to the old world
+    utimesSync(fresh, now - 61, now - 61);
+    assert.deepEqual(reportsToReplay(join(dir, 'reports'), (now - 60) * 1000), []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a text thing that lands during a switch is rebuilt in the new world, and only once', async () => {
+  const dir = dirs();
+  try {
+    writeFileSync(join(dir, 'reply.txt'), `### NEW\n${lantern}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const id = 'text-20261019-190002';
+    const frameStartedMs = Date.now();
+    const first = await processTextRequest(request(dir, id), { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    assert.equal(first.error, undefined, first.error);
+    assert.ok(existsSync(join(dir, 'things', 'laterne.js')));
+    // the watcher's archive step: newworld.sh empties things/, then the reports that landed while the
+    // sheet was arriving are dropped; both happen under the one write lock
+    const replay = await withThingWrite(async () => {
+      rmSync(join(dir, 'things', 'laterne.js'));
+      const ids = reportsToReplay(join(dir, 'reports'), frameStartedMs);
+      for (const x of ids) rmSync(join(dir, 'reports', x + '.json'));
+      return ids;
+    });
+    assert.deepEqual(replay, [id]);
+    // the request worker rebuilds it into the new world
+    const taken = new Set([id]);
+    for (const x of replay) taken.delete(x);
+    const done = await takeRequests(join(dir, 'requests'), { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports'), taken });
+    assert.equal(done.length, 1);
+    assert.equal(done[0].error, undefined, done[0].error);
+    assert.deepEqual(done[0].written.map(w => w.file), ['laterne.js']);
+    assert.ok(existsSync(join(dir, 'things', 'laterne.js')));
+    assert.ok(existsSync(join(dir, 'reports', id + '.json')));
+    // it is not carried into every later world: a new archive does not replay the rebuilt report
+    await new Promise(ok => setTimeout(ok, 10));
+    assert.deepEqual(reportsToReplay(join(dir, 'reports'), Date.now() + 1), []);
+    // and a second look at the request folder builds nothing again
+    assert.deepEqual(await takeRequests(join(dir, 'requests'), { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports'), taken }), []);
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('the watcher picks up a request, and a second look at the same id builds it only once', async () => {
   const dir = dirs();
   const log = join(dir, 'prompts.jsonl');
@@ -128,6 +480,41 @@ test('the watcher picks up a request, and a second look at the same id builds it
     writeFileSync(req, readFileSync(req, 'utf8'));
     await new Promise(ok => setTimeout(ok, 1200));
     assert.equal(readFileSync(log, 'utf8').trim().split('\n').length, 1);
+  } finally {
+    child.kill('SIGTERM');
+    await new Promise(ok => child.once('close', ok));
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a typed request jumps a frame that is already being built', async () => {
+  const dir = dirs();
+  writeFileSync(join(dir, 'reply.txt'), `### NEW\n${lantern}`);
+  const settled = join(dir, 'settled'); mkdirSync(settled);
+  const frame = join(dir, '20261019-190000.jpg');
+  execFileSync('convert', ['-size', '640x480', 'xc:white', frame]);
+  const child = spawn(process.execPath, [join(import.meta.dirname, 'generate.mjs'), '--watch', settled,
+    '--requests', join(dir, 'requests'), '--things', join(dir, 'things'), '--reports', join(dir, 'reports')], {
+    env: { ...process.env, FAKE_CLAUDE_REPLY: join(dir, 'reply.txt'), FAKE_CLAUDE_SLOW_TEXT: 'This image is the part of the paper',
+      FAKE_CLAUDE_SLOW_MS: '2500', FAKE_CLAUDE_LOG: join(dir, 'prompts.jsonl') }, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let out = '';
+  child.stdout.on('data', d => { out += d; });
+  child.stderr.on('data', d => { out += d; });
+  const sleep = ms => new Promise(ok => setTimeout(ok, ms));
+  try {
+    for (let i = 0; i < 20 && !out.includes('watching'); i++) await sleep(100);
+    assert.match(out, /watching/, 'the watcher did not start');
+    copyFileSync(frame, join(settled, '20261019-190000.jpg'));
+    // wait until the frame's call has reached the fake (it logs before its 2.5 s wait): now the frame is in flight
+    for (let i = 0; i < 20 && !existsSync(join(dir, 'prompts.jsonl')); i++) await sleep(100);
+    assert.ok(existsSync(join(dir, 'prompts.jsonl')), 'the frame never started: ' + out);
+    writeFileSync(join(dir, 'requests', 'text-20261019-190000.json'), JSON.stringify({ id: 'text-20261019-190000', text: 'eine Laterne', mode: 'new' }));
+    for (let i = 0; i < 15 && !existsSync(join(dir, 'reports', 'text-20261019-190000.json')); i++) await sleep(100);
+    assert.ok(existsSync(join(dir, 'reports', 'text-20261019-190000.json')), 'the request waited: ' + out);
+    assert.ok(!existsSync(join(dir, 'reports', '20261019-190000.json')), 'the frame had already finished; the test proved nothing');
+    for (let i = 0; i < 60 && !existsSync(join(dir, 'reports', '20261019-190000.json')); i++) await sleep(100);
+    assert.ok(existsSync(join(dir, 'reports', '20261019-190000.json')), out);
   } finally {
     child.kill('SIGTERM');
     await new Promise(ok => child.once('close', ok));

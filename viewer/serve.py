@@ -507,6 +507,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             assert 1 <= len(text) <= 80
         except (ValueError, AssertionError, KeyError, TypeError):
             return self.json({"ok": False, "error": "say what to build (1-80 characters)"}, 400)
+        mode = body.get("mode", "new")
+        if mode not in ("new", "change"):
+            return self.json({"ok": False, "error": "mode must be new or change"}, 400)
+        target = None
+        if mode == "change":
+            target = body.get("target")
+            ok = isinstance(target, str) and re.fullmatch(r"[A-Za-z0-9_][\w.-]*\.js", target) and ".." not in target \
+                and (ROOT / "viewer" / "things" / target).is_file()
+            if not ok:
+                return self.json({"ok": False, "error": "which thing should change?"}, 400)
         with TEXT_LOCK:
             REQUESTS.mkdir(parents=True, exist_ok=True)
             # a text- namespace: never the same name as a capture frame report (frames/generated/<ts>.json)
@@ -514,8 +524,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             req_id, k = base, 2
             while (REQUESTS / f"{req_id}.json").exists():
                 req_id, k = f"{base}-{k}", k + 1
-            req = {"text": text, "lang": guess_lang(text), "requested_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                   "id": req_id}
+            req = {"text": text, "mode": mode, **({"target": target} if target else {}), "lang": guess_lang(text),
+                   "requested_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "id": req_id}
             tmp = REQUESTS / f".{req_id}.json.tmp"
             tmp.write_text(json.dumps(req, ensure_ascii=False) + "\n")
             tmp.replace(REQUESTS / f"{req_id}.json")

@@ -25,6 +25,8 @@ class TextThing(unittest.TestCase):
         self.root = Path(self.tmp.name)
         (self.root / "viewer").mkdir()
         shutil.copy(HERE / "viewer" / "serve.py", self.root / "viewer" / "serve.py")
+        (self.root / "viewer" / "things").mkdir()
+        (self.root / "viewer" / "things" / "hexe.js").write_text("export const meta = { name: 'Hexe' };\n")
         (self.root / "VERSION").write_text("test\n")
         s = socket.socket()
         s.bind(("127.0.0.1", 0))
@@ -117,6 +119,33 @@ class TextThing(unittest.TestCase):
         self.assertEqual(code, 200)
         req = json.loads((self.root / "frames" / "requests" / f"{out['id']}.json").read_text())
         self.assertEqual(req["text"], "ein Haus")
+
+    def test_a_change_request_carries_its_mode_and_target(self):
+        code, out = self.post({"text": "Die Hexe sitzt nicht richtig auf dem Besen", "mode": "change", "target": "hexe.js"})
+        self.assertEqual(code, 200)
+        req = json.loads((self.root / "frames" / "requests" / f"{out['id']}.json").read_text())
+        self.assertEqual((req["mode"], req["target"]), ("change", "hexe.js"))
+
+    def test_mode_defaults_to_new(self):
+        code, out = self.post({"text": "eine Laterne"})
+        self.assertEqual(code, 200)
+        req = json.loads((self.root / "frames" / "requests" / f"{out['id']}.json").read_text())
+        self.assertEqual(req["mode"], "new")
+        self.assertNotIn("target", req)
+
+    def test_a_change_needs_an_existing_bare_target(self):
+        for target in (None, "", "nope.js", "../serve.py", "a/b.js", "..", ".hidden.js"):
+            body = {"text": "it flies", "mode": "change"}
+            if target is not None:
+                body["target"] = target
+            code, out = self.post(body)
+            self.assertEqual(code, 400, target)
+            self.assertEqual(out, {"ok": False, "error": "which thing should change?"})
+
+    def test_an_unknown_mode_is_400(self):
+        code, out = self.post({"text": "eine Laterne", "mode": "fix"})
+        self.assertEqual(code, 400)
+        self.assertEqual(out, {"ok": False, "error": "mode must be new or change"})
 
     def test_the_director_route_survives_next_to_text_thing(self):
         """The merge with camera-select: both POST routes and the shared same-site guard are in the real server."""
