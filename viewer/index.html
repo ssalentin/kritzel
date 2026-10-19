@@ -544,9 +544,13 @@ function confirmAction(c) {
 
 // world mode (kept on the server, read by the generate watcher) and 'new world' with an inline second tap
 const modeBtn = document.getElementById('modeBtn'), newBtn = document.getElementById('newBtn');
-let worldMode = 'add', sureUntil = 0;
+let worldMode = 'add', newArmed = false, newBusy = false;
 const showMode = () => { modeBtn.textContent = worldMode === 'switch' ? t('modeSwitch') : t('modeAdd'); modeBtn.title = t('modeTitle'); };
-const showNew = () => { const sure = performance.now() < sureUntil; newBtn.textContent = sure ? t('sure') : t('newWorld'); newBtn.classList.toggle('sure', sure); };
+const showNew = () => {
+  newBtn.textContent = newBusy ? t('newTurning') : newArmed ? t('sure') : t('newWorld');
+  newBtn.classList.toggle('sure', newArmed && !newBusy);
+  newBtn.disabled = newBusy;
+};
 onLang(() => { showMode(); showNew(); });
 fetch('/api/mode', { cache: 'no-store' }).then(r => r.json()).then(m => { worldMode = m.mode || 'add'; showMode(); }).catch(() => {});
 modeBtn.addEventListener('click', async e => {
@@ -556,9 +560,15 @@ modeBtn.addEventListener('click', async e => {
 });
 newBtn.addEventListener('click', async e => {
   e.stopPropagation();
-  if (performance.now() >= sureUntil) { sureUntil = performance.now() + 4000; showNew(); setTimeout(showNew, 4100); return; }
-  sureUntil = 0; showNew();
-  try { await fetch('/api/newworld', { method: 'POST', body: '{}', headers: { 'X-Kritzel': '1' } }); } catch {}   // the poll sees the page empty and turns it
+  if (newBusy) return;
+  if (!newArmed) { newArmed = true; showNew(); return; }   // stays armed until the next tap, however long the child thinks
+  newArmed = false; newBusy = true; showNew();
+  note(t('newTurning'), 'ok', 20000);
+  try {
+    const r = await fetch('/api/newworld', { method: 'POST', body: '{}', headers: { 'X-Kritzel': '1' } });
+    if (!r.ok) { note(t('newFailed'), 'bad', 8000); newBusy = false; showNew(); }   // did not turn: say so, keep the world
+    else setTimeout(() => { if (newBusy) { newBusy = false; showNew(); } }, 15000);  // no page turn followed (empty world)
+  } catch { note(t('newFailed'), 'bad', 8000); newBusy = false; showNew(); }
 });
 
 // what capture and generate are doing, and a glowing light where a new drawing will appear; the picture frame says the same
@@ -961,6 +971,8 @@ function newWorldTransition(turn = true) {
   if (morph?.sheet) { scene.remove(morph.sheet.pivot); morph.sheet.geo.dispose(); }   // a turn already running: drop its page
   morph = { t0: performance.now() - (turn ? 0 : 2000), release: null, folds: [], sheet: null };
   if (!turn) { veil.classList.add('on'); return Promise.resolve(); }
+  newBusy = false; newArmed = false; showNew();     // the page is turning: the button is free again
+  note('');                                        // "Blättert um …" gives way to the page itself
   sound?.fx('pageTurn');
   setTimeout(() => sound?.fx('newWorld'), 560);   // the chime lands as the sheet comes down
   // the old things fold flat into the page, one after another (a pop-up book), not all at once
