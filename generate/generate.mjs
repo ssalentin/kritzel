@@ -23,7 +23,7 @@ import { oneShot, MODEL, FALLBACK_MODEL, PI_FALLBACK } from './claude.mjs';
 import { isPiModel, prewarm } from './pi.mjs';
 import { live } from './children.mjs';
 import { staticCheck, buildCheck, metaOf } from './check.mjs';
-import { SYSTEM, userText, fixText, DETECT_SYSTEM, detectText, oneOfText, DRAFT_NOTE, TEXT_SYSTEM, textThingText } from './prompts.mjs';
+import { SYSTEM, userText, fixText, DETECT_SYSTEM, detectText, oneOfText, DRAFT_NOTE, TEXT_SYSTEM, textThingText, CHANGE_SYSTEM, changeText } from './prompts.mjs';
 import { islandOf, movePaper } from './place.mjs';
 import { safeLine } from '../viewer/dialogues.js';
 
@@ -182,7 +182,7 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
       if (!problems.length && !fixModel) problems.push(...plainWater(code, info));
       if (!problems.length && !fixModel) problems.push(...unsaid(code, says));
       if (!problems.length && !fixModel && (!DRAFT_MODEL || model === MODEL)) problems.push(...blobs(code, info));
-      if (!problems.length && extra) problems.push(...extra(info));
+      if (!problems.length && extra) problems.push(...extra(info, code));
     }
     if (!problems.length) return { code: full, model, info, warnings: [
       ...(info.tris > TRIS ? [`${info.tris} triangles (more than ${TRIS}): heavy for the viewer, which draws every thing at once`] : []),
@@ -248,12 +248,53 @@ export async function processTextRequest(reqPath, { thingsDir, reportsDir, onPro
     try { req = JSON.parse(readFileSync(reqPath, 'utf8')); } catch { throw new Error('the request is not valid JSON'); }
     const text = typeof req?.text === 'string' ? req.text.trim() : '';
     if (!text || text.length > 80) throw new Error('say what to build (1-80 characters)');
-    report.request = { id, text, lang: req.lang === 'de' ? 'de' : 'en', requested_at: req.requested_at || null };
+    const mode = req?.mode === 'change' ? 'change' : 'new';
+    const target = mode === 'change' && typeof req?.target === 'string' ? req.target : null;
+    if (mode === 'change' && !target) throw new Error('which thing should change?');
+    report.request = { id, text, mode, ...(target && { target }), lang: req.lang === 'de' ? 'de' : 'en', requested_at: req.requested_at || null };
     onProgress({ state: 'building', id, detail: text });
     const existing = await readThings(thingsDir);
-    const r = await oneShot({ system: TEXT_SYSTEM, text: textThingText(text), images: [], timeoutMs: 6 * 60_000, model: MODEL });
+    const old = mode === 'change' ? existing.find(t => t.file === target) : null;
+    if (mode === 'change' && !old) throw new Error(`no such thing to change: ${target}`);
+    const r = await oneShot({ system: mode === 'change' ? CHANGE_SYSTEM : TEXT_SYSTEM,
+      text: mode === 'change' ? changeText({ text, file: target, code: old.code }) : textThingText(text),
+      images: [], timeoutMs: 6 * 60_000, model: MODEL });
     report.calls.push(callOf(r));
     report.reply = r.text.slice(0, 4000);
+    if (mode === 'change') {
+      // the correction keeps the thing: same file, name, actor ids, starts and paper placement
+      let body = stripFences(r.text).trim();
+      try {
+        const sec = parseReply(r.text).find(s => s.kind === 'UPDATE' || s.kind === 'NEW');
+        if (sec) body = sec.body;
+      } catch { /* a bare module is what the prompt asks for */ }
+      const oldName = old.code.match(/\bmeta\s*=\s*\{[^}]*?\bname:\s*['"]([^'"]+)['"]/)?.[1] || old.meta.name;
+      const starts = code => [...code.matchAll(/start:\s*\[\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\]/g)].map(m => `${+m[1]},${+m[2]}`);
+      const oldStarts = new Set(starts(old.code));
+      const paper = old.code.match(/paper:\s*\{\s*x:\s*([-\d.]+)\s*,\s*y:\s*([-\d.]+)/);
+      const extra = (info, codeNow) => {
+        const out = [];
+        const name = codeNow.match(/\bmeta\s*=\s*\{[^}]*?\bname:\s*['"]([^'"]+)['"]/)?.[1];
+        if (name !== oldName) out.push(`keep its name "${oldName}": a correction changes the thing, not its name`);
+        const have = new Set(starts(codeNow));
+        for (const s of oldStarts) if (!have.has(s)) out.push(`keep its start position [${s}]`);
+        if (paper && !new RegExp(`paper:\\s*\\{\\s*x:\\s*${paper[1]}\\s*,\\s*y:\\s*${paper[2]}`).test(codeNow))
+          out.push(`keep its meta.paper ${paper[1]}, ${paper[2]}`);
+        return out;
+      };
+      const f = await finish({ body, model: r.model || MODEL, frame: reqPath, images: [],
+        takenIds: existing.filter(t => t.file !== target).flatMap(t => t.ids), keepIds: old.ids, oldName,
+        calls: report.calls, source: `frames/requests/${id}.json`,
+        fixIntro: `The module below is a correction of ${target}: ${JSON.stringify(text)}.`, extra });
+      if (!f.code) { report.rejected.push({ problems: f.problems }); throw new Error(`rejected after checks: ${f.problems.join('; ').slice(0, 300)}`); }
+      atomicWrite(join(thingsDir, target), f.code);         // only now: a failed rewrite leaves the old file as it was
+      const name = f.code.match(/\bmeta\s*=\s*\{[^}]*?\bname:\s*['"]([^'"]+)['"]/)?.[1] || oldName;
+      report.written.push({ kind: 'UPDATE', file: target, name, model: f.model, at: T(), ids: old.ids,
+        ...(f.warnings.length && { warnings: f.warnings }) });
+      onProgress({ state: 'changed', id, detail: name });
+      log(`${id}: text correction ${JSON.stringify(text)} → REWROTE ${target} (${name}) by ${f.model}`);
+      return report;
+    }
     let sections;
     try { sections = parseReply(r.text); } catch (e) { throw new Error(`the reply could not be read: ${e.message.slice(0, 200)}`); }
     const news = sections.filter(s => s.kind === 'NEW'), unclear = sections.find(s => s.kind === 'UNCLEAR');
@@ -1075,11 +1116,14 @@ async function watch(dir, opts) {
         onProgress: p => status(p.state, p.id, p.detail || ''),
       });
       if (r.written.length) {
-        status('new', id, r.written.map(w => w.name).join(', '), { made: r.written.map(w => ({ de: w.name, en: w.name })) });
+        status(r.written.every(w => w.kind === 'UPDATE') ? 'changed' : 'new', id, r.written.map(w => w.name).join(', '),
+          { made: r.written.map(w => ({ de: w.name, en: w.name })) });
         wantDialogues(opts, `request: ${r.written.map(w => w.name).join(', ')}`, r.written.map(w => w.name));
       } else status('failed', id, (r.error || 'nothing built').slice(0, 80));
     }
   };
+  // typed requests run in their own loop: a request must not wait behind a frame that is being built
+  (async () => { for (;;) { try { await takeRequests(); } catch (e) { log(`requests: ${e.message.slice(0, 200)}`); } await sleep(300); } })();
   let tries = 0, triesFor = null;           // failed attempts, and for which frame
   let archivedFor = null;                   // switch mode: the sheet whose new world is already set up
   // after a failed frame: true = try the same frame again (after a wait), false = give up on it.
@@ -1098,7 +1142,6 @@ async function watch(dir, opts) {
   // a big change was skipped since lastGenerated: no REMOVEs until a frame is generated (also across a restart)
   let movedSince = frames.some(f => (!lastGenerated || f > lastGenerated) && report(f)?.skipped === 'big-change');
   for (;;) {
-    await takeRequests();
     const newest = list().at(-1);
     if (newest && newest !== last) {
       let side = {};

@@ -2,13 +2,14 @@
 // without building the same id twice (fake claude, test-bin/).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync } from 'node:fs';
+import { spawn, execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 process.env.PATH = join(import.meta.dirname, 'test-bin') + ':' + process.env.PATH;
 delete process.env.KRITZEL_MODEL; delete process.env.KRITZEL_DRAFT_MODEL;
 const { processTextRequest } = await import('./generate.mjs');
+const snail = readFileSync(join(import.meta.dirname, 'examples', 'schnecke.js'), 'utf8');
 const lantern = `// parts: body = a short round base
 // parts: glass = a tall glass box above it
 // parts: roof = a small pointed lid
@@ -103,6 +104,55 @@ test('a frame report with the same timestamp does not swallow a text request', a
   } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('a correction rewrites the same module in place and keeps name, id, start and paper', async () => {
+  const dir = dirs();
+  try {
+    const target = join(dir, 'things', 'schnecke.js');
+    writeFileSync(target, snail);
+    const fixed = snail.replace("start: [-2, 1], speed: 0.45,", "start: [-2, 1], speed: 0.45, move: 'fly',");
+    writeFileSync(join(dir, 'reply.txt'), `### UPDATE schnecke.js\n${fixed}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const r = await processTextRequest(request(dir, 'text-20261019-184016', 'it flies', { mode: 'change', target: 'schnecke.js' }),
+      { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    assert.equal(r.error, undefined, r.error);
+    assert.deepEqual(r.written.map(w => [w.kind, w.file]), [['UPDATE', 'schnecke.js']]);
+    const code = readFileSync(target, 'utf8');
+    assert.match(code, /move: 'fly'/);
+    assert.match(code, /name: 'Schnecke'/);
+    assert.match(code, /id: 'schnecke'/);
+    assert.match(code, /start: \[-2, 1\]/);
+    assert.match(code, /paper: \{ x: 0\.3, y: 0\.6 \}/);
+    const saved = JSON.parse(readFileSync(join(dir, 'reports', 'text-20261019-184016.json'), 'utf8'));
+    assert.deepEqual([saved.request.mode, saved.request.target], ['change', 'schnecke.js']);
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a correction that breaks the thing leaves the old module untouched', async () => {
+  const dir = dirs();
+  try {
+    const target = join(dir, 'things', 'schnecke.js');
+    writeFileSync(target, snail);
+    writeFileSync(join(dir, 'reply.txt'), `### UPDATE schnecke.js\n${snail.replace("start: [-2, 1], speed: 0.45,", "start: [3, 3], speed: 0.45, move: 'fly',")}`);
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt');
+    const r = await processTextRequest(request(dir, 'text-20261019-184017', 'it flies', { mode: 'change', target: 'schnecke.js' }),
+      { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    assert.match(r.error, /rejected after checks/);
+    assert.equal(readFileSync(target, 'utf8'), snail);
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a correction of an unknown target fails without calling the model', async () => {
+  const dir = dirs();
+  const log = join(dir, 'prompts.jsonl');
+  try {
+    process.env.FAKE_CLAUDE_LOG = log;
+    const r = await processTextRequest(request(dir, 'text-20261019-184018', 'it flies', { mode: 'change', target: 'nope.js' }),
+      { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports') });
+    assert.match(r.error, /no such thing to change/);
+    assert.equal(existsSync(log), false);
+  } finally { delete process.env.FAKE_CLAUDE_LOG; rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('the watcher picks up a request, and a second look at the same id builds it only once', async () => {
   const dir = dirs();
   const log = join(dir, 'prompts.jsonl');
@@ -128,6 +178,41 @@ test('the watcher picks up a request, and a second look at the same id builds it
     writeFileSync(req, readFileSync(req, 'utf8'));
     await new Promise(ok => setTimeout(ok, 1200));
     assert.equal(readFileSync(log, 'utf8').trim().split('\n').length, 1);
+  } finally {
+    child.kill('SIGTERM');
+    await new Promise(ok => child.once('close', ok));
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a typed request jumps a frame that is already being built', async () => {
+  const dir = dirs();
+  writeFileSync(join(dir, 'reply.txt'), `### NEW\n${lantern}`);
+  const settled = join(dir, 'settled'); mkdirSync(settled);
+  const frame = join(dir, '20261019-190000.jpg');
+  execFileSync('convert', ['-size', '640x480', 'xc:white', frame]);
+  const child = spawn(process.execPath, [join(import.meta.dirname, 'generate.mjs'), '--watch', settled,
+    '--requests', join(dir, 'requests'), '--things', join(dir, 'things'), '--reports', join(dir, 'reports')], {
+    env: { ...process.env, FAKE_CLAUDE_REPLY: join(dir, 'reply.txt'), FAKE_CLAUDE_SLOW_TEXT: 'This image is the part of the paper',
+      FAKE_CLAUDE_SLOW_MS: '2500', FAKE_CLAUDE_LOG: join(dir, 'prompts.jsonl') }, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let out = '';
+  child.stdout.on('data', d => { out += d; });
+  child.stderr.on('data', d => { out += d; });
+  const sleep = ms => new Promise(ok => setTimeout(ok, ms));
+  try {
+    for (let i = 0; i < 20 && !out.includes('watching'); i++) await sleep(100);
+    assert.match(out, /watching/, 'the watcher did not start');
+    copyFileSync(frame, join(settled, '20261019-190000.jpg'));
+    // wait until the frame's call has reached the fake (it logs before its 2.5 s wait): now the frame is in flight
+    for (let i = 0; i < 20 && !existsSync(join(dir, 'prompts.jsonl')); i++) await sleep(100);
+    assert.ok(existsSync(join(dir, 'prompts.jsonl')), 'the frame never started: ' + out);
+    writeFileSync(join(dir, 'requests', 'text-20261019-190000.json'), JSON.stringify({ id: 'text-20261019-190000', text: 'eine Laterne', mode: 'new' }));
+    for (let i = 0; i < 15 && !existsSync(join(dir, 'reports', 'text-20261019-190000.json')); i++) await sleep(100);
+    assert.ok(existsSync(join(dir, 'reports', 'text-20261019-190000.json')), 'the request waited: ' + out);
+    assert.ok(!existsSync(join(dir, 'reports', '20261019-190000.json')), 'the frame had already finished; the test proved nothing');
+    for (let i = 0; i < 60 && !existsSync(join(dir, 'reports', '20261019-190000.json')); i++) await sleep(100);
+    assert.ok(existsSync(join(dir, 'reports', '20261019-190000.json')), out);
   } finally {
     child.kill('SIGTERM');
     await new Promise(ok => child.once('close', ok));
