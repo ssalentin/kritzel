@@ -267,3 +267,53 @@ test('acts: only the repertoire, a line in both languages, at most 3, no repeats
     assert.deepEqual(j.personas.maus.acts, []);                                    // had its (empty) acts: not asked again
   } finally { process.env.PATH = path; delete process.env.FAKE_CLAUDE_REPLY; rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('the pairs likely to meet (one likes the other, or nearest on the pages) want more dialogues', async () => {
+  const { castOf, pairsOf, askOf } = await import('./dialogues.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'kritzel-pairs-'));
+  try {
+    const at = (id, name, x, z, said = '') => `export const meta = { name: '${name}', drawing: 'x' };\nexport function build() { return { actors: [{ id: '${id}', name: '${name}', start: [${x}, ${z}], rig: {}${said ? `, lines: { said: { de: '${said}', en: 'Hi' } }` : ''} }] }; }\n`;
+    writeFileSync(join(dir, 'affe.js'), at('affe', 'Affe', 0, 0, 'Hallo!'));
+    writeFileSync(join(dir, 'maus.js'), at('maus', 'Maus', 1, 0));
+    writeFileSync(join(dir, 'kuh.js'), at('kuh', 'Kuh', 9, 9));
+    writeFileSync(join(dir, 'igel.js'), at('igel', 'Igel', 0, 0));
+    writeFileSync(join(dir, 'placement.json'), JSON.stringify({ 'igel.js': [-20, 0], 'kuh.js': [-11, -9] }));   // igel far away, kuh moved next to it
+    const cast = castOf(dir);
+    assert.deepEqual(cast.find(c => c.id === 'kuh').at, [-2, 0]);
+    assert.equal(cast.find(c => c.id === 'affe').said, 'Hallo!');
+    const pairs = pairsOf(cast, { igel: { favourite: 'Affe', likes: [] } });
+    const want = Object.fromEntries(pairs.map(p => [[...p.names].sort().join('|'), p.want]));
+    // near: affe-maus, kuh-affe, and igel-kuh (far off, but kuh is still its nearest); liked: igel-affe
+    assert.deepEqual(want, { 'Affe|Maus': 7, 'Affe|Igel': 7, 'Affe|Kuh': 7, 'Igel|Kuh': 7, 'Kuh|Maus': 3, 'Igel|Maus': 3 });
+    assert.ok(pairs.slice(0, 4).every(p => p.likely));                                 // likely first
+    const ask = askOf(pairs, new Map([['Affe|Maus', 7], ['Affe|Igel', 5]]));
+    assert.deepEqual(ask.map(x => x.n), [2, 7, 7, 3, 3]);                              // what each pair lacks
+    assert.ok(askOf(pairs, new Map()).reduce((n, x) => n + x.n, 0) <= 30);            // one call stays a sane size
+    const full = new Map(pairs.map(p => [[...p.names].sort().join('|'), p.want]));
+    assert.deepEqual(askOf(pairs, full).map(x => x.n), [2, 2, 2, 2]);                     // a full pool: a few fresh for the likely pairs
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the pool keeps each pair\'s newest dialogues up to what it wants, and asks per pair', async () => {
+  const { makePool } = await import('./dialogues.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'kritzel-pool-'));
+  const bin = join(import.meta.dirname, 'test-bin'), path = process.env.PATH;
+  process.env.PATH = bin + ':' + path;
+  try {
+    writeFileSync(join(dir, 'affe.js'), actor('affe', 'Affe'));
+    writeFileSync(join(dir, 'maus.js'), actor('maus', 'Maus'));
+    writeFileSync(join(dir, 'kuh.js'), actor('kuh', 'Kuh'));
+    const p = { favourite: null, likes: [], fears: [], hobby: 'wander', lines: { de: [], en: [] }, acts: [] };
+    const d = (a, b, k) => ({ between: [a, b], end: null, turns: [{ who: a, de: `Hallo ${k}!`, en: `Hi ${k}!` }, { who: b, de: `Hallo ${k}!`, en: `Hi ${k}!` }] });
+    writeFileSync(join(dir, 'dialogues.json'), JSON.stringify({ personas: { affe: { ...p, favourite: 'Maus' }, maus: p, kuh: p },
+      dialogues: [1, 2, 3, 4].map(k => d('Kuh', 'Maus', `alt${k}`)) }));
+    writeFileSync(join(dir, 'reply.txt'), JSON.stringify({ personas: {}, dialogues: [d('Maus', 'Kuh', 'neu'), d('Affe', 'Maus', 'neu')] }));
+    process.env.FAKE_CLAUDE_REPLY = join(dir, 'reply.txt'); process.env.FAKE_CLAUDE_LOG = join(dir, 'prompts.jsonl');
+    await makePool({ thingsDir: dir, model: 'claude-haiku-5-5' });
+    const j = JSON.parse(readFileSync(join(dir, 'dialogues.json'), 'utf8'));
+    assert.deepEqual(j.dialogues.map(x => x.turns[0].de), ['Hallo neu!', 'Hallo neu!', 'Hallo alt1!', 'Hallo alt2!']);   // likely pair first; Kuh & Maus: 3, newest
+    const asked = readFileSync(join(dir, 'prompts.jsonl'), 'utf8');
+    assert.match(asked, /Affe & Maus: 7/);                                               // liked: 7 wanted, none there
+    assert.doesNotMatch(asked, /(?:Kuh & Maus|Maus & Kuh): \d/);                         // it has its 3 (4 even): none asked
+  } finally { process.env.PATH = path; delete process.env.FAKE_CLAUDE_LOG; rmSync(dir, { recursive: true, force: true }); }
+});
