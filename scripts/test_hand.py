@@ -21,6 +21,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SHOT_CARRY = Path("/tmp/kritzel-hand-carry.png")
 SHOT_DROP = Path("/tmp/kritzel-hand-drop.png")
+SHOT_GLOVE = Path("/tmp/kritzel-hand-glove-open-1440.png")
+SHOT_PINCH = Path("/tmp/kritzel-hand-glove-pinch-1440.png")
+SHOT_OPEN_AFTER = Path("/tmp/kritzel-hand-glove-open-after-1440.png")
+SHOT_MID = Path("/tmp/kritzel-hand-glove-mid-1440.png")
+SHOT_GLOVE_PHONE = Path("/tmp/kritzel-hand-glove-open-390.png")
+SHOT_PINCH_PHONE = Path("/tmp/kritzel-hand-glove-pinch-390.png")
 
 FIGUR = """export const meta = { name: 'Mira', drawing: 'a person', paper: { x: 0.3, y: 0.6 } };
 export function build({ makePerson }) {
@@ -120,6 +126,7 @@ class Hand(unittest.TestCase):
           for (let ring = 0; ring < 120; ring += 4) {
             for (const [dx, dy] of [[0, 0], [ring, 0], [-ring, 0], [0, ring], [0, -ring], [ring, ring], [-ring, ring], [ring, -ring], [-ring, -ring]]) {
               const x = cx + dx, y = cy + dy;
+              if (document.elementFromPoint(x, y) !== document.querySelector('canvas')) continue;   // a panel is in front
               ptr.set((x - r.left) / r.width * 2 - 1, -(y - r.top) / r.height * 2 + 1);
               ray.setFromCamera(ptr, window.__camera);
               const hit = ray.intersectObjects(root.children, true)[0]?.object;
@@ -253,6 +260,73 @@ class Hand(unittest.TestCase):
 
     def test_no_page_errors(self):
         self.assertEqual(self.errors, [])
+
+    def test_the_glove_reads_open_and_pinched_at_both_sizes(self):
+        self.page.reload()                           # the tap test leaves the camera following Mira; start from home
+        self.page.wait_for_function("() => window.__paperWorld?.()?.canPush", timeout=30000)
+        time.sleep(3)
+        self.page.evaluate("() => { window.requestAnimationFrame = () => 0; }")
+        time.sleep(0.8)
+        self.page.evaluate("""() => {                 // a central figure, away from the panels at both sizes
+          const a = window.__paperWorld().brain().actors().find(x => x.id === 'mira');
+          a.pos.set(0, 0, 0); a.rig.g.position.set(0, 0, 0); a.rig.g.visible = true; a.goal = null; a.held = null;
+        }""")
+        time.sleep(0.2)
+        for w, h, open_shot, pinch_shot in ((1440, 900, SHOT_GLOVE, SHOT_PINCH), (390, 844, SHOT_GLOVE_PHONE, SHOT_PINCH_PHONE)):
+            self.page.set_viewport_size({"width": w, "height": h})
+            time.sleep(0.3)
+            self.page.mouse.move(w * 0.3, h * 0.55)
+            time.sleep(0.5)
+            self.page.evaluate("() => { for (let i = 0; i < 4; i++) __handRig.update(0.08, i * 0.08, { moving: true }); window.__render(); }")
+            state = self.page.evaluate("() => ({ ...__handState(), cursor: getComputedStyle(document.querySelector('canvas')).cursor })")
+            self.assertTrue(state["visible"], state)
+            self.assertEqual(state["cursor"], "none", state)
+            try:
+                self.page.screenshot(path=str(open_shot), timeout=120000)
+            except Exception:
+                print("(glove screenshot skipped: software renderer too slow)")
+
+            p = self.point_on(actor="mira")
+            if not p:
+                self.skipTest("no visible point on Mira")
+            self.page.mouse.move(p["x"], p["y"])
+            self.page.mouse.down()
+            for i in range(1, 7):
+                self.page.mouse.move(p["x"] + 6 * i, p["y"] - 3 * i)
+                self.page.wait_for_timeout(40)
+            self.step()                                   # the carried figure's rig follows the pinch point
+            if w == 1440:                                 # one short step: the cross-fade halfway
+                self.page.evaluate("() => { __handRig.update(0.03, 1.0, { carrying: true, pressing: true, moving: true }); window.__render(); }")
+                try:
+                    self.page.screenshot(path=str(SHOT_MID), timeout=120000)
+                except Exception:
+                    print("(mid-fade screenshot skipped: software renderer too slow)")
+            self.page.evaluate("() => { for (let i = 0; i < 8; i++) __handRig.update(0.08, 1 + i * 0.08, { carrying: true, pressing: true, moving: true }); window.__render(); }")
+            pinch = self.page.evaluate("() => __handState()")
+            self.assertEqual(pinch["carry"]["who"], "mira", pinch)
+            self.assertGreater(pinch["pinch"], 0.8, pinch)
+            self.assertEqual(pinch["pose"], "pinch", pinch)
+            try:
+                self.page.screenshot(path=str(pinch_shot), timeout=120000)
+            except Exception:
+                print("(pinch screenshot skipped: software renderer too slow)")
+            self.page.mouse.up()
+            time.sleep(0.3)
+            self.step()
+            self.page.evaluate("() => { for (let i = 0; i < 8; i++) __handRig.update(0.08, 2 + i * 0.08, { moving: true }); window.__render(); }")
+            opened = self.page.evaluate("() => __handState()")
+            self.assertLess(opened["pinch"], 0.2, opened)
+            if w == 1440:
+                try:
+                    self.page.screenshot(path=str(SHOT_OPEN_AFTER), timeout=120000)
+                except Exception:
+                    print("(open-after screenshot skipped: software renderer too slow)")
+        # over a panel the normal cursor is back and the hand is gone
+        self.page.hover("#newBtn")
+        time.sleep(0.3)
+        panel = self.page.evaluate("""() => ({ hand: __hand.visible, cursor: getComputedStyle(document.getElementById('newBtn')).cursor })""")
+        self.assertFalse(panel["hand"], panel)
+        self.assertNotEqual(panel["cursor"], "none", panel)
 
 
 if __name__ == "__main__":

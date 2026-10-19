@@ -194,6 +194,7 @@ import { createStatus } from './status.js';
 import { createCamFrame } from './camframe.js';
 import { createBuildQueue } from './buildqueue.js';
 import { GROUND, BASE as BOOK_BASE } from './book.js';
+import { createHand } from './hand.js';
 // the book's size now: world.js grows its own copy of the book module, so the page turn asks the world
 const bookSize = () => current?.book?.() ?? { w: BOOK_BASE.w, d: BOOK_BASE.d };
 import { createStyle } from './style.js';
@@ -780,34 +781,17 @@ let focus = null, downAt = null, cardAt = 0;
 const actorsNow = () => { try { return current?.brain?.()?.actors() || []; } catch { return []; } };
 const isUnder = (o, root) => { for (; o; o = o.parent) if (o === root) return true; return false; };
 window.__focus = () => focus;
-const hand = createHand();
+const handRig = createHand(THREE), hand = handRig.group;
 scene.add(hand);
 window.__hand = hand;
+window.__handRig = handRig;
 window.__handState = () => ({ grab: handGrab ? { who: !!handGrab.who, file: handGrab.file, moved: handGrab.moved, pushed: handGrab.pushed } : null,
-  carry: handCarry ? { who: handCarry.who?.id ?? null, file: handCarry.file } : null, last: handLast });
+  carry: handCarry ? { who: handCarry.who?.id ?? null, file: handCarry.file } : null, last: handLast,
+  pinch: handRig.pinch, pose: handRig.pose, visible: hand.visible });
 window.__pageAt = pageAt;
 window.__pickAt = pickAt;
 const pagePlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), pageP = new THREE.Vector3();
 let handGrab = null, handCarry = null, handLast = null;
-
-// a simple canvas-drawn hand: palm, four fingers, a thumb. No font, no model, works headless.
-function createHand() {
-  const cv = document.createElement('canvas'); cv.width = cv.height = 128;
-  const g = cv.getContext('2d');
-  g.lineJoin = g.lineCap = 'round'; g.strokeStyle = '#5b4636'; g.lineWidth = 5; g.fillStyle = '#f3d2b0';
-  const finger = (x, y, w, h) => {              // a vertical capsule
-    g.beginPath(); g.arc(x + w / 2, y + w / 2, w / 2, Math.PI, 0);
-    g.lineTo(x + w, y + h - w / 2); g.arc(x + w / 2, y + h - w / 2, w / 2, 0, Math.PI);
-    g.closePath(); g.fill(); g.stroke();
-  };
-  finger(38, 24, 13, 50); finger(54, 14, 13, 60); finger(70, 20, 13, 54); finger(86, 32, 12, 42);
-  g.beginPath(); g.ellipse(64, 86, 31, 25, 0, 0, Math.PI * 2); g.fill(); g.stroke();
-  g.beginPath(); g.ellipse(33, 74, 13, 22, 0.6, 0, Math.PI * 2); g.fill(); g.stroke();
-  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
-  s.scale.set(1.7, 1.7, 1); s.renderOrder = 30; s.visible = false; s.layers.set(1);   // after the paper pass
-  return s;
-}
 // where the pointer meets the page (the flat page plane, then the book's curve)
 function pageAt(e) {
   const r = canvas.getBoundingClientRect();
@@ -827,12 +811,20 @@ function pickAt(e) {
   const hit = ray.intersectObjects(world.children, true)[0]?.object;
   return { who: (hit && actorsNow().find(a => isUnder(hit, a.rig.g))) || null, file: hit ? current?.fileOf?.(hit) : null };
 }
-function showHand(p, lift = 0.75) { hand.visible = !!p; if (p) hand.position.set(p.x, p.y + lift, p.z); }
+// the fingertip is the sprite anchor: put it on the page point (the sprites always face the camera)
+function showHand(p) {
+  hand.visible = !!p;
+  if (p) {
+    hand.position.set(p.x, p.y + (handCarry ? 0.85 : 0.02), p.z);   // while carrying, pinch at the figure's body
+  }
+}
+let handMovedAt = 0;
 
 canvas.addEventListener('pointerdown', e => { downAt = [e.clientX, e.clientY, performance.now()]; });
 canvas.addEventListener('contextmenu', e => e.preventDefault());   // a long press is ours, not the browser's menu
 canvas.style.userSelect = canvas.style.webkitUserSelect = 'none';
 canvas.style.webkitTouchCallout = 'none';
+canvas.style.cursor = 'none';                                      // the gloved hand is the pointer over the book
 canvas.addEventListener('pointerdown', e => {
   const p = pageAt(e);
   if (p) { handLast = p; showHand(p); }
@@ -847,6 +839,7 @@ canvas.addEventListener('pointerdown', e => {
 });
 canvas.addEventListener('pointermove', e => {
   const p = pageAt(e);
+  handMovedAt = performance.now();
   if (p) handLast = p;
   if (!handCarry) showHand(p);
   const g = handGrab;
@@ -854,22 +847,17 @@ canvas.addEventListener('pointermove', e => {
   if (!g.moved && Math.hypot(e.clientX - g.start[0], e.clientY - g.start[1]) > 8) {
     g.moved = true;
     if (g.who) {
-      if (current?.brain?.().hold?.(g.who)) {                 // keep the figure under the pointer, not its feet
-        handCarry = { who: g.who, offset: { x: g.who.pos.x - (p?.x ?? g.who.pos.x), z: g.who.pos.z - (p?.z ?? g.who.pos.z) } };
-        hand.material.rotation = -0.22;
-      }
+      if (current?.brain?.().hold?.(g.who)) handCarry = { who: g.who };
     } else if (g.portable && current?.pickThing?.(g.file)) {
-      const box = current.box?.(g.file);
-      handCarry = { file: g.file, offset: box ? { x: box.position.x - (p?.x ?? box.position.x), z: box.position.z - (p?.z ?? box.position.z) } : { x: 0, z: 0 } };
-      hand.material.rotation = -0.22;
+      handCarry = { file: g.file };
     }
   }
   if (handCarry?.who) {
-    if (p) current.brain().moveHeld(handCarry.who, p.x + handCarry.offset.x, p.z + handCarry.offset.z);
-    showHand(p || handLast, 1.25);
+    if (p) current.brain().moveHeld(handCarry.who, p.x, p.z);
+    showHand(p || handLast);
   } else if (handCarry?.file) {
-    if (p) current.carryThing(handCarry.file, p.x + handCarry.offset.x, p.y + 0.7, p.z + handCarry.offset.z);
-    showHand(p || handLast, 1.25);
+    if (p) current.carryThing(handCarry.file, p.x, p.y + 0.7, p.z);
+    showHand(p || handLast);
   } else if (g.pushable && g.moved && p && g.last) {
     // a push stays short: at most 1.2 units per drag, in small steps that keep the grid honest
     const dx = Math.max(-0.25, Math.min(0.25, p.x - g.last.x));
@@ -886,14 +874,13 @@ canvas.addEventListener('pointerup', e => {
     try { canvas.releasePointerCapture(e.pointerId); } catch {}
     if (handCarry?.who) {
       const p = pageAt(e) || g.last || { x: handCarry.who.pos.x, z: handCarry.who.pos.z };
-      current.brain().release(handCarry.who, p.x + handCarry.offset.x, p.z + handCarry.offset.z);
+      current.brain().release(handCarry.who, p.x, p.z);
       handCarry = null;
     } else if (handCarry?.file) {
       const p = pageAt(e) || g.last;
-      if (p) current.dropThing(handCarry.file, p.x + handCarry.offset.x, p.z + handCarry.offset.z);
+      if (p) current.dropThing(handCarry.file, p.x, p.z);
       handCarry = null;
     } else if (g.pushed) current.settle(g.file);
-    hand.material.rotation = 0;
     if (g.moved) { downAt = null; return; }      // a hand drag is not a tap
   }
   if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) return;   // a drag, not a click
@@ -916,10 +903,10 @@ canvas.addEventListener('pointercancel', e => {
   handGrab = null; controls.enabled = true;
   if (handCarry?.who) {
     const p = g.last || { x: handCarry.who.pos.x, z: handCarry.who.pos.z };
-    current.brain().release(handCarry.who, p.x + handCarry.offset.x, p.z + handCarry.offset.z);
-  } else if (handCarry?.file && g.last) current.dropThing(handCarry.file, g.last.x + handCarry.offset.x, g.last.z + handCarry.offset.z);
+    current.brain().release(handCarry.who, p.x, p.z);
+  } else if (handCarry?.file && g.last) current.dropThing(handCarry.file, g.last.x, g.last.z);
   else if (g.pushed) current.settle(g.file);
-  handCarry = null; hand.material.rotation = 0;
+  handCarry = null;
 });
 canvas.addEventListener('pointerleave', () => { if (!handCarry && !handGrab) hand.visible = false; });
 addEventListener('keydown', e => { if (e.key === 'Escape') { focus = null; card.style.display = 'none'; } });
@@ -1043,6 +1030,8 @@ function animate() {
   stepFolds(performance.now());        // a removed thing folds away on its own, with or without a page turn
   stepMorph();
   layoutBubbles(dt);
+  handRig.update(dt, clock.elapsedTime, { carrying: !!handCarry, pressing: !!handGrab && !handCarry,
+    moving: performance.now() - handMovedAt < 250 });
   lighting.update(clock.elapsedTime, dt);
   status.tick(camera);
   controls.update();
