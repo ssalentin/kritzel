@@ -24,8 +24,12 @@
   #status[data-tone=warn] .dot { background: #e0a020; }
   #status[data-tone=bad] .dot { background: #d0443a; }
   #status .text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-size: 15px; }
+  #status .note { color: #b3261e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-size: 14px; }
+  /* a message of ours (a refused request) takes the pill for its few seconds: nothing is clipped behind the old text */
+  #status:has(.note:not([hidden])) .text, #status:has(.note:not([hidden])) .gen { display: none; }
   #status .gen { color: #b3261e; white-space: nowrap; }
   #status.calm { padding: 5px; }
+  #status.calm:has(.note:not([hidden])) { padding: 4px 10px 4px 8px; }
   #status.calm .text, #status.calm img { display: none; }
   @keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
   @media (max-width: 560px) { #status { top: auto; bottom: 52px; max-width: calc(100vw - 32px); border-radius: 16px; }
@@ -59,8 +63,19 @@
   #bq .name { font-size: 17px; font-weight: 600; color: #1d2a30; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   #bq .label { font-size: 14px; color: #5a4a2a; white-space: nowrap; flex: none; }
   @media (max-width: 560px) { #bq { top: 84px; left: 12px; max-width: calc(100vw - 24px); } #bq .name { font-size: 15px; } }
-  /* the live camera in a picture frame, bottom right (camframe.js): a wooden edge, the pipeline's words under it */
-  #frame { position: fixed; right: 16px; bottom: 12px; width: min(24vw, 300px); box-sizing: border-box; padding: 10px 10px 8px; z-index: 5;
+  /* bottom right: a text field to add something by name, then the live camera in a picture frame (camframe.js) */
+  #corner { position: fixed; right: 16px; bottom: 12px; width: min(24vw, 300px); display: flex; flex-direction: column; gap: 8px; z-index: 5; }
+  #textThing { display: flex; gap: 4px; padding: 4px; box-sizing: border-box; background: var(--panel); border-radius: 10px;
+    box-shadow: 0 4px 12px #0003; }
+  #textThing input { flex: 1; min-width: 0; font: 12px system-ui, sans-serif; color: var(--fg); background: #ffffffb0;
+    border: 0; border-radius: 7px; padding: 7px 6px; }
+  #textThing input::placeholder { color: #4d5f70; opacity: 1; }
+  #textThing input:focus { outline: 2px solid #6aa65a; background: #fff; }
+  #textThing button { flex: none; border: 0; border-radius: 7px; padding: 3px 7px; font: 600 17px/1.2 system-ui, sans-serif;
+    background: #6aa65a; color: #fff; cursor: pointer; }
+  #textThing[data-busy] button { background: #b9a87c; cursor: default; }
+  /* the live camera in a picture frame (camframe.js): a wooden edge, the pipeline's words under it */
+  #frame { position: relative; box-sizing: border-box; padding: 10px 10px 8px;   /* .min is absolute: keep it in the frame, not over the + */
     background: linear-gradient(135deg, #d8b679, #a9773c); border-radius: 6px; box-shadow: 0 8px 20px #0005, inset 0 0 0 2px #f1dca455; font: inherit; }
   #frame .pic { position: relative; aspect-ratio: 4 / 3; background: #f4efe6; border-radius: 3px; overflow: hidden; }
   #frame .pic video, #frame .pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; margin: 0; border-radius: 0; }
@@ -72,13 +87,16 @@
   #frame[data-mode=done] .cap { background: #1f7a43e6; font-weight: 600; }
   #frame .min { position: absolute; top: 2px; right: 2px; width: 26px; height: 26px; border: 0; border-radius: 13px; background: #fff9; font-size: 14px; line-height: 1; cursor: pointer; }
   #frame[data-min="1"] .pic, #frame[data-min="1"] .cap { display: none; }
-  #frame[data-min="1"] { width: auto; padding: 4px; }
+  #frame[data-min="1"] { align-self: flex-end; width: auto; padding: 4px; }   /* a small square at the corner, as before */
   #frame[data-min="1"] .min { position: static; }
-  @media (max-width: 560px) { #frame { width: 34vw; right: 10px; bottom: 10px; padding: 6px; }
+  @media (max-width: 560px) { #corner { width: 34vw; right: 10px; bottom: 10px; }
+    #textThing { width: min(78vw, 300px); align-self: flex-end; }   /* the field reaches left, the camera frame stays small */
+    #frame { padding: 6px; }
+    #status .note { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
     #frame .cap { font-size: 11px; } #status { max-width: calc(100vw - 34vw - 40px); } }
   #card { position: fixed; right: 16px; bottom: calc(min(24vw, 300px) * 0.75 + 84px); max-width: min(280px, calc(100vw - 32px)); display: none;
     background: var(--panel); border-radius: 10px; padding: 8px 12px; }
-  @media (max-width: 560px) { #card { bottom: calc(34vw * 0.75 + 80px); } }
+  @media (max-width: 560px) { #card { bottom: calc(34vw * 0.75 + 126px); } }
   #card b { display: block; font-size: 15px; }
   #card .rel { margin-top: 4px; font-size: 13px; }
   #snd { position: fixed; right: 16px; top: 12px; font: 13px system-ui, sans-serif; color: var(--fg); background: var(--panel);
@@ -123,11 +141,17 @@
 <body>
 <div id="hud"><div id="err"></div></div>
 <div id="arrive" aria-live="polite"></div>
-<div id="status" data-tone="ok"><span class="dot"></span><span class="text"></span><span class="gen" hidden>⚠ Generator aus</span></div>
+<div id="status" data-tone="ok"><span class="dot"></span><span class="text"></span><span class="note" hidden></span><span class="gen" hidden>⚠ Generator aus</span></div>
 <div id="veil"><div><span class="pen">✏️</span> Leg los mit dem Malen!</div></div>
 <div id="hint">Tippe eine Figur an, um ihr mit der Kamera zu folgen · Esc beendet <span id="ver"></span></div>
 <div id="bq" hidden></div>
-<div id="frame" data-mode="live"><div class="pic"><div class="none"></div></div><div class="cap"><span class="txt"></span></div><button class="min" type="button" aria-label="Bild ein-/ausblenden"></button></div>
+<div id="corner">
+  <form id="textThing" autocomplete="off">
+    <input id="textThingIn" type="text" maxlength="80" enterkeyhint="send">
+    <button type="submit" aria-label="Etwas hinzufügen">+</button>
+  </form>
+  <div id="frame" data-mode="live"><div class="pic"><div class="none"></div></div><div class="cap"><span class="txt"></span></div><button class="min" type="button" aria-label="Bild ein-/ausblenden"></button></div>
+</div>
 <div id="card"></div>
 <div id="log" hidden></div>
 <button id="snd" type="button" aria-pressed="false">🔇 Ton an</button>
@@ -395,11 +419,51 @@ onLang(() => {
   document.getElementById('camBtn').textContent = t('cameraBtn');
   document.querySelector('#cam select').setAttribute('aria-label', t('cameraSelect'));
   document.querySelector('#cam .refresh').title = t('cameraRefresh');
-  document.querySelector('#cam img').alt = t('cameraImage');
+  const camImg = document.querySelector('#cam img, #frame img');   // camera.js moves it into the picture frame once the panel opens
+  if (camImg) camImg.alt = t('cameraImage');
   langBtn.replaceChildren(...['de', 'en'].flatMap((l, i) => [...(i ? [' | '] : []), Object.assign(document.createElement(l === lang() ? 'b' : 'span'), { textContent: l.toUpperCase() })]));
   langBtn.title = t('langTitle');
 });
 langBtn.addEventListener('click', e => { e.stopPropagation(); setLang(lang() === 'de' ? 'en' : 'de'); });
+
+// text → thing: say what to add ("eine Laterne"), Enter builds it in the book (POST /api/text-thing).
+// The 200 answer's id comes back for the tests; the generate watcher does the rest.
+const textForm = document.getElementById('textThing'), textIn = document.getElementById('textThingIn'), textBtn = textForm.querySelector('button');
+const pillNote = document.querySelector('#status .note');
+let noteTimer = 0;
+function note(msg, ms = 7000) {          // a short message inside the status pill (the pill's own text is status.js's)
+  clearTimeout(noteTimer);
+  pillNote.textContent = msg; pillNote.hidden = !msg;
+  if (msg) noteTimer = setTimeout(() => { pillNote.hidden = true; }, ms);
+}
+onLang(() => {
+  if (!textForm.dataset.busy) textIn.placeholder = t('textThingPlaceholder');
+  textBtn.title = t('textThingAdd'); textBtn.setAttribute('aria-label', t('textThingAdd'));
+});
+textForm.addEventListener('submit', async e => {
+  e.preventDefault();
+  if (textForm.dataset.busy) return;
+  const text = textIn.value.trim();
+  if (!text) { textIn.focus(); return; }
+  const started = performance.now();
+  textForm.dataset.busy = '1'; textBtn.setAttribute('aria-busy', 'true');
+  textIn.value = '';                                     // the field shows the build state, then it is free again
+  textIn.placeholder = t('textThingBusy');
+  let error = '';
+  try {
+    // X-Kritzel: 1 is the same-site guard /api/newworld uses too: no other page can send it without a preflight
+    const r = await fetch('/api/text-thing', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Kritzel': '1' }, body: JSON.stringify({ text }) });
+    if (r.status === 400) error = (await r.json().catch(() => null))?.error || t('textThingRejected');
+    else if (!r.ok) error = t('textThingNoServer');       // an old server has no such endpoint: said once, never retried
+  } catch { error = t('textThingNoServer'); }
+  if (error) textIn.value = text;                        // keep what was typed, so it can be changed
+  const rest = 700 - (performance.now() - started);      // "wird gebaut …" stays readable for a moment
+  if (rest > 0) await new Promise(ok => setTimeout(ok, rest));
+  delete textForm.dataset.busy; textBtn.removeAttribute('aria-busy');
+  textIn.placeholder = t('textThingPlaceholder');
+  if (error) note(error);
+  textBtn.blur(); textIn.blur();                          // the book has the keyboard again (not the field or its button)
+});
 
 // world mode (kept on the server, read by the generate watcher) and 'new world' with an inline second tap
 const modeBtn = document.getElementById('modeBtn'), newBtn = document.getElementById('newBtn');
