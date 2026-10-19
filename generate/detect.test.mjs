@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 process.env.PATH = join(import.meta.dirname, 'test-bin') + ':' + process.env.PATH;
 delete process.env.KRITZEL_MODEL; delete process.env.KRITZEL_DETECT_MODEL;
-const { processFrame, parseList, slots } = await import('./generate.mjs');
+const { processFrame, parseList, unsaid, slots } = await import('./generate.mjs');
 
 const stone = `export const meta = { name: 'Stein', drawing: 'a round stone', paper: { x: 0.3, y: 0.5 } };
 export function build(ctx) {
@@ -27,6 +27,28 @@ test('the list is read leniently and only its sane entries are kept', () => {
   const l = parseList('Sure: {"things": [' + JSON.stringify(entry('ein Stein', [0.1, 0.2, 0.3, 1.4])) + ', {"box": [0.5, 0.5, 0.4, 0.6], "de": "x", "en": "x", "what": "x"}, {"box": "a", "de": "y"}]}');
   assert.equal(l.length, 1);
   assert.deepEqual(l[0].box, [0.1, 0.2, 0.3, 1]);       // clamped to the image
+});
+
+test('a drawn bubble is kept only when its words are readable, short, child-safe and of a known kind', () => {
+  const says = v => parseList(JSON.stringify({ things: [{ ...entry('ein Strichmännchen', [0.1, 0.1, 0.4, 0.6]), says: v }] }))[0].says;
+  assert.deepEqual(says({ text: ' Hallo! ', kind: 'speech' }), { text: 'Hallo!', kind: 'speech' });
+  assert.deepEqual(says({ text: 'Ich mag Kuchen', kind: 'thought' }), { text: 'Ich mag Kuchen', kind: 'thought' });
+  assert.equal(says(null), undefined);
+  assert.equal(says({ text: 'Blut!', kind: 'speech' }), undefined);           // not child-safe
+  assert.equal(says({ text: 'you are stupid', kind: 'speech' }), undefined);  // not child-safe in English either
+  assert.equal(says({ text: 'Die!', kind: 'speech' }), undefined);
+  assert.deepEqual(says({ text: 'Die Katze ist lieb', kind: 'speech' }), { text: 'Die Katze ist lieb', kind: 'speech' });   // the German article
+  assert.equal(says({ text: 'x'.repeat(61), kind: 'speech' }), undefined);   // too long to be a bubble's words
+  assert.equal(says({ text: 'Hallo', kind: 'shout' }), undefined);
+  assert.equal(says({ text: 3, kind: 'speech' }), undefined);
+});
+
+test('the bubble words missing from the module are asked for; present (even escaped) they are not', () => {
+  assert.deepEqual(unsaid('greet: [{ de: "Hallo!" }]', null), []);
+  assert.deepEqual(unsaid("greet: [{ de: 'Hallo!' }]", { text: 'Hallo!', kind: 'speech' }), []);
+  assert.deepEqual(unsaid("chat: [{ de: 'Ich bin\\'s' }]", { text: "Ich bin's", kind: 'thought' }), []);
+  assert.match(unsaid("greet: [{ de: 'Hi' }]", { text: 'Hallo!', kind: 'speech' })[0], /first greet line .*"Hallo!"/);
+  assert.match(unsaid("greet: [{ de: 'Hi' }]", { text: 'Ich mag Kuchen', kind: 'thought' })[0], /first chat line .*💭/);
 });
 
 async function sheet(list, reply) {
