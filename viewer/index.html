@@ -448,7 +448,8 @@ textForm.addEventListener('submit', async e => {
   textIn.placeholder = t('textThingBusy');
   let error = '';
   try {
-    const r = await fetch('/api/text-thing', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+    // X-Kritzel: 1 is the same-site guard /api/newworld uses too: no other page can send it without a preflight
+    const r = await fetch('/api/text-thing', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Kritzel': '1' }, body: JSON.stringify({ text }) });
     if (r.status === 400) error = (await r.json().catch(() => null))?.error || t('textThingRejected');
     else if (!r.ok) error = t('textThingNoServer');       // an old server has no such endpoint: said once, never retried
   } catch { error = t('textThingNoServer'); }
