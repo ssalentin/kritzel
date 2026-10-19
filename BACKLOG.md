@@ -40,3 +40,8 @@ Ordered by fun per effort; the first five are being started right away.
 - **Day and night by itself.** Optionally the sun goes down slowly on its own, and the
   characters go to sleep in their houses.
 - **Bigger touch targets.** The viewer works on a tablet next to the paper.
+- **Jev's skip rule vs. colouring in (QA, 2026-10-19).** Capture skips a frame when Jev is
+  confidently "unchanged", but a pure colouring-in change reads unchanged (0.77) with
+  coloured-in at 0.04 (pair 20261015-223105). Today the pixel detector sees no diff there, so
+  the skip has not fired. Before trusting it, either exclude frames whose pixels changed inside
+  an existing drawing, or require two consecutive confident "unchanged" answers.

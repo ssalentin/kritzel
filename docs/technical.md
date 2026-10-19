@@ -125,6 +125,19 @@ this frame's, `[1, 0, dx, 0, 1, dy]`; `null` when it couldn't be measured).
 Nothing is written while a hand moves over the paper or when nothing changed. Watch for the
 `.jpg`: it is renamed in last, so its `.json` is always there already.
 
+While the picture settles, capture also asks Jev (TypeSafe, through OpenRouter) what changed:
+one small Decisions request with the sheet before and after, six yes/no questions (new drawing,
+addition, coloured in, crossed out, relabel, unchanged) and a box around the new drawing. It
+runs on the camera's small preview in parallel with the full snapshot, so it adds no time to the
+1.2 s wait; the answer lands in the frame's JSON as `jev: {changed, kind, box, confidence,
+seconds}` (`changed` is the probability that something changed, 0 when Jev is sure nothing did;
+`confidence` is the box's). When Jev is sure (changed ≥ 0.6) and its box is confident (≥ 0.4),
+that box becomes `changed_box` — the crop generate uses — and the pixel detector's own box is
+kept as `pixel_box`. A confident "nothing changed" from Jev skips a small pixel change instead
+of handing it on; a big change always goes through, and a hand on the paper is checked before
+Jev's answer is used. The status pill says what the change is. `KRITZEL_JEV=0` turns this off;
+without an `OPENROUTER_API_KEY` it is off too.
+
 Keep the paper inside the camera's view: capture ignores the outer edge of the frame
 (about 60 px at 1080p), so a drawing made only there is never handed on. A sheet that
 slides or turns a little is aligned first and doesn't count as new.
@@ -154,6 +167,17 @@ also in `/api/status`), and the status pill shows it briefly when it changes.
 **🌍 Neue Welt / New world** (asks "Sicher?" on the first tap; a second tap within 4 s starts it)
 runs `scripts/newworld.sh` on the server (`POST /api/newworld`, at most every 10 s): the world is
 archived to `worlds/`, never deleted, and the page starts empty.
+
+### An optional director for the figures
+
+The sim picks every goal locally. If the server is started with `KRITZEL_THINK=1` and an
+`OPENROUTER_API_KEY` in its environment, the viewer also asks `POST /api/think` every six seconds
+for a second opinion on 3–5 figures. `serve.py` sends one TypeSafe Choice per figure to Jev
+(`typesafe/jev-1.14` through OpenRouter, 2 s timeout, one request at a time, 3 s cache) and the
+key never reaches the browser. An answer is a preference for that figure's next goal, valid for
+eight seconds; the local utility pick stays the default, and a slow, failed or switched-off
+director leaves it in charge. `GET /api/think` says whether the director is on. Off unless both
+are set: `KRITZEL_THINK=0` (or no key) behaves exactly like before and makes no director requests.
 
 ### Starting a new sheet
 
