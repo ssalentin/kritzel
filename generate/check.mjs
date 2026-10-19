@@ -40,18 +40,41 @@ export function staticCheck(code) {
   return problems;
 }
 
+// How to get a child with no network at all. Plain `unshare --net` is best (nothing else changes);
+// some kernels/setups only allow a network namespace inside a new user namespace, so fall back to
+// `unshare --user --map-root-user --net` — still an empty network, the child sees a throwaway root.
+let unshareArgs = null;
+function unshareFlags() {
+  if (unshareArgs) return Promise.resolve(unshareArgs);
+  const tryFlags = flags => new Promise(ok => {
+    const p = track(spawn('unshare', [...flags, 'true'], { stdio: ['ignore', 'ignore', 'ignore'] }));
+    p.on('error', () => ok(false));
+    p.on('close', code => ok(code === 0));
+  });
+  return (async () => {
+    for (const flags of [['--net'], ['--user', '--map-root-user', '--net']]) if (await tryFlags(flags)) return (unshareArgs = flags);
+    return (unshareArgs = []);
+  })();
+}
+
 // Runs check-run.mjs on the code in a sandboxed child: its own empty network namespace (no
 // network at all), node --permission (reads only what it needs, no writes, no child processes,
 // no workers, no addons), killed after TIMEOUT_MS (an endless loop is a failed check).
 function runSandboxed(mode, code, extra = []) {
+  return unshareFlags().then(flags => runIn(mode, code, extra, flags));
+}
+
+function runIn(mode, code, extra, unshare) {
   const dir = mkdtempSync(join(tmpdir(), 'kritzel-check-'));
   const file = join(dir, 'thing.mjs');
   writeFileSync(file, code);
   const reads = [join(HERE, 'check-run.mjs'), join(HERE, 'node_modules', 'three'), join(HERE, 'package.json'), join(VIEWER, 'characters.js'), join(VIEWER, 'dialogues.js'),
     join(VIEWER, 'sim.js'), join(VIEWER, 'sound.js'), join(VIEWER, 'i18n.js'), join(VIEWER, 'portable.js'), join(VIEWER, 'book.js'), join(HERE, 'node_modules', 'rot-js'), dir];   // the sim and what it imports
-  const args = ['--net', process.execPath, '--permission', ...reads.map(p => '--allow-fs-read=' + p), join(HERE, 'check-run.mjs'), mode, file, ...extra];
+  const args = [...unshare, process.execPath, '--permission', ...reads.map(p => '--allow-fs-read=' + p), join(HERE, 'check-run.mjs'), mode, file, ...extra];
   return new Promise(ok => {
-    const p = track(spawn('unshare', args, { stdio: ['ignore', 'pipe', 'pipe'], cwd: dir }));
+    const [cmd, cmdArgs] = unshare.length ? ['unshare', args] : [process.execPath, args.slice(unshare.length)];
+    if (!unshare.length) console.error('kritzel: no unshare usable here, checking things without a network namespace');
+    const p = track(spawn(cmd, cmdArgs, { stdio: ['ignore', 'pipe', 'pipe'], cwd: dir }));
     let out = '', err = '', timedOut = false;
     p.stdout.on('data', d => { if (out.length < 1e6) out += d; });
     p.stderr.on('data', d => { if (err.length < 1e5) err += d; });
