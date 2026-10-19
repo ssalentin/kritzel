@@ -326,6 +326,106 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   // a trace of the goal picks, for reading in a headless viewer (brain.trace()): who, goal, target, and why
   const picks = [];
   const tracePick = (a, g) => { picks.push({ t: +now.toFixed(1), who: a.id, goal: g.type, to: g.target?.id ?? g.target?.name ?? g.item?.name ?? (g.cell ? 'cell' : null), why: g.why ?? null }); if (picks.length > 400) picks.shift(); };
+
+  // ---------- the Jev director (optional, server-side): a slow opinion on what to do next ----------
+  // One batched request every ~6 s for 3–5 figures, never more than one in flight. An answer is a
+  // preference for that figure's next goal, valid for 8 s; the local utility pick stays the default
+  // and the fallback. Off unless the server says KRITZEL_THINK=1 and a key is configured.
+  const THINK_EVERY = 6, THINK_USE_S = 8;
+  let thinkOn = false, thinkProbed = false, thinkAt = -Infinity, thinkBusy = false, thinkCursor = 0, thinkRound = 0;
+  let fps = 0, frames = 0, fpsAt = typeof performance === 'undefined' ? 0 : performance.now();
+  const thinkStats = { requests: 0, answers: 0, goalsApplied: 0, failed: 0, latency: [], cost: 0 };
+  const moodWord = a => a.fear > 0.4 ? 'scared' : a.energy < 0.3 ? 'tired' : a.hunger > 0.6 ? 'hungry' : a.social < 0.3 ? 'lonely' : 'happy';
+  const needsOf = a => [['tired', 1 - a.energy], ['hungry', a.hunger], ['lonely', 1 - a.social], ['scared', a.fear]]
+    .sort((p, q) => q[1] - p[1]).slice(0, 2).map(([k, v]) => `${k} ${Math.round(v * 100)}%`);
+  const probeThink = () => {
+    if (thinkProbed || !location.pathname.startsWith('/viewer/')) return;   // an archived world has no director
+    thinkProbed = true;                                   // asked once: switching it on is a page reload, not traffic every minute
+    fetch('/api/think', { cache: 'no-store' }).then(r => r.json()).then(j => { thinkOn = !!j.on; }).catch(() => { thinkOn = false; });
+  };
+  // what the director sees: each figure's mood, its two strongest needs, and the closest three things or figures
+  function thinkBody(picked) {
+    const near = a => [
+      ...actors.filter(o => o !== a && !o.hidden).map(o => ({ name: o.name || o.id, kind: 'figure', distance: Math.hypot(o.pos.x - a.pos.x, o.pos.z - a.pos.z) })),
+      ...(thingsNow || []).map(t => ({ name: t.name, kind: 'thing', distance: Math.hypot(t.x - a.pos.x, t.z - a.pos.z) })),
+    ].sort((p, q) => p.distance - q.distance).slice(0, 3).map(t => ({ ...t, distance: +t.distance.toFixed(1) }));
+    return {
+      scene: { night: +nightNow.toFixed(2), weather: Object.keys(weatherNow || {}).filter(k => weatherNow[k] === true) },
+      actors: picked.map(a => ({ id: a.id, name: a.name || a.id, kind: a.kind, mood: moodWord(a), needs: needsOf(a), nearby: near(a) })),
+    };
+  }
+  function askDirector() {
+    const pool = actors.filter(a => !a.hidden);
+    if (!pool.length) return;
+    const n = Math.min(5, Math.max(3, Math.round(pool.length / 2))), picked = [];
+    for (let i = 0; i < n && i < pool.length; i++) picked.push(pool[(thinkCursor + i) % pool.length]);
+    thinkCursor = (thinkCursor + picked.length) % pool.length;
+    thinkRound++;
+    thinkBusy = true; thinkStats.requests++;
+    const t0 = performance.now();
+    fetch('/api/think', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Kritzel': '1' }, body: JSON.stringify(thinkBody(picked)) })
+      .then(r => r.ok ? r.json() : {})
+      .then(res => {
+        const ms = Math.round(performance.now() - t0), goals = res.goals || {};
+        thinkStats.latency.push(ms);
+        thinkStats.cost += res.usage?.cost || 0;
+        let got = 0;
+        for (const [id, g] of Object.entries(goals)) {
+          const a = byId[id];
+          if (!a || a.hidden || !(g.goal in jevGoals)) continue;
+          a.think = { goal: g.goal, at: now, round: thinkRound };      // a preference for the next goal, for 8 s
+          got++;
+          // a figure standing between goals takes it now, rather than waiting up to a turn for the 8 s to run out
+          if (!a.goal && !MV?.special(a, envNow) && now >= a.busyUntil && !(a.flee && now < a.flee.until)) decide(a);
+        }
+        if (got) thinkStats.answers += got; else thinkStats.failed++;
+        const want = Object.entries(goals).map(([id, g]) => `${id}:${g.goal}`).join(', ') || 'none';
+        console.info(`[think] round ${thinkRound}: ${picked.length} figures, ${ms} ms, $${(res.usage?.cost || 0).toFixed(6)}, answers ${want}`);
+      })
+      .catch(() => { thinkStats.failed++; console.info(`[think] round ${thinkRound}: no answer`); })
+      .finally(() => { thinkBusy = false; });
+  }
+  const nearestOther = a => actors.filter(o => o !== a && !o.hidden)
+    .sort((p, q) => Math.hypot(p.pos.x - a.pos.x, p.pos.z - a.pos.z) - Math.hypot(q.pos.x - a.pos.x, q.pos.z - a.pos.z))[0] || null;
+  // the open cell farthest from everyone else: where a figure goes when it wants to be out of the way
+  const farthestCell = a => {
+    const others = actors.filter(o => o !== a && !o.hidden);
+    if (!others.length) return pick(groundCells);
+    let best = null, bd = -1;
+    for (const [x, y] of groundCells) {
+      const [wx, wz] = toWorld(x, y), d = Math.min(...others.map(o => Math.hypot(o.pos.x - wx, o.pos.z - wz)));
+      if (d > bd) { bd = d; best = [x, y]; }
+    }
+    return best;
+  };
+  // one of the director's ten words → a goal the sim can run here and now; null when it no longer applies
+  const jevGoals = {
+    explore: () => groundCells.length ? { type: 'wander', cell: pick(groundCells) } : null,
+    greet: a => { const o = nearestOther(a); return o ? { type: 'approach', target: o } : null; },
+    chat: a => { const o = nearestOther(a); return o ? { type: 'approach', target: o } : null; },
+    play: a => { const o = nearestOther(a); return o ? { type: 'approach', target: o } : null; },
+    dance: a => { const o = nearestOther(a); return o ? { type: 'approach', target: o } : null; },
+    eat: a => {
+      const sp = spots.find(s => s.kind === 'food') || spots.find(s => s.kind === 'egg' && !s.found), c = sp && spotCell(sp, a);
+      return c ? { type: 'eat', spot: sp, cell: c } : null;
+    },
+    rest: () => ({ type: 'rest', until: now + 20 + nightNow * 20 }),
+    hide: a => {
+      const door = spots.find(s => s.kind === 'door'), c = door && spotCell(door, a);
+      if (c) return { type: 'visit', spot: door, cell: c, phase: 'walk' };
+      const f = farthestCell(a);
+      return f ? { type: 'wander', cell: f } : null;
+    },
+    follow: a => {
+      const L = a.leader && byId[a.leader], t = L && Math.hypot(L.pos.x - a.pos.x, L.pos.z - a.pos.z) > 2 ? L : nearestOther(a);
+      return t && Math.hypot(t.pos.x - a.pos.x, t.pos.z - a.pos.z) > 2 ? { type: 'follow', target: t } : null;
+    },
+    inspect: a => {
+      const t = (thingsNow || []).filter(t => t.at).sort((p, q) => q.at - p.at)[0] || (thingsNow || [])[0];
+      const c = t && nearestCell(t.x, t.z, a);
+      return c ? { type: 'wander', cell: [c.x, c.y], target: t } : null;
+    },
+  };
   function decide(a) {
     const opts = [];
     const add = (u, goal) => opts.push({ u: u + R() * 0.3, goal });
@@ -364,7 +464,21 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
       if (L && dist(a, L) > 2) add(0.45 + a.traits.loyalty, { type: 'follow', target: L });
     }
     opts.sort((p, q) => q.u - p.u);
-    a.goal = opts[0].goal;
+    const local = opts[0].goal;
+    // the director's preference wins over the local pick, unless something urgent is happening
+    const pref = a.think && now - a.think.at <= THINK_USE_S && a.think.round !== a.think.used ? a.think : null;
+    let chosen = local;
+    if (pref && local?.type !== 'flee' && local?.type !== 'chase') {
+      const g = jevGoals[pref.goal]?.(a);
+      if (g) {
+        g.why = 'jev';
+        a.think.used = pref.round;
+        thinkStats.goalsApplied++;
+        console.info(`[think] ${a.id}: ${pref.goal} instead of ${local?.type ?? 'nothing'}`);
+        chosen = g;
+      }
+    }
+    a.goal = chosen;
     tracePick(a, a.goal);
     a.goalSince = now;
     if (a.goal.type === 'rest') say(a, line(a, 'rest'), 2);
@@ -626,6 +740,9 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   return {
     addActor, removeActor,
     actors: () => actors, byId: () => byId, spots: () => spots, weather: () => weatherNow, trace: () => picks.slice(), solved: () => X.solvedQuests?.() ?? [],   // read-only views for the UI and tests
+    // the director's numbers for a measured run (latency in ms, cost in dollars, fps of the whole page)
+    think: () => ({ on: thinkOn, ...thinkStats, latency: thinkStats.latency.slice(), cost: +thinkStats.cost.toFixed(8),
+      median: thinkStats.latency.length ? [...thinkStats.latency].sort((p, q) => p - q)[Math.floor(thinkStats.latency.length / 2)] : null, fps }),
     // obstacles/spots changed (a drawn thing was added, changed or removed)
     setWorld({ trees: tr, spots: sp, feet: ft = feet }) {
       feet = ft;
@@ -670,6 +787,14 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     update(t, dt, { cover = 0, birdsLow = false, night = 0, lamps = [], weather = {}, perches = [], water = [] } = {}) {
       envNow = { perches, water, feet, actors }; weatherNow = weather;     // climbers keep off things and figures (moves.js)
       now = t; nightNow = night; lampsNow = lamps;
+      // the director: ask every ~6 s while the page is visible, and only when the server has it switched on
+      frames++;
+      if (performance.now() - fpsAt >= 2000) { fps = Math.round(frames * 1000 / (performance.now() - fpsAt)); frames = 0; fpsAt = performance.now(); }
+      probeThink();
+      if (thinkOn && !thinkBusy && now >= thinkAt + THINK_EVERY && (globalThis.document?.visibilityState ?? 'visible') === 'visible') {
+        thinkAt = now;
+        askDirector();
+      }
       // a storm sends everyone in through a door; rain only now and then (they'd rather splash)
       coverNow = Math.max(cover, weather.lightning ? 1 : weather.rain ? 0.4 : 0);
       if (weather.rain) for (const a of actors) {
