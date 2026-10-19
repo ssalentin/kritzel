@@ -37,6 +37,8 @@ test('a drawn bubble is kept only when its words are readable, short, child-safe
   assert.equal(says({ text: 'Blut!', kind: 'speech' }), undefined);           // not child-safe
   assert.equal(says({ text: 'you are stupid', kind: 'speech' }), undefined);  // not child-safe in English either
   assert.equal(says({ text: 'Die!', kind: 'speech' }), undefined);
+  assert.equal(says({ text: 'You will die Tom', kind: 'speech' }), undefined);   // English before a name: no German around it
+  assert.equal(says({ text: 'die Max', kind: 'speech' }), undefined);
   assert.deepEqual(says({ text: 'Die Katze ist lieb', kind: 'speech' }), { text: 'Die Katze ist lieb', kind: 'speech' });   // the German article
   assert.equal(says({ text: 'x'.repeat(61), kind: 'speech' }), undefined);   // too long to be a bubble's words
   assert.equal(says({ text: 'Hallo', kind: 'shout' }), undefined);
