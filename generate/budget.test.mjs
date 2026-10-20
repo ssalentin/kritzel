@@ -5,6 +5,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 process.env.PATH = join(import.meta.dirname, 'test-bin') + ':' + process.env.PATH;
+process.env.KRITZEL_PROVIDER = 'claude';
 Object.assign(process.env, { KRITZEL_POOL_DEBOUNCE_S: '0.05', KRITZEL_POOL_PER_HOUR: '2', KRITZEL_DIALOGUE_MODEL: 'claude-haiku-5-5' });
 const { wantDialogues, situationChanges } = await import('./generate.mjs');
 

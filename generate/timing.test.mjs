@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 process.env.PATH = join(import.meta.dirname, 'test-bin') + ':' + process.env.PATH;
+process.env.KRITZEL_PROVIDER = 'claude';
 delete process.env.KRITZEL_MODEL;
 const { processFrame } = await import('./generate.mjs');
 

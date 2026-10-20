@@ -47,10 +47,20 @@ setup() {
   else note "no numpy: capture still works, but recognising a moved sheet takes seconds instead of a fraction of one (sudo apt install python3-numpy)"; fi
   if command -v convert >/dev/null && command -v identify >/dev/null; then ok "ImageMagick"; else bad "ImageMagick"; note "sudo apt install imagemagick (cuts out what was drawn)"; fi
   if command -v unshare >/dev/null; then ok "unshare"; else bad "unshare (Linux util-linux)"; note "the drawing-to-code step runs on Linux; the camera can be on another machine"; fi
-  if ! command -v claude >/dev/null; then
-    bad "Claude Code"; note "npm install -g @anthropic-ai/claude-code, then: claude auth login"
-  elif claude auth status 2>/dev/null | grep -q '"loggedIn": true'; then ok "Claude Code, logged in"
-  else bad "Claude Code is not logged in"; note "run: claude auth login   (sign in with your Claude account; no API key needed)"; fi
+  case "${KRITZEL_PROVIDER:-claude}" in
+    openrouter)
+      if [ -n "${OPENROUTER_API_KEY:-}" ]; then ok "OpenRouter key (KRITZEL_PROVIDER=openrouter)"
+      else bad "OPENROUTER_API_KEY is not set"
+        note "create a key at https://openrouter.ai/keys, then: export OPENROUTER_API_KEY=…"; fi ;;
+    claude)
+      if ! command -v claude >/dev/null; then
+        bad "Claude Code"; note "npm install -g @anthropic-ai/claude-code, then: claude auth login"
+      elif claude auth status 2>/dev/null | grep -q '"loggedIn": true'; then ok "Claude Code, logged in"
+      else bad "Claude Code is not logged in"; note "run: claude auth login   (sign in with your Claude account; no API key needed)"; fi
+      note "OpenRouter is opt-in: KRITZEL_PROVIDER=openrouter + OPENROUTER_API_KEY" ;;
+    pi) note "pi models through KRITZEL_PROVIDER=pi (no OpenRouter key needed)" ;;
+    *) bad "KRITZEL_PROVIDER=${KRITZEL_PROVIDER}"; note "use openrouter, claude or pi" ;;
+  esac
   if [ -d generate/node_modules/three ]; then ok "generator packages"
   elif command -v npm >/dev/null; then
     echo "  installing the generator's packages…"

@@ -89,7 +89,8 @@ its name, and the others walk over to look. A whole new sheet takes about 24 sec
 ## Getting started
 
 You need a computer with Linux for Kritzel itself (the camera may sit on another computer) and
-a Claude account for reading the drawings. No API key is needed.
+a Claude account for reading the drawings (`claude auth login`). OpenRouter is opt-in: run
+`./kritzel setup` with `KRITZEL_PROVIDER=openrouter` and export `OPENROUTER_API_KEY`.
 
 ```bash
 git clone https://github.com/ssalentin/kritzel.git && cd kritzel

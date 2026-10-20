@@ -1,40 +1,56 @@
-// One headless model call: `claude -p` on this host's existing Claude Code login, or (a model id with a provider
-// prefix, e.g. KRITZEL_MODEL=deepseek/deepseek-flash) a warm pi process, see pi.mjs.
+// One headless model call. KRITZEL_PROVIDER picks the backend: `claude -p` on this host's Claude Code
+// login (the default), OpenRouter (opt-in; one OPENROUTER_API_KEY, see openrouter.mjs), or a warm pi
+// process (see pi.mjs).
 // One shot, no agent loop: the image goes inline (stream-json input), all tools are off and
 // the default system prompt is replaced. (--bare would be shorter but ignores the OAuth login.)
 // A camera frame is input from strangers; with no tools the reply is just text we check.
 import { spawn } from 'node:child_process';
 import { track } from './children.mjs';
 import { tmpdir } from 'node:os';
-import { isPiModel, piCall } from './pi.mjs';
+import { piCall } from './pi.mjs';
+import { openrouterCall, hasKey } from './openrouter.mjs';
 
-export const MODEL = process.env.KRITZEL_MODEL || 'claude-sonnet-5-5';
+export const PROVIDERS = ['openrouter', 'claude', 'pi'];
+export const PROVIDER = String(process.env.KRITZEL_PROVIDER || 'claude').toLowerCase();
+if (!PROVIDERS.includes(PROVIDER)) throw new Error(`KRITZEL_PROVIDER must be one of ${PROVIDERS.join(', ')} (got "${process.env.KRITZEL_PROVIDER}")`);
+const MODEL_DEFAULTS = { openrouter: 'deepseek/deepseek-v4.1-flash', claude: 'claude-sonnet-5-5', pi: 'deepseek/deepseek-flash' };
+export const MODEL = process.env.KRITZEL_MODEL || MODEL_DEFAULTS[PROVIDER];
 // KRITZEL_EFFORT is for measuring; an unknown value falls back to low instead of failing every call
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const EFFORT = EFFORTS.includes(process.env.KRITZEL_EFFORT) ? process.env.KRITZEL_EFFORT : 'low';
-export const FALLBACK_MODEL = process.env.KRITZEL_FALLBACK_MODEL || 'claude-opus-5-5';
+// the fallback fix is another try at the same drawing, with the problems spelled out; on OpenRouter the
+// default is the same model (no second provider login is needed)
+export const FALLBACK_MODEL = process.env.KRITZEL_FALLBACK_MODEL || (PROVIDER === 'openrouter' ? MODEL : 'claude-opus-5-5');
 // a model through pi ("deepseek/deepseek-flash") that fails before its first text: this Claude model takes the call
 export const PI_FALLBACK = process.env.KRITZEL_PI_FALLBACK || 'claude-sonnet-5-5';
+
+// Null when this configuration can run, else what to tell the person at startup.
+export function providerProblem() {
+  if (PROVIDER === 'openrouter' && !hasKey()) return 'KRITZEL_PROVIDER=openrouter needs OPENROUTER_API_KEY: export the key from https://openrouter.ai/keys';
+  return null;
+}
 
 // images: JPEG Buffers, in order. Returns { text, cost, seconds, model }.
 // onText(textSoFar), if given, is called as the reply streams in (to narrate what is being built).
 // signal (an AbortSignal) stops the call early: it then resolves with the text so far and aborted: true.
 // Claude Code updates itself in place: for a few seconds the claude binary is missing (spawn ENOENT).
 // Wait and try again, so a self-update never costs a drawing.
-// A model id with a provider prefix goes through pi (pi.mjs); if that fails before any text came, the same call
-// goes to PI_FALLBACK, so an outage or a refused image costs a few seconds, not the drawing. Once text has
-// streamed (and maybe been acted on), a failure is the caller's, as with claude.
+// A pi call that fails before any text came goes to PI_FALLBACK, so an outage or a refused image costs a
+// few seconds, not the drawing. Once text has streamed (and maybe been acted on), a failure is the
+// caller's, as with claude and OpenRouter.
 let fellBackOnce = false;
 export async function oneShot(opts, tries = 3) {
-  opts = { ...opts, model: opts.model || MODEL };
-  if (isPiModel(opts.model)) {
+  const provider = opts.provider || PROVIDER;
+  opts = { ...opts, provider, model: opts.model || MODEL };
+  if (provider === 'openrouter') return openrouterCall(opts);
+  if (provider === 'pi') {
     try { return await piCall(opts); }
     catch (e) {
       if (e.sofar || opts.signal?.aborted) throw e;
       // said once per run: every call falling back would be slower than plain Claude, and silent
       const to = opts.fallback || PI_FALLBACK;          // a caller may name its own (the dialogue pool: Haiku)
       if (!fellBackOnce) { fellBackOnce = true; console.error(`${opts.model} failed, ${to} takes the call (said once per run): ${e.message.slice(0, 200)}`); }
-      const r = await oneShot({ ...opts, model: to, fallback: null }, tries);
+      const r = await oneShot({ ...opts, model: to, provider: 'claude', fallback: null }, tries);
       return { ...r, fellBack: e.message.slice(0, 200) };
     }
   }

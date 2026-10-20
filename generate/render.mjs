@@ -57,7 +57,8 @@ export async function renderThing(thingsDir, outBase, { focus = [0, 0], height =
       const box = (await page.locator('#err').textContent().catch(() => '')) || '';
       if (box.trim()) errors.push(...box.trim().split('\n'));
       const path = `${outBase}-${name}.png`;
-      await page.screenshot({ path });
+      // software WebGL on a headless host can take ~40 s to compose the first frame; 30 s timed out
+      await page.screenshot({ path, timeout: 120_000 });
       shots.push(path);
     }
     return { shots, errors: [...new Set(errors)] };
