@@ -24,11 +24,19 @@
   #status[data-tone=warn] .dot { background: #e0a020; }
   #status[data-tone=bad] .dot { background: #d0443a; }
   #status .text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-size: 15px; }
+  #status .note { color: #b3261e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-size: 14px; }
+  #status .note[data-tone=ok] { color: #2f6b46; }
+  /* a message of ours (a refused request) takes the pill for its few seconds: nothing is clipped behind the old text */
+  #status:has(.note:not([hidden])) .text, #status:has(.note:not([hidden])) .gen { display: none; }
   #status .gen { color: #b3261e; white-space: nowrap; }
   #status.calm { padding: 5px; }
+  #status.calm:has(.note:not([hidden])) { padding: 4px 10px 4px 8px; }
   #status.calm .text, #status.calm img { display: none; }
+  /* no text, no note: the pill is not there at all (the camera frame owns camera state) */
+  #status.silent { display: none; }
+  #status.silent:has(.note:not([hidden])), #status.silent:has(.gen:not([hidden])) { display: flex; }
   @keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
-  @media (max-width: 560px) { #status { top: auto; bottom: 52px; max-width: calc(100vw - 32px); border-radius: 16px; }
+  @media (max-width: 560px) { #status { top: auto; bottom: 245px; max-width: calc(100vw - 32px); border-radius: 16px; }
     #status .text { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; } }
   /* the name of a drawing that just came alive, big for a moment (status.js) */
   #arrive { position: fixed; left: 50%; top: 16%; transform: translate(-50%, 0) scale(.6); opacity: 0; pointer-events: none;
@@ -45,22 +53,41 @@
   #log h3 { margin: 0 0 6px; font-size: 15px; }
   #log .day { margin: 10px 0 2px; font-weight: 600; color: #557; }
   #log li { margin: 2px 0; } #log ul { margin: 0; padding-left: 18px; } #log code { color: #889; font-size: 11px; }
-  /* the build queue, top left: which things are being built (buildqueue.js) */
-  #bq { position: fixed; left: 16px; top: 60px; max-width: min(320px, calc(100vw - 32px)); box-sizing: border-box; padding: 6px 4px; z-index: 4;
-    background: #fff8e6; border-radius: 4px 10px 6px 12px; box-shadow: 0 1px 0 #d9c9a3, 0 6px 14px #0002; transform: rotate(-1deg); }
-  #bq::before { content: ''; position: absolute; top: -7px; left: 14px; width: 42px; height: 12px; background: #f2dfa6aa; transform: rotate(3deg); }
+  /* the build queue, top left: which things are being built (buildqueue.js), in the panel language */
+  #bq { position: fixed; left: 16px; top: 60px; max-width: min(320px, calc(100vw - 32px)); box-sizing: border-box; padding: 5px; z-index: 4;
+    background: var(--panel); border-radius: 10px; box-shadow: 0 4px 12px #0003; }
   #bq[hidden] { display: none; }
-  #bq .row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 5px 10px; transition: opacity 1s; }
+  #bq .row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 4px 8px; transition: opacity 1s; }
   #bq .row[data-state=done] { opacity: .75; }
   #bq .dot { flex: none; align-self: center; width: 9px; height: 9px; border-radius: 50%; background: #c9b98f; }
   #bq .row[data-state=building] .dot { background: #e0a020; animation: pulse .8s ease-in-out infinite alternate; }
   #bq .row[data-state=done] .dot { background: #3a9d5d; }
   #bq .row[data-state=failed] .dot { background: #d0443a; }
-  #bq .name { font-size: 17px; font-weight: 600; color: #1d2a30; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  #bq .label { font-size: 14px; color: #5a4a2a; white-space: nowrap; flex: none; }
-  @media (max-width: 560px) { #bq { top: 84px; left: 12px; max-width: calc(100vw - 24px); } #bq .name { font-size: 15px; } }
-  /* the live camera in a picture frame, bottom right (camframe.js): a wooden edge, the pipeline's words under it */
-  #frame { position: fixed; right: 16px; bottom: 12px; width: min(24vw, 300px); box-sizing: border-box; padding: 10px 10px 8px; z-index: 5;
+  #bq .name { font-size: 14px; font-weight: 600; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  #bq .label { font-size: 12px; color: #4d5f70; white-space: nowrap; flex: none; }
+  @media (max-width: 560px) { #bq { top: 84px; left: 12px; max-width: calc(100vw - 24px); } #bq .name { font-size: 13px; } }
+  /* bottom right: a text field to add something by name, then the live camera in a picture frame (camframe.js) */
+  #corner { position: fixed; right: 16px; bottom: 12px; width: min(24vw, 300px); display: flex; flex-direction: column; gap: 8px; z-index: 5; }
+  #textThing { display: grid; gap: 4px; width: min(24vw, 300px); align-self: flex-end; box-sizing: border-box; padding: 4px;
+    background: var(--panel); border-radius: 10px;
+    box-shadow: 0 4px 12px #0003; }
+  #textThing .row { display: flex; gap: 4px; }
+  #textMode { display: flex; gap: 2px; padding: 2px; border-radius: 7px; background: #ffffff80; }
+  #textMode button { flex: 1; border: 0; border-radius: 5px; padding: 2px 5px; font: 11px/1.4 system-ui, sans-serif;
+    background: none; color: #4d5f70; cursor: pointer; }
+  #textMode button[aria-pressed=true] { background: #6aa65a; color: #fff; }
+  #textThing input { flex: 1; min-width: 0; font: 12px system-ui, sans-serif; color: var(--fg); background: #ffffffb0;
+    border: 0; border-radius: 7px; padding: 7px 6px; }
+  #textThing input::placeholder { color: #4d5f70; opacity: 1; }
+  #textThing input:focus { outline: 2px solid #6aa65a; background: #fff; }
+  #textThing button.go { flex: none; border: 0; border-radius: 7px; padding: 3px 7px; font: 600 17px/1.2 system-ui, sans-serif;
+    background: #6aa65a; color: #fff; cursor: pointer; }
+  #textThing[data-busy] .go { background: #b9a87c; cursor: default; }
+  #textTarget { width: 100%; box-sizing: border-box; font: 12px system-ui, sans-serif; color: var(--fg);
+    background: #ffffffb0; border: 0; border-radius: 7px; padding: 5px 6px; }
+  #textTarget[hidden] { display: none; }
+  /* the live camera in a picture frame (camframe.js): a wooden edge, the pipeline's words under it */
+  #frame { position: relative; box-sizing: border-box; padding: 10px 10px 8px;   /* .min is absolute: keep it in the frame, not over the + */
     background: linear-gradient(135deg, #d8b679, #a9773c); border-radius: 6px; box-shadow: 0 8px 20px #0005, inset 0 0 0 2px #f1dca455; font: inherit; }
   #frame .pic { position: relative; aspect-ratio: 4 / 3; background: #f4efe6; border-radius: 3px; overflow: hidden; }
   #frame .pic video, #frame .pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; margin: 0; border-radius: 0; }
@@ -72,13 +99,16 @@
   #frame[data-mode=done] .cap { background: #1f7a43e6; font-weight: 600; }
   #frame .min { position: absolute; top: 2px; right: 2px; width: 26px; height: 26px; border: 0; border-radius: 13px; background: #fff9; font-size: 14px; line-height: 1; cursor: pointer; }
   #frame[data-min="1"] .pic, #frame[data-min="1"] .cap { display: none; }
-  #frame[data-min="1"] { width: auto; padding: 4px; }
+  #frame[data-min="1"] { align-self: flex-end; width: auto; padding: 4px; }   /* a small square at the corner, as before */
   #frame[data-min="1"] .min { position: static; }
-  @media (max-width: 560px) { #frame { width: 34vw; right: 10px; bottom: 10px; padding: 6px; }
+  @media (max-width: 560px) { #corner { width: 34vw; right: 10px; bottom: 10px; }
+    #textThing { width: min(78vw, 300px); align-self: flex-end; }   /* the field reaches left, the camera frame stays small */
+    #frame { padding: 6px; }
+    #status .note { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
     #frame .cap { font-size: 11px; } #status { max-width: calc(100vw - 34vw - 40px); } }
   #card { position: fixed; right: 16px; bottom: calc(min(24vw, 300px) * 0.75 + 84px); max-width: min(280px, calc(100vw - 32px)); display: none;
     background: var(--panel); border-radius: 10px; padding: 8px 12px; }
-  @media (max-width: 560px) { #card { bottom: calc(34vw * 0.75 + 80px); } }
+  @media (max-width: 560px) { #card { bottom: calc(34vw * 0.75 + 126px); } }
   #card b { display: block; font-size: 15px; }
   #card .rel { margin-top: 4px; font-size: 13px; }
   #snd { position: fixed; right: 16px; top: 12px; font: 13px system-ui, sans-serif; color: var(--fg); background: var(--panel);
@@ -123,11 +153,25 @@
 <body>
 <div id="hud"><div id="err"></div></div>
 <div id="arrive" aria-live="polite"></div>
-<div id="status" data-tone="ok"><span class="dot"></span><span class="text"></span><span class="gen" hidden>⚠ Generator aus</span></div>
+<div id="status" class="silent" data-tone="ok"><span class="dot"></span><span class="text"></span><span class="note" hidden></span><span class="gen" hidden>⚠ Generator aus</span></div>
 <div id="veil"><div><span class="pen">✏️</span> Leg los mit dem Malen!</div></div>
 <div id="hint">Tippe eine Figur an, um ihr mit der Kamera zu folgen · Esc beendet <span id="ver"></span></div>
 <div id="bq" hidden></div>
-<div id="frame" data-mode="live"><div class="pic"><div class="none"></div></div><div class="cap"><span class="txt"></span></div><button class="min" type="button" aria-label="Bild ein-/ausblenden"></button></div>
+<div id="corner">
+  <form id="textThing" autocomplete="off">
+    <div id="textMode" role="group" aria-label="Neu oder Korrektur">
+      <button type="button" data-mode="new" aria-pressed="true">Neu</button>
+      <button type="button" data-mode="change" aria-pressed="false">Korrektur</button>
+      <button type="button" data-mode="action" aria-pressed="false">Aktion</button>
+    </div>
+    <div class="row">
+      <input id="textThingIn" type="text" maxlength="80" enterkeyhint="send">
+      <button type="submit" class="go" aria-label="Etwas hinzufügen">+</button>
+    </div>
+    <select id="textTarget" hidden></select>
+  </form>
+  <div id="frame" data-mode="live"><div class="pic"><div class="none"></div></div><div class="cap"><span class="txt"></span></div><button class="min" type="button" aria-label="Bild ein-/ausblenden"></button></div>
+</div>
 <div id="card"></div>
 <div id="log" hidden></div>
 <button id="snd" type="button" aria-pressed="false">🔇 Ton an</button>
@@ -152,6 +196,7 @@ import { createStatus } from './status.js';
 import { createCamFrame } from './camframe.js';
 import { createBuildQueue } from './buildqueue.js';
 import { GROUND, BASE as BOOK_BASE } from './book.js';
+import { createHand } from './hand.js';
 // the book's size now: world.js grows its own copy of the book module, so the page turn asks the world
 const bookSize = () => current?.book?.() ?? { w: BOOK_BASE.w, d: BOOK_BASE.d };
 import { createStyle } from './style.js';
@@ -395,17 +440,125 @@ onLang(() => {
   document.getElementById('camBtn').textContent = t('cameraBtn');
   document.querySelector('#cam select').setAttribute('aria-label', t('cameraSelect'));
   document.querySelector('#cam .refresh').title = t('cameraRefresh');
-  document.querySelector('#cam img').alt = t('cameraImage');
+  const camImg = document.querySelector('#cam img, #frame img');   // camera.js moves it into the picture frame once the panel opens
+  if (camImg) camImg.alt = t('cameraImage');
   langBtn.replaceChildren(...['de', 'en'].flatMap((l, i) => [...(i ? [' | '] : []), Object.assign(document.createElement(l === lang() ? 'b' : 'span'), { textContent: l.toUpperCase() })]));
   langBtn.title = t('langTitle');
 });
 langBtn.addEventListener('click', e => { e.stopPropagation(); setLang(lang() === 'de' ? 'en' : 'de'); });
 
+// text → thing: say what to add ("eine Laterne"), Enter builds it in the book (POST /api/text-thing).
+// The 200 answer's id comes back for the tests; the generate watcher does the rest.
+const textForm = document.getElementById('textThing'), textIn = document.getElementById('textThingIn'), textBtn = textForm.querySelector('button.go'),
+  textMode = document.getElementById('textMode'), textTarget = document.getElementById('textTarget');
+const pillNote = document.querySelector('#status .note');
+let noteTimer = 0;
+let typedUntil = 0;                      // the next thing to arrive gets the typed-arrival chime
+function note(msg, tone = 'bad', ms = 7000) {   // a short message inside the status pill (the pill's own text is status.js's)
+  clearTimeout(noteTimer);
+  pillNote.dataset.tone = tone; pillNote.textContent = msg; pillNote.hidden = !msg;
+  if (msg) noteTimer = setTimeout(() => { pillNote.hidden = true; }, ms);
+}
+
+// Neu: a new thing from words. Korrektur: fix one that is already in the book. The mode is kept for the tab.
+let textKind = 'new';
+try { if (sessionStorage.getItem('kritzelTextMode') === 'change') textKind = 'change'; } catch {}
+const thingsNow = () => { try { return current?.things?.() || []; } catch { return []; } };
+function fillTargets() {
+  const list = thingsNow(), keep = textTarget.value;
+  textTarget.replaceChildren(...list.map(x => new Option(x.name, x.file)));
+  if (!list.length) textTarget.append(new Option(t('textNoThings'), ''));
+  if (list.some(x => x.file === keep)) textTarget.value = keep;
+  else if (list.length) textTarget.value = list[list.length - 1].file;   // nothing matches: the last thing that came
+}
+function showTextMode() {
+  for (const b of textMode.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.mode === textKind));
+  textTarget.hidden = textKind !== 'change';
+  if (!textForm.dataset.busy) textIn.placeholder = t(placeholderKey());
+  if (textKind === 'change') fillTargets();
+}
+const placeholderKey = () => textKind === 'change' ? 'textFixPlaceholder' : textKind === 'action' ? 'actionPlaceholder' : 'textThingPlaceholder';
+const busyKey = () => textKind === 'change' ? 'textFixBusy' : textKind === 'action' ? 'actionBusy' : 'textThingBusy';
+textMode.addEventListener('click', e => {
+  const b = e.target.closest('button[data-mode]');
+  if (!b || b.dataset.mode === textKind) return;
+  textKind = b.dataset.mode;
+  try { sessionStorage.setItem('kritzelTextMode', textKind); } catch {}
+  showTextMode();
+});
+textIn.addEventListener('input', () => {          // "Die Hexe sitzt …" picks the Hexe
+  if (textKind !== 'change') return;
+  const s = textIn.value.toLowerCase();
+  const hit = thingsNow().find(x => x.name && s.includes(String(x.name).toLowerCase()));
+  if (hit && [...textTarget.options].some(o => o.value === hit.file)) textTarget.value = hit.file;
+});
+textTarget.addEventListener('focus', () => { if (textTarget.options.length !== thingsNow().length) fillTargets(); });
+onLang(() => {
+  showTextMode();
+  textBtn.title = t('textThingAdd'); textBtn.setAttribute('aria-label', t('textThingAdd'));
+  textMode.setAttribute('aria-label', t('textModeGroup'));
+  textTarget.setAttribute('aria-label', t('textTarget'));
+  const [n, f, a] = textMode.querySelectorAll('button');
+  n.textContent = t('textModeNew'); f.textContent = t('textModeFix'); a.textContent = t('textModeAction');
+});
+textForm.addEventListener('submit', async e => {
+  e.preventDefault();
+  if (textForm.dataset.busy) return;
+  const text = textIn.value.trim();
+  if (!text) { textIn.focus(); return; }
+  if (textKind === 'change') fillTargets();
+  const body = { text };
+  if (textKind === 'change') { body.mode = 'change'; body.target = textTarget.value; }
+  const url = textKind === 'action' ? '/api/action' : '/api/text-thing';
+  const started = performance.now();
+  textForm.dataset.busy = '1'; textBtn.setAttribute('aria-busy', 'true');
+  textIn.value = '';                                     // the field shows the build state, then it is free again
+  textIn.placeholder = t(busyKey());
+  let error = '', said = '', tone = 'bad';
+  try {
+    // X-Kritzel: 1 is the same-site guard /api/newworld uses too: no other page can send it without a preflight
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Kritzel': '1' }, body: JSON.stringify(body) });
+    if (r.ok && textKind === 'action') {
+      const c = (await r.json().catch(() => null))?.command || {};
+      if (c.kind === 'unknown') said = c.why || t('actionNo');       // understood, not supported: Jev's reason
+      else {
+        let applied = true;
+        try { applied = window.__applyAction ? window.__applyAction(c) : true; } catch { applied = false; }   // actions.js makes the world change
+        if (applied === false) { said = t('actionRefused'); tone = 'bad'; }   // e.g. the target is a thing, not a figure
+        else { said = confirmAction(c); tone = 'ok'; }
+      }
+    } else if (r.status === 400) error = (await r.json().catch(() => null))?.error || t('textThingRejected');
+    else if (!r.ok) error = t('textThingNoServer');       // an old server has no such endpoint: said once, never retried
+    else typedUntil = performance.now() + 90000;          // built asynchronously: its arrival comes within this window
+  } catch { error = t('textThingNoServer'); }
+  if (error) textIn.value = text;                        // keep what was typed, so it can be changed
+  const rest = 700 - (performance.now() - started);      // "wird gebaut …" stays readable for a moment
+  if (rest > 0) await new Promise(ok => setTimeout(ok, rest));
+  delete textForm.dataset.busy; textBtn.removeAttribute('aria-busy');
+  textIn.placeholder = t(placeholderKey());
+  if (error) note(error); else if (said) note(said, tone);
+  textBtn.blur(); textIn.blur();                          // the book has the keyboard again (not the field or its button)
+});
+
+// one line for what an action did: the figure's name from its module's meta, not its file
+const nameOf = f => thingsNow().find(x => x.file === f)?.name
+  || String(f || '').replace(/\.js$/, '').replace(/[-_]/g, ' ').replace(/^./, c => c.toUpperCase());
+function confirmAction(c) {
+  if (c.kind === 'goal') return c.where ? t('actionGo', nameOf(c.target), nameOf(c.where)) : t('actionJoin', nameOf(c.target));
+  if (c.kind === 'weather') return t('actionWeather', c.value);
+  if (c.kind === 'time') return c.value === 'night' ? t('actionNight') : t('actionDay');
+  return t('actionDone');
+}
+
 // world mode (kept on the server, read by the generate watcher) and 'new world' with an inline second tap
 const modeBtn = document.getElementById('modeBtn'), newBtn = document.getElementById('newBtn');
-let worldMode = 'add', sureUntil = 0;
+let worldMode = 'add', newArmed = false, newBusy = false;
 const showMode = () => { modeBtn.textContent = worldMode === 'switch' ? t('modeSwitch') : t('modeAdd'); modeBtn.title = t('modeTitle'); };
-const showNew = () => { const sure = performance.now() < sureUntil; newBtn.textContent = sure ? t('sure') : t('newWorld'); newBtn.classList.toggle('sure', sure); };
+const showNew = () => {
+  newBtn.textContent = newBusy ? t('newTurning') : newArmed ? t('sure') : t('newWorld');
+  newBtn.classList.toggle('sure', newArmed && !newBusy);
+  newBtn.disabled = newBusy;
+};
 onLang(() => { showMode(); showNew(); });
 fetch('/api/mode', { cache: 'no-store' }).then(r => r.json()).then(m => { worldMode = m.mode || 'add'; showMode(); }).catch(() => {});
 modeBtn.addEventListener('click', async e => {
@@ -415,9 +568,15 @@ modeBtn.addEventListener('click', async e => {
 });
 newBtn.addEventListener('click', async e => {
   e.stopPropagation();
-  if (performance.now() >= sureUntil) { sureUntil = performance.now() + 4000; showNew(); setTimeout(showNew, 4100); return; }
-  sureUntil = 0; showNew();
-  try { await fetch('/api/newworld', { method: 'POST', body: '{}', headers: { 'X-Kritzel': '1' } }); } catch {}   // the poll sees the page empty and turns it
+  if (newBusy) return;
+  if (!newArmed) { newArmed = true; showNew(); return; }   // stays armed until the next tap, however long the child thinks
+  newArmed = false; newBusy = true; showNew();
+  note(t('newTurning'), 'ok', 20000);
+  try {
+    const r = await fetch('/api/newworld', { method: 'POST', body: '{}', headers: { 'X-Kritzel': '1' } });
+    if (!r.ok) { note(t('newFailed'), 'bad', 8000); newBusy = false; showNew(); }   // did not turn: say so, keep the world
+    else setTimeout(() => { if (newBusy) { newBusy = false; showNew(); } }, 15000);  // no page turn followed (empty world)
+  } catch { note(t('newFailed'), 'bad', 8000); newBusy = false; showNew(); }
 });
 
 // what capture and generate are doing, and a glowing light where a new drawing will appear; the picture frame says the same
@@ -428,7 +587,11 @@ const status = createStatus({ THREE, scene, el: document.getElementById('status'
 
 const api = { THREE, scene, world, camera, controls, bubble, shadowAll, mood: lighting,
   reserved: () => status.reserved(), claimSpot: () => status.claimSpot(),
-  arrived: (box, name, foot) => { status.arrived(box, name, foot); sound?.fx('plopp', box); },
+  arrived: (box, name, foot) => {
+    status.arrived(box, name, foot);
+    sound?.fx(performance.now() < typedUntil ? 'typedArrival' : 'arrival', box);
+    typedUntil = 0;
+  },
   report: msg => { errEl.textContent += (errEl.textContent ? '\n' : '') + msg; } };
 const err = document.getElementById('err');
 let current = null;
@@ -611,18 +774,117 @@ import('./camera.js?v=' + Date.now())
   .catch(e => { document.getElementById('err').textContent = 'camera.js: ' + e.message; });
 
 // tap a character: it jumps and says hello; tap a thing: it wiggles. A long press on a character
-// follows it with the camera; Esc (or a long press on empty ground) stops
+// follows it with the camera; Esc (or a long press on empty ground) stops. A hand follows the pointer
+// over the page: drag a free-standing thing to push it, drag a figure or a small thing to carry it.
 const card = document.getElementById('card');
 const ray = new THREE.Raycaster(), ptr = new THREE.Vector2();
 const canvas = renderer.domElement;
 let focus = null, downAt = null, cardAt = 0;
 const actorsNow = () => { try { return current?.brain?.()?.actors() || []; } catch { return []; } };
 const isUnder = (o, root) => { for (; o; o = o.parent) if (o === root) return true; return false; };
+window.__focus = () => focus;
+const handRig = createHand(THREE), hand = handRig.group;
+scene.add(hand);
+window.__hand = hand;
+window.__handRig = handRig;
+window.__handState = () => ({ grab: handGrab ? { who: !!handGrab.who, file: handGrab.file, moved: handGrab.moved, pushed: handGrab.pushed } : null,
+  carry: handCarry ? { who: handCarry.who?.id ?? null, file: handCarry.file } : null, last: handLast,
+  pinch: handRig.pinch, pose: handRig.pose, visible: hand.visible });
+window.__pageAt = pageAt;
+window.__pickAt = pickAt;
+const pagePlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), pageP = new THREE.Vector3();
+let handGrab = null, handCarry = null, handLast = null;
+// where the pointer meets the page (the flat page plane, then the book's curve)
+function pageAt(e) {
+  const r = canvas.getBoundingClientRect();
+  if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return null;
+  ptr.set((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1);
+  ray.setFromCamera(ptr, camera);
+  if (!ray.ray.intersectPlane(pagePlane, pageP)) return null;
+  const b = current?.book?.() || { w: BOOK_BASE.w, d: BOOK_BASE.d };
+  const x = Math.max(-b.w / 2 + 0.2, Math.min(b.w / 2 - 0.2, pageP.x));
+  const z = Math.max(-b.d / 2 + 0.2, Math.min(b.d / 2 - 0.2, pageP.z));
+  return { x, z, y: current?.pageY?.(x, z) ?? 0 };
+}
+function pickAt(e) {
+  const r = canvas.getBoundingClientRect();
+  ptr.set((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1);
+  ray.setFromCamera(ptr, camera);
+  const hit = ray.intersectObjects(world.children, true)[0]?.object;
+  return { who: (hit && actorsNow().find(a => isUnder(hit, a.rig.g))) || null, file: hit ? current?.fileOf?.(hit) : null };
+}
+// the fingertip is the sprite anchor: put it on the page point (the sprites always face the camera)
+function showHand(p) {
+  hand.visible = !!p;
+  if (p) {
+    hand.position.set(p.x, p.y + (handCarry ? 0.85 : 0.02), p.z);   // while carrying, pinch at the figure's body
+  }
+}
+let handMovedAt = 0;
+
 canvas.addEventListener('pointerdown', e => { downAt = [e.clientX, e.clientY, performance.now()]; });
 canvas.addEventListener('contextmenu', e => e.preventDefault());   // a long press is ours, not the browser's menu
 canvas.style.userSelect = canvas.style.webkitUserSelect = 'none';
 canvas.style.webkitTouchCallout = 'none';
+canvas.style.cursor = 'none';                                      // the gloved hand is the pointer over the book
+canvas.addEventListener('pointerdown', e => {
+  const p = pageAt(e);
+  if (p) { handLast = p; showHand(p); }
+  if (e.pointerType === 'mouse' && e.button !== 0) return;       // right/middle: the browser's and the camera's
+  const { who, file } = pickAt(e);
+  const portable = !!(file && current?.canPick?.(file));
+  const pushable = !!(file && current?.canPush?.(file));
+  if (!who && !portable && !pushable) return;
+  handGrab = { who, file, portable, pushable, start: [e.clientX, e.clientY], last: p, moved: false, pushed: 0 };
+  controls.enabled = false;                                      // this drag belongs to the hand
+  try { canvas.setPointerCapture(e.pointerId); } catch {}
+});
+canvas.addEventListener('pointermove', e => {
+  const p = pageAt(e);
+  handMovedAt = performance.now();
+  if (p) handLast = p;
+  if (!handCarry) showHand(p);
+  const g = handGrab;
+  if (!g) return;
+  if (!g.moved && Math.hypot(e.clientX - g.start[0], e.clientY - g.start[1]) > 8) {
+    g.moved = true;
+    if (g.who) {
+      if (current?.brain?.().hold?.(g.who)) handCarry = { who: g.who };
+    } else if (g.portable && current?.pickThing?.(g.file)) {
+      handCarry = { file: g.file };
+    }
+  }
+  if (handCarry?.who) {
+    if (p) current.brain().moveHeld(handCarry.who, p.x, p.z);
+    showHand(p || handLast);
+  } else if (handCarry?.file) {
+    if (p) current.carryThing(handCarry.file, p.x, p.y + 0.7, p.z);
+    showHand(p || handLast);
+  } else if (g.pushable && g.moved && p && g.last) {
+    // a push stays short: at most 1.2 units per drag, in small steps that keep the grid honest
+    const dx = Math.max(-0.25, Math.min(0.25, p.x - g.last.x));
+    const dz = Math.max(-0.25, Math.min(0.25, p.z - g.last.z));
+    if ((dx || dz) && g.pushed < 1.2) { current.nudge(g.file, dx, dz); g.pushed += Math.hypot(dx, dz); }
+  }
+  if (p) g.last = p;
+});
 canvas.addEventListener('pointerup', e => {
+  const g = handGrab;
+  if (g) {
+    handGrab = null;
+    controls.enabled = true;
+    try { canvas.releasePointerCapture(e.pointerId); } catch {}
+    if (handCarry?.who) {
+      const p = pageAt(e) || g.last || { x: handCarry.who.pos.x, z: handCarry.who.pos.z };
+      current.brain().release(handCarry.who, p.x, p.z);
+      handCarry = null;
+    } else if (handCarry?.file) {
+      const p = pageAt(e) || g.last;
+      if (p) current.dropThing(handCarry.file, p.x, p.z);
+      handCarry = null;
+    } else if (g.pushed) current.settle(g.file);
+    if (g.moved) { downAt = null; return; }      // a hand drag is not a tap
+  }
   if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) return;   // a drag, not a click
   const r = canvas.getBoundingClientRect();
   ptr.set((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1);
@@ -634,9 +896,21 @@ canvas.addEventListener('pointerup', e => {
     if (!focus) card.style.display = 'none';
     return;
   }
-  if (who) { try { current.brain().tap?.(who); } catch {} sound?.fx('plopp', who.rig.g); }
+  if (who) { try { current.brain().tap?.(who); } catch {} sound?.fx('tap', who.rig.g); sound?.fx('giggle', who.rig.g); }
   else if (hit) { try { current?.tapThing?.(hit); } catch {} }
 });
+canvas.addEventListener('pointercancel', e => {
+  const g = handGrab;
+  if (!g) return;
+  handGrab = null; controls.enabled = true;
+  if (handCarry?.who) {
+    const p = g.last || { x: handCarry.who.pos.x, z: handCarry.who.pos.z };
+    current.brain().release(handCarry.who, p.x, p.z);
+  } else if (handCarry?.file && g.last) current.dropThing(handCarry.file, g.last.x, g.last.z);
+  else if (g.pushed) current.settle(g.file);
+  handCarry = null;
+});
+canvas.addEventListener('pointerleave', () => { if (!handCarry && !handGrab) hand.visible = false; });
 addEventListener('keydown', e => { if (e.key === 'Escape') { focus = null; card.style.display = 'none'; } });
 
 function mood(a) {
@@ -691,7 +965,10 @@ function newWorldTransition(turn = true) {
   if (morph?.sheet) { scene.remove(morph.sheet.pivot); morph.sheet.geo.dispose(); }   // a turn already running: drop its page
   morph = { t0: performance.now() - (turn ? 0 : 2000), release: null, folds: [], sheet: null };
   if (!turn) { veil.classList.add('on'); return Promise.resolve(); }
-  sound?.fx('melodie');
+  newBusy = false; newArmed = false; showNew();     // the page is turning: the button is free again
+  note('');                                        // "Blättert um …" gives way to the page itself
+  sound?.fx('pageTurn');
+  setTimeout(() => sound?.fx('newWorld'), 560);   // the chime lands as the sheet comes down
   // the old things fold flat into the page, one after another (a pop-up book), not all at once
   let i = 0;
   for (const box of world.children) if (!box.userData.book) { foldBox(box, i * 0.09 + Math.random() * 0.05); i++; }
@@ -755,6 +1032,8 @@ function animate() {
   stepFolds(performance.now());        // a removed thing folds away on its own, with or without a page turn
   stepMorph();
   layoutBubbles(dt);
+  handRig.update(dt, clock.elapsedTime, { carrying: !!handCarry, pressing: !!handGrab && !handCarry,
+    moving: performance.now() - handMovedAt < 250 });
   lighting.update(clock.elapsedTime, dt);
   status.tick(camera);
   controls.update();

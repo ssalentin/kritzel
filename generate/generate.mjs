@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // The generation stage: a settled camera frame → viewer/things/<thing>.js, fast.
 //
-//   node generate/generate.mjs --watch [frames/settled] [--things DIR] [--reports DIR] [--render]
+//   node generate/generate.mjs --watch [frames/settled] [--requests DIR] [--things DIR] [--reports DIR] [--render]
 //   node generate/generate.mjs <frame.jpg> [--box x,y,w,h] [--previous before.jpg] [--things DIR] [--reports DIR] [--render]
 //
 // Per settled frame (format agreed with pipeline-capture: <ts>.jpg renamed in after its <ts>.json
@@ -23,7 +23,7 @@ import { oneShot, MODEL, FALLBACK_MODEL, PI_FALLBACK, PROVIDER, providerProblem 
 import { prewarm } from './pi.mjs';
 import { live } from './children.mjs';
 import { staticCheck, buildCheck, metaOf } from './check.mjs';
-import { SYSTEM, userText, fixText, DETECT_SYSTEM, detectText, oneOfText, DRAFT_NOTE } from './prompts.mjs';
+import { SYSTEM, userText, fixText, DETECT_SYSTEM, detectText, oneOfText, DRAFT_NOTE, TEXT_SYSTEM, textThingText, CHANGE_SYSTEM, changeText } from './prompts.mjs';
 import { islandOf, movePaper } from './place.mjs';
 import { safeLine } from '../viewer/dialogues.js';
 
@@ -62,6 +62,37 @@ function freeName(base, taken) {
   return n;
 }
 const atomicWrite = (path, data) => { const tmp = join(dirname(path), '.' + basename(path) + '.tmp'); writeFileSync(tmp, data); renameSync(tmp, path); };
+// One writer at a time: a typed request and a sheet frame must not choose the same name or overwrite each other.
+let thingWriteChain = Promise.resolve();
+export function withThingWrite(fn) {
+  const run = thingWriteChain.then(fn, fn);
+  thingWriteChain = run.catch(() => {});
+  return run;
+}
+
+// ---------- a short sound for each thing (scripts/thing_sounds.py, earshot DSP) ----------
+// Rendered before the module is written, so the first arrival can already play it. A failure is logged
+// and never blocks the thing; no sound means the viewer keeps its generic arrival/tap.
+export function soundFor(file, name, code, info, thingsDir) {
+  if (process.env.KRITZEL_THING_SOUNDS === '0') return null;
+  const script = process.env.KRITZEL_THING_SOUNDS_SCRIPT || join(ROOT, 'scripts', 'thing_sounds.py');
+  const cmd = process.env.KRITZEL_THING_SOUNDS_CMD || 'python3';
+  const base = file.replace(/\.js$/, '');
+  const out = join(dirname(thingsDir), 'sounds', 'things', base + '.ogg');
+  const move = code.match(/\bmove:\s*['"](fly|swim|hop|crawl|climb|walk)['"]/)?.[1] || '';
+  const kind = info?.actors?.length ? 'actor' : '';
+  try {
+    const stdout = execFileSync(cmd, [script, '--name', name || base, '--kind', kind, '--move', move,
+      '--seed', base, '--out', out], { encoding: 'utf8', timeout: 20_000, stdio: ['ignore', 'pipe', 'pipe'] });
+    const made = JSON.parse(stdout.trim().split('\n').at(-1) || '{}');
+    log(`sound ${base}.ogg (${made.family || '?'}${made.preset && made.preset !== made.family ? '/' + made.preset : ''}, ${made.bytes || '?'} bytes, ${made.seconds ?? '?'} s)`);
+    return { file: `sounds/things/${base}.ogg`, family: made.family, preset: made.preset, seconds: made.seconds, bytes: made.bytes };
+  } catch (e) {
+    const why = String(e.stderr || e.message || e).trim().split('\n')[0].slice(0, 200);
+    log(`sound ${base}: ${why} (the thing still arrives)`);
+    return null;
+  }
+}
 
 // changed_box (+ margin) → a JPEG, and where it goes on the island. A tight crop is sharp at 768 px; a whole
 // sheet (no trusted box) goes at up to 1568 px (Claude's own limit), so small drawings stay legible
@@ -138,6 +169,10 @@ const FIX_SLOTS = 2, fixSlot = slots(FIX_SLOTS);
 // most FINAL_SLOTS at once, in the background. Unset: one stage, as before.
 export const DRAFT_MODEL = process.env.KRITZEL_DRAFT_MODEL || null;
 const BUILD = DRAFT_MODEL || MODEL;                    // what lists and builds first
+// Typed requests keep the strong model: DeepSeek v4.1 flash measured 9.2 s (new) and 51.4 s (change),
+// above the 5 s bar. Both can be overridden independently when a two-stage text path is tried.
+export const TEXT_PROVIDER = process.env.KRITZEL_TEXT_PROVIDER || 'claude';
+export const TEXT_MODEL = process.env.KRITZEL_TEXT_MODEL || 'claude-sonnet-5-5';
 const FINAL_SLOTS = +process.env.KRITZEL_FINAL_SLOTS || 4, finalSlot = slots(FINAL_SLOTS);
 const FINAL_RETRY_MS = (+process.env.KRITZEL_FINAL_RETRY_S || 180) * 1000;
 const BUILD_SLOTS = +process.env.KRITZEL_BUILD_SLOTS || (PROVIDER === 'pi' ? 8 : 4), buildSlot = slots(BUILD_SLOTS);
@@ -146,17 +181,17 @@ const onlyHolds = problems => problems.length > 0 && problems.every(p => /^(hold
 // deferHolds: when the only problem is a held creature not written yet, say so at once instead of
 // asking for a fix (which would just drop the hold)
 // extra(info) → more problems, from what the check measured (a creature hanging with nothing above it)
-async function finish({ body, model, frame, images, takenIds, keepIds, oldName = null, calls, deferHolds = false, extra = null, says = null, fixModels = [BUILD, FALLBACK_MODEL] }) {
+async function finish({ body, model, frame, images, takenIds, keepIds, oldName = null, calls, deferHolds = false, must = null, extra = null, says = null, fixModels = [BUILD, FALLBACK_MODEL], source = null, fixIntro = null, provider = null }) {
   let code = body.split('\n').filter(l => !l.startsWith(MARK)).join('\n').trim(), problems, simSkipped = null, info = {};
   for (const fixModel of [null, ...fixModels]) {
     if (fixModel) {
       if (deferHolds && onlyHolds(problems)) return { problems, held: true, info };
-      const r = await fixSlot(() => oneShot({ system: SYSTEM, text: fixText({ problems, code }), images: images.slice(-1), model: fixModel }));   // the area now
+      const r = await fixSlot(() => oneShot({ system: SYSTEM, text: fixText({ problems, code, ...(fixIntro && { intro: fixIntro }) }), images: images.slice(-1), model: fixModel, ...(provider && { provider }) }));   // the area now
       calls.push(callOf(r, { fix: true, fixing: problems }));
       code = stripFences(r.text).replace(/^###.*\n/, '');
       model = r.model;
     }
-    const full = `${MARK}frames/settled/${basename(frame)} (${model})\n${code}\n`;
+    const full = `${MARK}${source || `frames/settled/${basename(frame)}`} (${model})\n${code}\n`;
     problems = staticCheck(full);
     if (!problems.length) {
       const b = await buildCheck(full, { takenIds });
@@ -172,6 +207,9 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
       // a house that hops and talks (live: 'Eins, zwei, drei... ich komme!'): a building or object is only an actor
       // when a face is drawn on it
       if (b.info.actors?.length && notAlive(code)) problems.push('it is a building or an object with no drawn face, so it is not alive: no actor (return actors: [], keep it as scenery with obstacles)');
+      // what a correction must keep (name, actor ids, start, paper): checked on every pass, so a fix
+      // that changes one of them is not taken
+      if (!problems.length && must) problems.push(...(await must(b.info, code)));
       // solid blobs (Sebastian: 'always solid blobs'): a drawing of 4+ parts built almost all from spheres and boxes
       // gets one fix call for real silhouettes, on the first pass only: spheres are often right (a snowman, grapes, a
       // caterpillar of balls), so after a fix whatever passes the other checks is taken. Not for a draft (speed)
@@ -182,7 +220,7 @@ async function finish({ body, model, frame, images, takenIds, keepIds, oldName =
       if (!problems.length && !fixModel) problems.push(...plainWater(code, info));
       if (!problems.length && !fixModel) problems.push(...unsaid(code, says));
       if (!problems.length && !fixModel && (!DRAFT_MODEL || model === MODEL)) problems.push(...blobs(code, info));
-      if (!problems.length && extra) problems.push(...extra(info));
+      if (!problems.length && extra) problems.push(...(await extra(info, code)));
     }
     if (!problems.length) return { code: full, model, info, warnings: [
       ...(info.tris > TRIS ? [`${info.tris} triangles (more than ${TRIS}): heavy for the viewer, which draws every thing at once`] : []),
@@ -227,6 +265,259 @@ const WORD = /^\s*(?:the |a |an )?(?:(?:hand-?written|written|scribbled|pencil|p
 export function wordOnly(code) {
   const drawing = code.match(/drawing:\s*['"]([^'"]*)['"]/)?.[1] || '', name = code.match(/name:\s*['"]([^'"]*)['"]/)?.[1] || '';
   return WORD.test(drawing) || /(?:^|[-\s])(?:wort|schriftzug|titel|text|buchstaben)$/i.test(name);
+}
+
+// ---------- a typed wish: frames/requests/<id>.json → one thing ----------
+export const textRequestId = file => basename(file).replace(/\.json$/, '');
+
+// Text things written while a switch-mode archive was arriving are in the old world: after the archive their
+// reports are dropped so the request worker builds them again into the new world (the request files stay).
+// A correction is not replayed: it names a module the archive just removed, so it stays in the archived world.
+export function reportsToReplay(reportsDir, sinceMs) {
+  let names = [];
+  try { names = readdirSync(reportsDir).filter(f => /^text-.*\.json$/.test(f)); } catch { return []; }
+  return names.filter(f => {
+    try {
+      if (statSync(join(reportsDir, f)).mtimeMs < sinceMs) return false;
+      return JSON.parse(readFileSync(join(reportsDir, f), 'utf8'))?.request?.mode !== 'change';
+    } catch { return false; }
+  }).map(f => f.replace(/\.json$/, ''));
+}
+
+// A correction must be exactly one corrected module: a reason (UNCLEAR), a removal or several sections are failures.
+export function changeModule(text) {
+  let sections;
+  try { sections = parseReply(text); } catch (e) {
+    if (!text.trim()) throw new Error('the reply had no corrected module');
+    if (/export\s+const\s+meta\b/.test(text) && /export\s+(async\s+)?function\s+build\b/.test(text)) return stripFences(text);
+    throw e;
+  }
+  const unclear = sections.find(s => s.kind === 'UNCLEAR');
+  if (unclear) throw new Error(`cannot change this: ${unclear.body.split('|')[0].trim().slice(0, 240)}`);
+  if (sections.some(s => s.kind === 'REMOVE')) throw new Error('a correction must not remove the thing');
+  const modules = sections.filter(s => s.kind === 'UPDATE' || s.kind === 'NEW');
+  if (modules.length > 1) throw new Error(`the reply changed ${modules.length} things; a correction changes one`);
+  if (!modules.length) throw new Error('the reply had no corrected module');
+  return modules[0].body;
+}
+
+// The names and actor ids a text request needs, without running every module's top level in a sandbox:
+// readThings (metaOf per file) costs ~0.4 s per thing, and a typed request must not wait seconds for that.
+export function readThingIndex(dir) {
+  return readdirSync(dir).filter(f => /^[\w.-]+\.js$/.test(f)).sort().map(file => {
+    const code = readFileSync(join(dir, file), 'utf8');
+    const m = code.match(/\bmeta\s*=\s*\{[\s\S]*?\bname:\s*['"]([^'"]+)['"]/);
+    const d = code.match(/\bmeta\s*=\s*\{[\s\S]*?\bdrawing:\s*['"]([^'"]*)['"]/);
+    return { file, code, meta: { name: m?.[1] || '(does not load)', drawing: d?.[1] || '?' },
+      ids: [...code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]),
+      computed: !m };                       // a name built in code: read it for a duplicate check, not here
+  });
+}
+
+// One request, one model call with no image and the same checks as a drawing. The report is always written,
+// including on failure, so a request never disappears silently.
+export async function processTextRequest(reqPath, { thingsDir, reportsDir, onProgress = () => {} }) {
+  mkdirSync(reportsDir, { recursive: true });
+  const id = textRequestId(reqPath);
+  const t0 = Date.now(), T = () => +((Date.now() - t0) / 1000).toFixed(1);
+  const report = { request: null, started: new Date(t0).toISOString(), calls: [], written: [], rejected: [], timing: {} };
+  const save = () => {
+    for (const c of report.calls) if (c.endedAt) { c.at = +((c.endedAt - t0) / 1000).toFixed(1); delete c.endedAt; }
+    writeFileSync(join(reportsDir, id + '.json'), JSON.stringify(report, null, 1));
+  };
+  try {
+    let req;
+    try { req = JSON.parse(readFileSync(reqPath, 'utf8')); } catch { throw new Error('the request is not valid JSON'); }
+    const text = typeof req?.text === 'string' ? req.text.trim() : '';
+    if (!text || text.length > 80) throw new Error('say what to build (1-80 characters)');
+    const mode = req?.mode === 'change' ? 'change' : 'new';
+    const target = mode === 'change' && typeof req?.target === 'string' ? req.target : null;
+    if (mode === 'change' && !target) throw new Error('which thing should change?');
+    report.request = { id, text, mode, ...(target && { target }), lang: req.lang === 'de' ? 'de' : 'en', requested_at: req.requested_at || null };
+    onProgress({ state: 'building', id, detail: text });
+    const existing = readThingIndex(thingsDir);
+    const old = mode === 'change' ? existing.find(t => t.file === target) : null;
+    if (mode === 'change' && !old) throw new Error(`no such thing to change: ${target}`);
+    const r = await oneShot({ system: mode === 'change' ? CHANGE_SYSTEM : TEXT_SYSTEM, provider: TEXT_PROVIDER, model: TEXT_MODEL,
+      text: mode === 'change' ? changeText({ text, file: target, code: old.code }) : textThingText(text),
+      images: [], timeoutMs: 6 * 60_000 });
+    report.calls.push(callOf(r));
+    report.reply = r.text.slice(0, 4000);
+    if (mode === 'change') {
+      // the correction keeps the thing: same file, name, actor ids, starts and paper placement
+      const body = changeModule(r.text);
+      // the target's real values, from its running meta/build rather than its source text: a computed or
+      // reordered name, start or paper needs no special case, and a comment cannot satisfy the check
+      const identity = async code => {
+        const meta = (await metaOf(code)) || {};
+        const built = await buildCheck(code, { takenIds: [] });
+        return { name: meta.name, paper: meta.paper, ids: built.info?.actors || old.ids, starts: built.info?.starts || [] };
+      };
+      const sameStart = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === 2 && b.length === 2 && a[0] === b[0] && a[1] === b[1];
+      const extraFor = base => async (info, codeNow) => {
+        const out = [];
+        // comments must not satisfy the identity checks
+        const clean = codeNow.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+        // the meta is evaluated, so a computed name is compared by its value, not by its source text
+        const meta = (await metaOf(codeNow)) || {};
+        if (meta.name !== base.name) out.push(`keep its name "${base.name}": a correction changes the thing, not its name`);
+        // the actor's start as the build reports it, so a computed or reordered [x, z] counts
+        const starts = new Map((info.starts || []).map(s => [s.id, s.start]));
+        for (const s of base.starts) {
+          if (!s.start) continue;
+          if (!sameStart(starts.get(s.id), s.start)) out.push(`keep actor ${s.id}'s start position [${s.start.join(', ')}]`);
+        }
+        if (base.paper && (!meta.paper || meta.paper.x !== base.paper.x || meta.paper.y !== base.paper.y))
+          out.push(`keep its meta.paper ${base.paper.x}, ${base.paper.y}`);
+        if (/\bmove:\s*['"]fly['"]/.test(clean)) {
+          // a group that follows the actor from outside its rig stays at the old height when the flyer's lift moves
+          const rig = clean.match(/\brig:\s*\{[^}]*?\bg\s*:\s*([A-Za-z_$][\w$]*)/)?.[1] || 'g';
+          const adds = [...new Set([...clean.matchAll(/\bworld\.add\(\s*([A-Za-z_$][\w$]*)\s*\)/g)].map(m => m[1]))];
+          for (const n of adds) {
+            if (n !== rig && new RegExp(`\\b${n}\\.position\\.copy\\(\\s*${rig}\\.position`).test(clean))
+              out.push(`${n} is a separate world group that follows the actor: put it inside the actor's rig (${rig}.add(${n}) and remove world.add(${n})), or it stays at the old height when the actor flies`);
+          }
+        }
+        return out;
+      };
+      const takenIds = existing.filter(t => t.file !== target).flatMap(t => t.ids);
+      // A frame may rewrite the target while this call runs (the drawing changed too). The typed correction
+      // wins: build it once more against the module that is there now, then give up visibly if it moved again.
+      let base = { file: target, code: old.code, ...(await identity(old.code)) };
+      for (let attempt = 0; ; attempt++) {
+        let reply = r;
+        if (attempt) {
+          reply = await oneShot({ system: CHANGE_SYSTEM, provider: TEXT_PROVIDER, model: TEXT_MODEL,
+            text: changeText({ text, file: target, code: base.code }), images: [], timeoutMs: 6 * 60_000 });
+          report.calls.push(callOf(reply));
+          report.reply = reply.text.slice(0, 4000);
+        }
+        const bodyNow = attempt ? changeModule(reply.text) : body;
+        const f = await finish({ body: bodyNow, model: reply.model || MODEL, frame: reqPath, images: [],
+          takenIds, keepIds: base.ids, oldName: base.name,
+          calls: report.calls, source: `frames/requests/${id}.json`,
+          fixIntro: `The module below is a correction of ${target}: ${JSON.stringify(text)}.`, must: extraFor(base),
+          provider: TEXT_PROVIDER, fixModels: [TEXT_MODEL] });
+        if (!f.code) { report.rejected.push({ problems: f.problems }); throw new Error(`rejected after checks: ${f.problems.join('; ').slice(0, 300)}`); }
+        const name = f.info?.name || base.name;
+        const outcome = await withThingWrite(async () => {
+          let now = null;
+          try { now = readFileSync(join(thingsDir, target), 'utf8'); } catch { /* gone: archived or removed */ }
+          if (now === null) return { gone: true };
+          if (now !== base.code) return { raced: now };
+          const sound = soundFor(target, name, f.code, f.info, thingsDir);
+          atomicWrite(join(thingsDir, target), f.code);       // only now: a failed rewrite leaves the old file as it was
+          // the report joins the write under the same lock: an archive either sees the thing and its report,
+          // or neither, so it never archives a thing the request loop will not build again
+          report.written.push({ kind: 'UPDATE', file: target, name, model: f.model, at: T(), ids: base.ids, ...(sound && { sound }),
+            ...(f.warnings.length && { warnings: f.warnings }) });
+          save();
+          return { wrote: true };
+        });
+        if (outcome.wrote) {
+          onProgress({ state: 'changed', id, detail: name });
+          log(`${id}: text correction ${JSON.stringify(text)} → REWROTE ${target} (${name}) by ${f.model}`);
+          return report;
+        }
+        if (outcome.gone) throw new Error('the thing was archived or removed while it was being corrected; ask again in this world');
+        if (attempt) throw new Error('the thing kept changing while it was being corrected; try again');
+        const next = await identity(outcome.raced);
+        // the same file name is not the same thing after a world switch: never correct a stranger
+        if (next.name !== base.name || (base.ids.length && !base.ids.every(id => next.ids.includes(id))))
+          throw new Error('the thing was replaced while it was being corrected; ask again in this world');
+        base = { file: target, code: outcome.raced, ...next };
+      }
+    }
+    let sections;
+    try { sections = parseReply(r.text); } catch (e) { throw new Error(`the reply could not be read: ${e.message.slice(0, 200)}`); }
+    const news = sections.filter(s => s.kind === 'NEW'), unclear = sections.find(s => s.kind === 'UNCLEAR');
+    // one disallowed part refuses the whole typed request (the prompt asks for UNCLEAR for the whole
+    // request); never write the valid half of a mixed NEW + UNCLEAR reply
+    if (unclear) throw new Error(`cannot build this: ${unclear.body.split('|')[0].trim().slice(0, 240)}`);
+    if (!news.length) throw new Error('the reply had no ### NEW module');
+    if (news.length > 6) throw new Error(`the reply made ${news.length} things; that is too many for one request`);
+    for (const sec of news) if (wordOnly(sec.body)) throw new Error('a written word alone is not a thing');
+    // "Eiffelturm und Wolkenkratzer" is two things: check every section before writing any, so a failed
+    // part leaves no half request. Actor ids are unique across the sections as well as the book.
+    const checked = [], usedIds = new Set(existing.flatMap(t => t.ids));
+    for (const sec of news) {
+      const f = await finish({ body: sec.body, model: r.model || MODEL, frame: reqPath, images: [], takenIds: [...usedIds], keepIds: [],
+        calls: report.calls, source: `frames/requests/${id}.json`,
+        fixIntro: `The module below was made from this typed request: ${JSON.stringify(text)}.`, provider: TEXT_PROVIDER, fixModels: [TEXT_MODEL] });
+      if (!f.code) { report.rejected.push({ problems: f.problems }); throw new Error(`rejected after checks: ${f.problems.join('; ').slice(0, 300)}`); }
+      checked.push(f);
+      for (const actor of f.info?.actors || []) usedIds.add(actor);
+    }
+    const made = await withThingWrite(async () => {
+      const now = readThingIndex(thingsDir);
+      // names are unique in the book (dialogues name figures). A computed name counts too: evaluate only
+      // those modules, so the normal path still costs no sandbox per existing thing.
+      const names = new Set();
+      for (const t of now) {
+        if (!t.computed) { names.add(String(t.meta.name).toLowerCase()); continue; }
+        const m = await metaOf(t.code);
+        if (m?.name) names.add(String(m.name).toLowerCase());
+      }
+      const filesTaken = new Set(now.map(t => t.file.replace(/\.js$/, '')));
+      const out = [];
+      for (const f of checked) {
+        let name = f.info?.name || 'Ding';
+        let code = f.code;
+        if (names.has(name.toLowerCase())) {
+          const original = name;
+          let n = 2;
+          while (names.has(`${original} ${n}`.toLowerCase())) n++;
+          name = `${original} ${n}`;
+          const q = original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const literal = code.replace(new RegExp(`(name:\\s*)(['"])${q}\\2`, 'g'), (_, a, b) => `${a}${b}${name}${b}`);
+          if (literal !== code) code = literal;
+          else {
+            // a computed meta name has no literal to replace: set the name after the declaration instead
+            const assigned = code.replace(/(export\s+const\s+meta\s*=\s*\{[\s\S]*?\}\s*;)/, `$1\nmeta.name = ${JSON.stringify(name)};`);
+            if (assigned !== code) code = assigned;
+            else name = original;                            // no place to rename it: keep the real name truthful
+          }
+        }
+        names.add(name.toLowerCase());
+        const base = freeName(slug(name), filesTaken);
+        filesTaken.add(base);
+        const file = base + '.js';
+        const sound = soundFor(file, name, code, f.info, thingsDir);
+        atomicWrite(join(thingsDir, file), code);
+        const entry = { kind: 'NEW', file, name, model: f.model, at: T(),
+          ids: [...code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]),
+          ...(f.info?.paper && { paper: f.info.paper }), ...(sound && { sound }),
+          ...(f.warnings.length && { warnings: f.warnings }) };
+        report.written.push(entry);
+        out.push(entry);
+      }
+      save();                                                 // together with the writes, for the archive replay
+      return out;
+    });
+    onProgress({ state: 'new', id, detail: made.map(m => m.name).join(', ') });
+    log(`${id}: text request ${JSON.stringify(text)} → WROTE ${made.map(m => `${m.file} (${m.name})`).join(', ')} by ${r.model || MODEL}`);
+    return report;
+  } catch (e) {
+    report.error = e.message.slice(0, 500);
+    onProgress({ state: 'failed', id, detail: report.error });
+    log(`${id}: text request failed: ${report.error}`);
+    return report;
+  } finally { report.finished = new Date().toISOString(); report.timing.done = T(); save(); }
+}
+
+// One pass over the request folder: every request without a report yet, in creation order. `taken` keeps the
+// watcher from looking at the same id twice; an archive clears the ids it dropped so they are built again.
+export async function takeRequests(requestsDir, { thingsDir, reportsDir, taken = new Set(), onProgress = () => {} }) {
+  let files = [];
+  try { files = readdirSync(requestsDir).filter(f => /^[\w.-]+\.json$/.test(f) && !f.startsWith('.')).sort(); } catch { return []; }
+  const done = [];
+  for (const f of files) {
+    const id = f.replace(/\.json$/, '');
+    if (taken.has(id) || existsSync(join(reportsDir, f))) continue;   // handled, or a report already says why not
+    taken.add(id);
+    done.push(await processTextRequest(join(requestsDir, f), { thingsDir, reportsDir, onProgress }));
+  }
+  return done;
 }
 
 // a building or object (by its name) whose parts and drawing mention no face: not a figure. Flying vehicles are
@@ -494,16 +785,42 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
           thingName = unique;
         }
       }
-      if (beforeFirstWrite) await (firstWrite ||= Promise.resolve().then(beforeFirstWrite));
-      const base = old ? old.file.replace(/\.js$/, '') : freeName(slug(thingName), files);
-      files.add(base);
-      const file = base + '.js';
       // a draft says so (meta.draft: true), so the viewer can give it a pencil look until its final, which rewrites the
       // whole module, replaces it
       const isDraft = DRAFT_MODEL && f.model !== MODEL && s.kind === 'NEW';
       if (isDraft) f = { ...f, code: f.code.replace(/export\s+const\s+meta\s*=\s*\{/, m => `${m} draft: true,`) };
       if (s.says) f = { ...f, code: withSaid(f.code, s.says) };
-      atomicWrite(join(thingsDir, file), f.code);
+      // one writer at a time, against what is on disk now: a typed request may have written while this frame was building
+      const written = await withThingWrite(async () => {
+        if (beforeFirstWrite) await (firstWrite ||= Promise.resolve().then(beforeFirstWrite));
+        if (old) {
+          let now = null;
+          try { now = readFileSync(join(thingsDir, old.file), 'utf8'); } catch { /* gone */ }
+          if (now !== old.code) return null;                       // a typed correction won: do not clobber it
+        }
+        const now = readThingIndex(thingsDir);
+        if (!old) {
+          const names = new Set(now.map(t => String(t.meta.name).toLowerCase()));
+          if (names.has(thingName.toLowerCase())) {
+            const original = thingName;
+            let n = 2;
+            while (names.has(`${original} ${n}`.toLowerCase())) n++;
+            thingName = `${original} ${n}`;
+            const q = original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            f = { ...f, code: f.code.replace(new RegExp(`(name:\\s*)(['"])${q}\\2`, 'g'), (_, a, b) => `${a}${b}${thingName}${b}`) };
+          }
+        }
+        const base = old ? old.file.replace(/\.js$/, '') : freeName(slug(thingName), new Set(now.map(t => t.file.replace(/\.js$/, ''))));
+        const file = base + '.js';
+        const sound = soundFor(file, thingName, f.code, f.info, thingsDir);
+        atomicWrite(join(thingsDir, file), f.code);
+        return { base, file, code: f.code, name: thingName, sound };
+      });
+      if (!written) { log(`${name}: ${old.file} changed meanwhile (typed request won); not overwriting`); return; }
+      const { base, file, code: finalCode, name: finalName, sound } = written;
+      files.add(base);
+      f = { ...f, code: finalCode };
+      thingName = finalName;
       if (f.info?.box) boxes.push({ file, ...f.info.box });
       const pm = f.code.match(/paper:\s*\{\s*x:\s*([\d.]+),\s*y:\s*([\d.]+)/);
       if (pm) { paper[file] = { x: +pm[1], y: +pm[2] }; writePaper(reportsDir, paper); }
@@ -511,7 +828,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
       const ids = [...f.code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]);
       const made = kid(thingName, said.seen[s.n]?.name_en || thingName);
       mark('firstWritten');
-      report.written.push({ kind: s.kind, file, name: thingName, model: f.model, latency, at: T(), ids, ...(made && { made }), ...(f.warnings.length && { warnings: f.warnings }) });
+      report.written.push({ kind: s.kind, file, name: thingName, model: f.model, latency, at: T(), ids, ...(made && { made }), ...(sound && { sound }), ...(f.warnings.length && { warnings: f.warnings }) });
       log(`${name}: ${s.kind === 'UPDATE' ? 'UPDATED' : 'WROTE'} ${file} (${thingName}) by ${f.model}, ${latency}s after the frame settled`);
       renders.push({ base, file, code: f.code });
       thingState(s.n, DRAFT_MODEL && f.model !== MODEL && s.kind === 'NEW' ? 'draft' : 'done', file);
@@ -583,6 +900,7 @@ ${draft}`;
           let now = null;
           try { now = readFileSync(path, 'utf8'); } catch { /* removed meanwhile */ }
           if (now !== draft) { log(`${name}: final of ${file} dropped: the thing changed or was removed meanwhile`); return done({ dropped: 'changed meanwhile' }); }
+          const sound = soundFor(file, thingName, f.code, f.info, thingsDir);
           atomicWrite(path, s.says ? withSaid(f.code, s.says) : f.code);
           log(`${name}: FINAL ${file} (${thingName}) by ${MODEL}, ${((Date.now() - settledAt) / 1000).toFixed(1)}s after the frame settled`);
           // the other things the draft had taken for one: written as new things, checked like any
@@ -614,14 +932,15 @@ ${draft}`;
             const base = freeName(slug(partName), new Set([...files, ...readdirSync(thingsDir).map(f => f.replace(/\.js$/, ''))]));
             files.add(base);
             const partFile = base + '.js';
+            const sound = soundFor(partFile, partName, code, g.info, thingsDir);
             atomicWrite(join(thingsDir, partFile), code);
             const pm = code.match(/paper:\s*\{\s*x:\s*([\d.]+),\s*y:\s*([\d.]+)/);
             if (pm) { paper[partFile] = { x: +pm[1], y: +pm[2] }; writePaper(reportsDir, paper); }
-            report.written.push({ kind: 'NEW', file: partFile, name: partName, model: MODEL, at: T(), ids: [...code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(m => m[1]), splitFrom: file });
+            report.written.push({ kind: 'NEW', file: partFile, name: partName, model: MODEL, at: T(), ids: [...code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(m => m[1]), splitFrom: file, ...(sound && { sound }) });
             parts.push(partFile);
             log(`${name}: SPLIT from ${file}: WROTE ${partFile} (${partName}) by ${MODEL}`);
           }
-          done({ model: MODEL, seconds: +r.seconds.toFixed(1), ...(parts.length && { split: parts }) });
+          done({ model: MODEL, seconds: +r.seconds.toFixed(1), ...(parts.length && { split: parts }), ...(sound && { sound }) });
           // the watcher refreshes dialogues from what a frame wrote; these came after it returned
           if (parts.length) try { onLater({ written: report.written.filter(w => parts.includes(w.file)) }); } catch { /* never breaks a final */ }
         } catch (e) { log(`${name}: final of ${file} failed, the draft stays: ${e.message.slice(0, 200)}`); failed({ kept: 'draft', problems: [e.message.slice(0, 200)] }); }
@@ -998,6 +1317,27 @@ async function watch(dir, opts) {
   try { import.meta.resolve('rot-js'); } catch { log('rot-js is missing (run npm ci in generate/): the check will not run things in the sim'); }
   const sleep = ms => new Promise(ok => setTimeout(ok, ms));
   const later = ({ written }) => wantDialogues(opts, `split: ${written.map(w => w.name).join(', ')}`, written.map(w => w.name));
+  // typed wishes (POST /api/text-thing writes frames/requests/<id>.json): one thing each, no image
+  const requestsDir = opts.requestsDir || join(ROOT, 'frames', 'requests');
+  const takenRequests = new Set();
+  const takeRequestsOnce = async () => {
+    const done = await takeRequests(requestsDir, {
+      thingsDir: opts.thingsDir, reportsDir: opts.reportsDir, taken: takenRequests,
+      onProgress: p => status(p.state, p.id, p.detail || ''),
+    });
+    for (const r of done) {
+      const id = r.request?.id;
+      if (r.written.length) {
+        status(r.written.every(w => w.kind === 'UPDATE') ? 'changed' : 'new', id, r.written.map(w => w.name).join(', '),
+          { made: r.written.map(w => ({ de: w.name, en: w.name })) });
+        // the viewer's build queue: a typed request with two subjects shows its two things (they linger, then fade)
+        status.more({ things: r.written.map(w => ({ name: { de: w.name, en: w.name }, state: 'done', file: w.file })) });
+        wantDialogues(opts, `request: ${r.written.map(w => w.name).join(', ')}`, r.written.map(w => w.name));
+      } else status('failed', id, (r.error || 'nothing built').slice(0, 80));
+    }
+  };
+  // typed requests run in their own loop: a request must not wait behind a frame that is being built
+  (async () => { for (;;) { try { await takeRequestsOnce(); } catch (e) { log(`requests: ${e.message.slice(0, 200)}`); } await sleep(300); } })();
   let tries = 0, triesFor = null;           // failed attempts, and for which frame
   let archivedFor = null;                   // switch mode: the sheet whose new world is already set up
   // after a failed frame: true = try the same frame again (after a wait), false = give up on it.
@@ -1037,7 +1377,13 @@ async function watch(dir, opts) {
           catch (e) { log(`${newest}: newworld.sh failed, no new world: ${e.message}`); throw new Error(`newworld.sh failed: ${e.message.slice(0, 120)}`); }   // the old world stays: nothing is written into it
           archivedFor = newest;
           writePaper(opts.reportsDir, { _through: newest });        // a new world has no old paper positions
+          // a typed thing that landed in the old world while this sheet arrived must live in the new one:
+          // drop its report, keep its request file, and let the request worker build it again
+          const replay = reportsToReplay(opts.reportsDir, frameStartedMs);
+          for (const id of replay) { try { rmSync(join(opts.reportsDir, id + '.json'), { force: true }); takenRequests.delete(id); } catch { /* gone */ } }
+          if (replay.length) log(`${newest}: ${replay.length} typed request(s) were archived: rebuilding them in the new world`);
         };
+        const frameStartedMs = Date.now();
         const r = await processFrame(join(dir, newest), { ...opts, onLater: later, box: null, previous: null, newSheet: 'switch', onProgress: status.more, beforeFirstWrite: archive });
         if (r.error) { status('failed', newest, r.error.slice(0, 80)); if (await retrySame(r.error, newest)) continue; last = newest; continue; }
         if (!r.written.length && r.rejected.some(x => /newworld\.sh failed/.test((x.problems || []).join(' ')))) status('failed', newest, 'neue Welt fehlgeschlagen');
@@ -1102,19 +1448,20 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const opt = (n, def) => { const i = args.indexOf(n); if (i < 0) return def; const v = args[i + 1]; args.splice(i, 2); return v; };
   const thingsDir = resolve(opt('--things', join(ROOT, 'viewer', 'things')));
   const reportsDir = resolve(opt('--reports', join(ROOT, 'frames', 'generated')));
+  const requestsDir = resolve(opt('--requests', join(ROOT, 'frames', 'requests')));
   const box = opt('--box', null)?.split(',').map(Number) || null;
   const previous = opt('--previous', null);
   const render = flag('--render');
   mkdirSync(reportsDir, { recursive: true });
   if (args[0] === '--watch') {
-    await watch(resolve(args[1] || join(ROOT, 'frames', 'settled')), { thingsDir, reportsDir, render });
+    await watch(resolve(args[1] || join(ROOT, 'frames', 'settled')), { thingsDir, reportsDir, render, requestsDir });
   } else if (args[0]) {
     const r = await processFrame(resolve(args[0]), { thingsDir, reportsDir, box, previous: previous && resolve(previous), render });
     await r.finalsDone;                                         // two stages: the finals too
     console.log(JSON.stringify({ written: r.written, removed: r.removed, rejected: r.rejected, unclear: r.unclear, calls: r.calls, error: r.error }, null, 1));
     if (!render) process.exit(r.error ? 1 : 0);
   } else {
-    console.error('usage: generate.mjs --watch [frames/settled] [--things DIR] [--reports DIR] [--render]\n       generate.mjs <frame.jpg> [--box x,y,w,h] [--previous before.jpg] [--things DIR] [--reports DIR] [--render]');
+    console.error('usage: generate.mjs --watch [frames/settled] [--things DIR] [--reports DIR] [--requests DIR] [--render]\n       generate.mjs <frame.jpg> [--box x,y,w,h] [--previous before.jpg] [--things DIR] [--reports DIR] [--render]');
     process.exit(2);
   }
 }

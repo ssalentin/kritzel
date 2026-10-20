@@ -7,8 +7,8 @@ export const caption = '';
 export async function build(api, prevState = null) {
   const { THREE, scene, world, camera, controls, bubble, shadowAll, report } = api;
   const v = '?v=' + Date.now();
-  const [sim, bookMod, charMod, extra, waterMod, moves, portableMod] = await Promise.all(
-    ['sim', 'book', 'characters', 'sim-extra', 'water', 'moves', 'portable'].map(f => import(`./${f}.js${v}`)));
+  const [sim, bookMod, charMod, extra, waterMod, moves, portableMod, actionsMod] = await Promise.all(
+    ['sim', 'book', 'characters', 'sim-extra', 'water', 'moves', 'portable', 'actions'].map(f => import(`./${f}.js${v}`)));
   const { GROUND, BASE, FIT_R, groundY, sizeFor } = bookMod;
   let grownAt = BASE.w;                         // the book size the sim was last set up for
 
@@ -49,7 +49,9 @@ export async function build(api, prevState = null) {
   // Things are loaded one by one and can be added/changed/removed live — the rest of the
   // world (and every character's position, mood and friendships) keeps running.
   const env = { cover: 0 };
-  // sound for things: ctx.sound.fx(name, object3D) — names: plopp, melodie, buh, mampf, piep, quak, staunen, rascheln, herz
+  // sound for things: ctx.sound.fx(name, object3D) — bank roles: arrival, pageTurn, tap, giggle,
+  // sparkle, rain, thunder, newWorld, typedArrival; procedural: plopp, melodie, buh, mampf, piep,
+  // quak, staunen, rascheln, herz
   const sound = { fx: (name, obj) => api.sound?.fx(name, obj) };
   // water for drawn things: ctx.water.pond(x, z, r), .waterfall(from, to, width), .river(points, width)
   const water = waterMod.makeWater({ THREE, scene });
@@ -147,13 +149,21 @@ export async function build(api, prevState = null) {
     let pond = false; e.box.traverse(o => { if (o.userData?.zone) pond = true; });
     if (!portableMod.isPortable({ hx: e.foot.hx, hz: e.foot.hz, top: e.foot.top, lightKinds: e.light.map(l => l.kind), weather: e.weather.length,
       spotKinds: e.spots.map(s => s.kind), actors: e.actors.length, holds: e.holds.length, heldBy: !!e.heldBy, pond })) return;
-    e.portable = { kind: 'portable', name: e.meta?.name, x: e.foot.x, z: e.foot.z, r: Math.max(e.foot.hx, e.foot.hz), carrier: null };
+    e.portable = { kind: 'portable', name: e.meta?.name, x: e.foot.x, z: e.foot.z, r: Math.max(e.foot.hx, e.foot.hz),
+      top: e.foot.top ?? 0, carrier: null };
     e.syncAt = { x: e.foot.x, z: e.foot.z };
     e.spots.push(e.portable);
   }
 
   // in a hand, or in the air: not on the grid, not a perch, not dropped to the page
-  const isHeld = e => !!(e.portable && (e.portable.carrier || e.portable.throw));
+  const isHeld = e => !!(e.handHeld || (e.portable && (e.portable.carrier || e.portable.throw)));
+  // the hand can pick up a small drawable thing, or push a free-standing one (not a figure's thing,
+  // not a jail holding someone, not a wall-sized piece of ground)
+  const canPick = file => { const e = loaded.get(file); return !!(e && e.portable && !isHeld(e) && !e.heldBy); };
+  const canPush = file => {
+    const e = loaded.get(file);
+    return !!(e && e.foot && !e.actors.length && !e.portable && !e.heldBy && !pinned(e) && !isHeld(e));
+  };
   // the situation the dialogue writer reads: who carries what, what is in the air, the night, the weather. Sent
   // when it changes and at most every 10 s (serve.py keeps the last one in frames/status/situation.json)
   let sentSituation = '', sentAt = 0;
@@ -282,6 +292,8 @@ export async function build(api, prevState = null) {
   async function loadThing(file, states, live = false, later = null) {
     const before = new Set(world.children);
     const entry = { box: new THREE.Group(), actors: [], obstacles: [], spots: [], holds: [], heldBy: null, update: null, light: [], weather: [] };
+    entry.box.userData.thingFile = file;       // sound.js plays this thing's own Ogg on arrival/tap
+    api.sound?.prepareThing?.(file);           // fetch it now; before the first click it waits in a queue
     let m = null;
     try {
       m = await import('./things/' + file + '?v=' + Date.now());
@@ -299,9 +311,11 @@ export async function build(api, prevState = null) {
     try {
       try { entry.update?.(0, 0, env); } catch {}           // a thing that sets its place in update (a cloud) is measured there
       prepare(entry);
+      if (entry.free) entry.free.userData.thingFile = file;  // characters live here, outside entry.box (sound.js walks up)
       if (later) later.push([file, entry, m?.meta]);           // at page load: placed once everything is there
       else place(file, entry, m?.meta, live);
     } catch (e) { report(`things/${file}: placing: ${e.message}`); }
+    for (const a of entry.actors) if (a.rig?.g) a.rig.g.userData.thingFile = file;   // index.html taps who.rig.g
     if (STYLE === 'origami') { origami(THREE, entry.box); if (entry.free) origami(THREE, entry.free); }
     else if (STYLE === 'cutout') { cutout(THREE, entry.box); if (entry.free) cutout(THREE, entry.free); }
     else if (STYLE === 'crayon') { crayon(THREE, entry.box); if (entry.free) crayon(THREE, entry.free); }
@@ -350,14 +364,19 @@ export async function build(api, prevState = null) {
     env.water = water.zones();
   }
   // footprints characters must not stand in (a jail holds its prisoner inside, so it isn't one)
-  const blockingFeet = () => [...loaded.values()].filter(e => e.foot && !e.heldBy && !e.holds.length && !isHeld(e)).map(e => e.foot);
+  // a small pickup is not a wall: it is walked over and picked up (a jail holds its prisoner instead)
+  const blockingFeet = () => [...loaded.values()].filter(e => e.foot && !e.heldBy && !e.holds.length && !isHeld(e) && !e.portable).map(e => e.foot);
   function refreshWorld() {
     for (const e of loaded.values()) ensurePortable(e);     // before places(): a small thing that just arrived is no perch
     for (const e of loaded.values()) if (!isHeld(e)) onPage(e);      // the page's curve moved with the book's size (a carried thing is in a hand)
     places();
     trees.length = 0;
     const spots = [];
-    for (const e of loaded.values()) { ensurePortable(e); if (!isHeld(e)) trees.push(...e.obstacles); spots.push(...e.spots); }
+    for (const e of loaded.values()) {
+      ensurePortable(e);
+      if (!isHeld(e)) trees.push(...e.obstacles);
+      if (!e.handHeld) spots.push(...e.spots);       // in the hand: not there to be picked up or sat on
+    }
     brain.setWorld({ trees, spots, feet: blockingFeet() });
     brain.setHolds([...loaded.values()].flatMap(e => e.holds));
     attachHeld();
@@ -370,6 +389,7 @@ export async function build(api, prevState = null) {
     return [...loaded.entries()].map(([file, e]) => {
       box.setFromObject(e.box); box.getCenter(c);
       return { file, name: e.meta?.name || file.replace(/\.js$/, ''), x: c.x, z: c.z, at: e.at || 0,
+        y: c.y,
         actors: e.actors.map(a => a.id), holds: e.holds.map(h => h.actor), heldBy: e.heldBy?.actor || null };
     });
   }
@@ -408,12 +428,17 @@ export async function build(api, prevState = null) {
   brain.setHolds([...loaded.values()].flatMap(e => e.holds));
   attachHeld();
   brain.setThings(thingList());
+  // action mode's local half; the UI posts /api/action and hands the command to window.__applyAction
+  const actions = actionsMod.createActions({ brain: () => brain, mood: api.mood });
+  window.__applyAction = cmd => actions.apply(cmd);
+  window.__actions = actions;
 
   return {
     // engine calls this when only things/ changed: reload just those files
     async reloadThings(changed, removed) {
       const states = brain.snapshot();
       const fresh = new Set(changed.filter(f => !loaded.has(f)));
+      for (const f of [...changed, ...removed]) api.sound?.forgetThing?.(f);   // a rewrite may have a new Ogg
       for (const f of [...changed, ...removed]) unloadThing(f);
       for (const f of removed) if (placed[f]) savePlace(f, null);
       for (const f of changed) await loadThing(f, states, fresh.has(f));
@@ -429,17 +454,81 @@ export async function build(api, prevState = null) {
         // with the scales it had when loaded, and not while it is still growing in (status.arrived)
         if (!e.wiggle && clockNow - (e.bornAt ?? -9) > 0.8) e.wiggle = { at: clockNow, parts: e.base || e.box.children.map(c => [c, c.scale.clone()]) };
         api.mood?.blink?.(file);
+        api.sound?.fx('tap', e.box);
         try { e.onTap?.(); } catch (err) { report(`things/${file}: onTap: ${err.message}`); }
         return file;
       }
       return null;
     },
+    // the hand: which thing it can take or push, and the moves that keep the thing's foot,
+    // obstacles and spots together with its box (a push settles once, on release)
+    canPick: canPick,
+    canPush: canPush,
+    fileOf(obj) {
+      for (const [file, e] of loaded) { let o = obj; while (o && o !== e.box) o = o.parent; if (o) return file; }
+      return null;
+    },
+    nudge(file, dx, dz) {
+      if (!canPush(file)) return false;
+      const e = loaded.get(file);
+      shift(e, dx, dz);
+      e.pushed = [(e.pushed?.[0] || 0) + dx, (e.pushed?.[1] || 0) + dz];
+      return true;
+    },
+    settle(file) {
+      const e = loaded.get(file);
+      if (!e) return false;
+      if (e.pushed) {
+        const d0 = placed[file] || [0, 0];
+        savePlace(file, [+(d0[0] + e.pushed[0]).toFixed(2), +(d0[1] + e.pushed[1]).toFixed(2)], true);
+        e.pushed = null;
+      }
+      refreshWorld();
+      return true;
+    },
+    pickThing(file) {
+      if (!canPick(file)) return false;
+      const e = loaded.get(file);
+      e.handHeld = true;
+      e.carryFrom = { x: e.foot?.x ?? e.box.position.x, z: e.foot?.z ?? e.box.position.z };
+      refreshWorld();                         // its spots/obstacles leave the grid while it is in the hand
+      return true;
+    },
+    carryThing(file, x, y, z) {
+      const e = loaded.get(file);
+      if (!e?.handHeld) return false;
+      const dx = x - e.box.position.x, dz = z - e.box.position.z;
+      e.box.position.set(x, y, z);
+      if (e.foot) { e.foot.x += dx; e.foot.z += dz; }
+      for (const o of [...e.obstacles, ...e.spots]) { o.x += dx; o.z += dz; }
+      e.syncAt = { x: e.foot?.x ?? x, z: e.foot?.z ?? z };
+      return true;
+    },
+    dropThing(file, x, z) {
+      const e = loaded.get(file);
+      if (!e?.handHeld) return false;
+      const spot = freeSpot(x, z, e.foot || { hx: 0.4, hz: 0.4 }, file);
+      const dx = spot.x - (e.foot?.x ?? x), dz = spot.z - (e.foot?.z ?? z);
+      e.handHeld = false;
+      shift(e, dx, dz);
+      onPage(e);
+      const d0 = placed[file] || [0, 0];
+      const from = e.carryFrom || { x: e.foot.x - dx, z: e.foot.z - dz };
+      savePlace(file, [+(d0[0] + e.foot.x - from.x).toFixed(2), +(d0[1] + e.foot.z - from.z).toFixed(2)], true);
+      e.carryFrom = null;
+      refreshWorld();
+      return true;
+    },
+    pageY: (x, z) => groundY(x, z),
     freeSpot: (x, z, r) => freeSpot(x, z, r),
     places: () => ({ perches: env.perches, water: env.water }),   // where animals land, climb and swim (for tests)
     box: file => loaded.get(file)?.box,    // a thing's group (for tests)
+    rig: file => loaded.get(file)?.actors?.[0]?.rig?.g || null,   // tests: the group index.html taps for a character
+    things: () => [...loaded].map(([file, e]) => ({ file, name: e.meta?.name || file.replace(/\.js$/, '') })),   // for the text field's target picker
     book: () => ({ w: GROUND.w, d: GROUND.d }),   // the book's size now (the page turn uses it: index.html has its own module instance)
     feet: () => [...loaded].map(([f, e]) => ({ file: f, foot: e.foot, obstacles: e.obstacles, pinned: !!pinned(e) })),   // for tests   // for the light that shows where a drawing will appear
     brain: () => brain,                   // for UI in index.html (e.g. click a character); sim exposes its actors
+    actions: () => actions,
     update(t, dt) {
       clockNow = t;
       island.update(t);

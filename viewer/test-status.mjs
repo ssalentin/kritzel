@@ -28,3 +28,10 @@ test('an unchanged label is not shown as a kind', () => {
   const v = pillView({ st: { capture: capture('unchanged'), generate: { alive: false } }, now: 101 });
   assert.equal(v.text, '✏️ Oh, something is happening …');
 });
+
+test('camera state is not narrated by the pill', () => {
+  for (const state of ['camera-off', 'no-camera', 'no-paper', 'moving']) {
+    const v = pillView({ st: { capture: { alive: true, state } }, now: 101 });
+    assert.equal(v.text, '', state);
+  }
+});

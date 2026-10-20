@@ -1,5 +1,6 @@
 # camera captures, test renders and scratch harnesses
 frames/
+viewer/sounds/things/*.ogg
 *.jpg
 !worlds/**/*.jpg
 !docs/*.jpg

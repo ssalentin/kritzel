@@ -40,13 +40,9 @@ export function pillView({ st, now, seenAt = 0, connectedAt = 0 }) {
     // without a label from Jev: something is happening, we don't know what yet
     return { tone: 'busy', text: t('noticed') };
   }
-  if (!c.alive) return { tone: 'bad', text: t('captureOff') };
-  if (c.state === 'camera-off') return { tone: 'bad', text: t('cameraOff') };
-  if (c.state === 'no-camera') return { tone: 'bad', text: t('noCamera') };
-  if (c.state === 'no-paper') return { tone: 'warn', text: t('noPaper') };
-  if (c.state === 'moving') return { tone: 'ok', text: c.detail === 'hand on the paper' ? t('handOnPaper') : t('moving') };
-  if (now - connectedAt < 3) return { tone: 'ok', text: t('connected') };
-  return { tone: 'ok', text: t('watching'), calm: true };
+  // The camera state lives in the camera frame, not in this pill. With nothing to narrate the
+  // pill is empty and hides itself; build text, notes and action answers still use it.
+  return { tone: 'ok', text: '', calm: true };
 }
 
 // a soft round glow for the light's halo, drawn once
@@ -67,6 +63,7 @@ export function createStatus({ THREE, scene, el, world, banner, onView = null })
   const lights = new Map();          // frame → { g, light, orb, halo, sparks, spot, born, dying, claimed }
   const glow = glowTexture(THREE);
   let modeNote = '', modeNoteUntil = 0, seenFor = null, seenAt = 0;   // when the names for this frame first came
+  let actionNote = '', actionNoteUntil = 0;                            // action mode's answer / refusal, briefly
   const growing = [];                // things that just arrived, folding up out of the page
   const bursts = [];                 // paper confetti flying out of them
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);   // reused every frame
@@ -136,6 +133,7 @@ export function createStatus({ THREE, scene, el, world, banner, onView = null })
 
   // the pill narrates in a kids' voice (issue #18): what Kritzel notices, sees, builds and greets
   function view(now) {
+    if (performance.now() < actionNoteUntil) return { tone: 'ok', text: actionNote };
     if (performance.now() < modeNoteUntil) return { tone: 'ok', text: modeNote };   // the mode just changed
     return pillView({ st, now, seenAt, connectedAt });
   }
@@ -148,6 +146,7 @@ export function createStatus({ THREE, scene, el, world, banner, onView = null })
     const key = v.text.replace(/\d+ s$/, '');
     if (key !== lastView) { lastView = key; viewSince = performance.now(); }
     el.dataset.tone = v.tone;
+    el.classList.toggle('silent', !v.text);
     el.classList.toggle('calm', !!v.calm && performance.now() - viewSince > IDLE_S * 1000);
     if (text.textContent !== v.text) text.textContent = v.text;
     gen.hidden = !!st.generate?.alive;
@@ -156,6 +155,8 @@ export function createStatus({ THREE, scene, el, world, banner, onView = null })
   }
 
   return {
+    // Action mode: show what was said in the pill for a moment, without touching the world
+    note(text, ms = 5000) { if (text) { actionNote = text; actionNoteUntil = performance.now() + ms; } },
     // a fresh /api/status answer
     update(next) {
       const ng = next.generate || {};

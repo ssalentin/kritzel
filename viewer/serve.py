@@ -11,10 +11,12 @@ Camera selection (see scripts/camera_server.py for the remote side):
   GET/PUT /api/mode             → the world mode, {mode: add | switch}, in viewer/things/mode.json
   GET  /api/changelog           → the latest commits (newest first), for the viewer's "what's new"
   POST /api/newworld            → runs scripts/newworld.sh: archive this world to worlds/, start an empty one
+  POST /api/text-thing          → {text} → frames/requests/<id>.json, for the generate watcher to build
   GET /api/stamps               → mtime:size of every engine file and every thing, so the viewer's poll is one request
   PUT /api/placement            → {file, d: [dx, dz] | null}: where the viewer moved a new thing (viewer/things/placement.json)
   GET  /api/think               → {on, model}: is the Jev director switched on (KRITZEL_THINK=1 and a key)?
   POST /api/think               → {scene, actors} → {goals, usage, ms}: a local director; {} when it is off or fails
+  POST /api/action              → {text, things?} → {ok, command}: "es soll schneien", a figure's goal, day/night
 
 HOST / PORT env vars change the listen address (default 127.0.0.1:8765).
 """
@@ -39,6 +41,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CHOICE = ROOT / "camera.json"
+REQUESTS = ROOT / "frames" / "requests"
 
 
 def version():
@@ -93,6 +96,7 @@ SITUATION_LEASE_S = 60
 SITUATION = ROOT / "frames" / "status" / "situation.json"   # what the sim reports for the dialogue writer (PUT /api/situation)
 MODE_FILE = ROOT / "viewer" / "things" / "mode.json"     # {"mode": "add" | "switch"}; missing = add (issue #16)
 NEWWORLD_LOCK, NEWWORLD_GAP_S = threading.Lock(), 10
+TEXT_LOCK = threading.Lock()          # request ids are allocated and written under one lock: no same-second race
 last_newworld = [0.0]
 
 # ---------- the Jev director: a slow, server-side opinion on what a figure should do next ----------
@@ -117,6 +121,26 @@ THINK_GOALS = {
     "inspect": "Go and look at a drawn thing nearby",
     "dance": "Dance, preferably with another figure",
 }
+
+# the closed command vocabulary for action mode (API.md beside the slice brief)
+ACTION_ACTIONS = {
+    "fly_to": "Fly to the place (for a flying figure)",
+    "go_to": "Walk or move to the place",
+    "dance": "Dance, preferably with another figure",
+    "sleep": "Sleep for a while",
+    "hide": "Hide away from the others or in a drawn door",
+    "follow": "Follow a figure",
+    "greet": "Go to a figure and say hello",
+}
+ACTION_WEATHER = {"rain": "Rain", "snow": "Snow", "storm": "A storm with lightning", "rainbow": "A rainbow", "clear": "Clear sky"}
+ACTION_LOCK = threading.Lock()
+ACTION_CACHE = {}
+ACTION_CACHE_S = 3.0
+ACTION_UNKNOWN = "Das habe ich nicht verstanden."
+CAN_LOCK = threading.Lock()
+CAN_CACHE = {}
+CAN_CACHE_S = 3.0
+CAN_UNKNOWN = "Das kann ich nicht sagen."
 
 
 def think_enabled():
@@ -273,6 +297,257 @@ def think(body):
         THINK_LOCK.release()
 
 
+def action_things(body):
+    """The things the world has, from the viewer (preferred: its own live list) or from the folder."""
+    raw = body.get("things") if isinstance(body.get("things"), list) else []
+    things, seen = [], set()
+    for t in raw[:60]:
+        if not isinstance(t, dict):
+            continue
+        f = _text(t.get("file"), 80)
+        if not f or f in seen or not re.fullmatch(r"[\w.-]+\.js", f):
+            continue
+        seen.add(f)
+        things.append({"file": f, "name": _text(t.get("name"), 60) or f})
+    if things:
+        return things
+    for f in sorted((ROOT / "viewer" / "things").glob("*.js"))[:60]:
+        try:
+            txt = f.read_text(errors="replace")[:5000]
+        except OSError:
+            continue
+        m = re.search(r"export\s+const\s+meta\s*=\s*\{.*?\bname\s*:\s*['\"]([^'\"]+)['\"]", txt, re.S)
+        things.append({"file": f.name, "name": m.group(1) if m else f.stem})
+    return things
+
+
+def action_payload(text, things):
+    questions = {
+        "kind": {
+            "type": "choice",
+            "instructions": f"What does this instruction ask for? The person says: {text}",
+            "criteria": {"goal": "A figure should do something", "weather": "The weather should change",
+                         "time": "It should become day or night", "unknown": "Something else, or not supported"},
+        },
+        "action": {
+            "type": "choice",
+            "instructions": "If the instruction is about a figure, which action does it ask for? Otherwise pick none.",
+            "criteria": {**ACTION_ACTIONS, "none": "No figure action"},
+        },
+        "target": {
+            "type": "choice",
+            "instructions": f"The person says: {text}. Which figure should do it? Pick the file of the figure that acts "
+                            "(a creature or person), not a place; otherwise none.",
+            "criteria": {**{t["file"]: t["name"] for t in things}, "none": "No target"},
+        },
+        "where": {
+            "type": "choice",
+            "instructions": f"The person says: {text}. Which place should the figure go to? Pick the destination the "
+                            "instruction names (for example the moon). Never pick the figure that acts. If no destination "
+                            "is named, pick none.",
+            "criteria": {**{t["file"]: t["name"] for t in things}, "none": "Nowhere in particular"},
+        },
+        "weather": {
+            "type": "choice",
+            "instructions": "If the instruction asks for weather, which one? Otherwise none.",
+            "criteria": {**ACTION_WEATHER, "none": "No weather"},
+        },
+        "time": {
+            "type": "choice",
+            "instructions": "If the instruction asks for day or night, which one? Otherwise none.",
+            "criteria": {"day": "Day", "night": "Night", "none": "No time change"},
+        },
+    }
+    return {"model": os.environ.get("KRITZEL_THINK_MODEL", THINK_MODEL), "state": {"instruction": text, "things": things},
+            "questions": questions}
+
+
+def action_command(answers, things):
+    """Assemble a closed command; anything inconsistent is unknown, never a guess that changes the world."""
+    def pick(q):
+        a = answers.get(q) if isinstance(answers, dict) else None
+        return a.get("choice") if isinstance(a, dict) and isinstance(a.get("choice"), str) else None
+    files = {t["file"] for t in things}
+    unknown = {"kind": "unknown", "why": ACTION_UNKNOWN}
+    kind = pick("kind")
+    if kind == "goal":
+        what, target = pick("action"), pick("target")
+        where = pick("where")
+        if what not in ACTION_ACTIONS or target not in files:
+            return unknown
+        if where == "none":
+            where = None
+        elif where not in files:
+            return unknown
+        if where and where == target:
+            return {"kind": "unknown", "why": "Wohin denn?" if what in ("fly_to", "go_to") else "Das passt nicht zusammen."}
+        if what in ("fly_to", "go_to") and not where:
+            return {"kind": "unknown", "why": "Wohin denn?"}
+        return {"kind": "goal", "target": target, "action": what, "where": where}
+    if kind == "weather":
+        v = pick("weather")
+        return {"kind": "weather", "value": v} if v in ACTION_WEATHER else unknown
+    if kind == "time":
+        v = pick("time")
+        return {"kind": "time", "value": v} if v in ("day", "night") else unknown
+    return unknown
+
+
+def action(text, body, meta=None):
+    """Ask Jev for the typed command. Any failure is an unknown command; it never changes the world."""
+    started = time.time()
+
+    def done(cmd, usage=None):
+        if meta is not None:
+            meta["ms"] = round((time.time() - started) * 1000)
+            if usage:
+                meta["usage"] = usage
+        return cmd
+    if not think_enabled():
+        return done({"kind": "unknown", "why": ACTION_UNKNOWN})
+    things = action_things(body)
+    if not things:
+        return done({"kind": "unknown", "why": "Ich sehe noch nichts in der Welt."})
+    payload = action_payload(text, things)
+    key = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    now = time.time()
+    hit = ACTION_CACHE.get(key)
+    if hit and now - hit[0] < ACTION_CACHE_S:
+        return done(hit[1])
+    if not ACTION_LOCK.acquire(blocking=False):
+        return done({"kind": "unknown", "why": "Einen Moment noch."})
+    try:
+        req = urllib.request.Request(
+            os.environ.get("KRITZEL_THINK_URL", THINK_URL),
+            data=json.dumps(payload).encode(),
+            method="POST",
+            headers={"Authorization": "Bearer " + os.environ.get("OPENROUTER_API_KEY", ""),
+                     "Content-Type": "application/json", "X-Title": "Kritzel action"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=THINK_TIMEOUT_S) as r:
+                upstream = json.load(r)
+        except (OSError, ValueError, urllib.error.HTTPError):
+            return done({"kind": "unknown", "why": ACTION_UNKNOWN})
+        usage = upstream.get("usage") if isinstance(upstream, dict) else None
+        usage = {"cost": _cost(usage.get("cost")), "input_tokens": usage.get("input_tokens"),
+                 "output_tokens": usage.get("output_tokens")} if isinstance(usage, dict) else None
+        cmd = action_command(upstream.get("answers") if isinstance(upstream, dict) else {}, things)
+        if cmd["kind"] != "unknown":
+            if len(ACTION_CACHE) >= 8:
+                for k in [k for k, v in ACTION_CACHE.items() if time.time() - v[0] >= ACTION_CACHE_S]:
+                    ACTION_CACHE.pop(k, None)
+                if len(ACTION_CACHE) >= 8:
+                    ACTION_CACHE.pop(next(iter(ACTION_CACHE)))
+            ACTION_CACHE[key] = (time.time(), cmd)
+        return done(cmd, usage)
+    finally:
+        ACTION_LOCK.release()
+
+
+def clean_can_actor(x):
+    """The figure's story facts, checked and bounded before they reach the external model."""
+    if not isinstance(x, dict):
+        return None
+    name = _text(x.get("name"), 60).strip()
+    if not name:
+        return None
+    kind = _text(x.get("kind"), 30).strip() or "figure"
+    try:
+        bulk = round(min(5.0, max(0.05, float(x.get("bulk")))), 2)
+    except (TypeError, ValueError):
+        bulk = 1.0
+    return {"name": name, "kind": kind, "bulk": bulk}
+
+
+def clean_can_thing(x):
+    if not isinstance(x, dict):
+        return None
+    name = _text(x.get("name"), 80).strip()
+    if not name:
+        return None
+    try:
+        bulk = round(min(8.0, max(0.05, float(x.get("bulk")))), 2)
+    except (TypeError, ValueError):
+        bulk = 1.0
+    return {"name": name, "bulk": bulk, "contents": _text(x.get("contents"), 120).strip()}
+
+
+def can_payload(actor, thing):
+    """One child-story choice: would a child believe this figure can lift this thing?"""
+    contents = f", containing {thing['contents']}" if thing.get("contents") else ""
+    return {
+        "model": os.environ.get("KRITZEL_THINK_MODEL", THINK_MODEL),
+        "state": {"actor": actor, "thing": thing},
+        "questions": {
+            "can": {
+                "type": "choice",
+                "instructions": (
+                    f"A child is watching a pop-up book. {actor['name']} (a {actor['kind']}, about {actor['bulk']} units tall) "
+                    f"wants to pick up and carry {thing['name']} (about {thing['bulk']} units in size{contents}). "
+                    "Would a child believe this figure could pick it up and carry it in the story? "
+                    "Answer no only if the thing is clearly too big or heavy for this figure."
+                ),
+                "criteria": {"yes": "Yes, the figure could pick it up", "no": "No, the thing is too big or heavy for this figure"},
+            },
+        },
+    }
+
+
+def can(actor, thing, meta=None):
+    """Ask Jev once for a figure/thing pair. Any failure is ok:false; the caller uses its size rule."""
+    started = time.time()
+
+    def done(out):
+        if meta is not None:
+            meta["ms"] = round((time.time() - started) * 1000)
+        return out
+    if not think_enabled():
+        return done({"ok": False, "why": CAN_UNKNOWN})
+    payload = can_payload(actor, thing)
+    key = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    now = time.time()
+    hit = CAN_CACHE.get(key)
+    if hit and now - hit[0] < CAN_CACHE_S:
+        out = dict(hit[1])
+        if meta is not None:
+            meta["ms"] = 0
+        return out
+    if not CAN_LOCK.acquire(blocking=False):
+        return done({"ok": False, "why": "Einen Moment noch."})
+    try:
+        req = urllib.request.Request(
+            os.environ.get("KRITZEL_THINK_URL", THINK_URL),
+            data=json.dumps(payload).encode(), method="POST",
+            headers={"Authorization": "Bearer " + os.environ.get("OPENROUTER_API_KEY", ""),
+                     "Content-Type": "application/json", "X-Title": "Kritzel carry"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=THINK_TIMEOUT_S) as r:
+                upstream = json.load(r)
+        except (OSError, ValueError, urllib.error.HTTPError):
+            return done({"ok": False, "why": CAN_UNKNOWN})
+        answers = upstream.get("answers") if isinstance(upstream, dict) else {}
+        ans = answers.get("can") if isinstance(answers, dict) else None
+        choice = ans.get("choice") if isinstance(ans, dict) else None
+        if choice not in ("yes", "no"):
+            return done({"ok": False, "why": CAN_UNKNOWN})
+        usage = upstream.get("usage") if isinstance(upstream.get("usage"), dict) else {}
+        out = {"ok": True, "can": choice == "yes",
+               "why": "Ja, das könnte ein Kind glauben." if choice == "yes" else "Nein, das ist zu groß für diese Figur.",
+               "usage": {"cost": _cost(usage.get("cost")), "input_tokens": usage.get("input_tokens"),
+                         "output_tokens": usage.get("output_tokens")}}
+        if len(CAN_CACHE) >= 8:
+            for k in [k for k, v in CAN_CACHE.items() if time.time() - v[0] >= CAN_CACHE_S]:
+                CAN_CACHE.pop(k, None)
+            if len(CAN_CACHE) >= 8:
+                CAN_CACHE.pop(next(iter(CAN_CACHE)))
+        CAN_CACHE[key] = (time.time(), out)
+        return done(out)
+    finally:
+        CAN_LOCK.release()
+
+
 def read_mode():
     try:
         m = json.loads(MODE_FILE.read_text()).get("mode")
@@ -336,6 +611,19 @@ def clean_choice(c):
     assert kind == "remote" and c.get("ip") in hosts and re.fullmatch(r"video\d+", str(c.get("id")))
     return {"kind": "remote", "ip": c["ip"], "id": c["id"], "host": hosts[c["ip"]], "name": str(c.get("name") or c["id"])[:200],
             "stream": f"/api/camera-stream/{c['ip']}/{c['id']}.mjpg"}
+
+
+GERMAN_WORDS = {"ein", "eine", "einen", "einem", "einer", "der", "die", "das", "den", "dem", "und", "mit", "für",
+                "auf", "im", "zu", "ist", "sind", "hallo", "bitte", "möchte", "soll"}
+
+
+def guess_lang(text):
+    """German or English for a typed request: umlauts, or the little words a German sentence is made of."""
+    if re.search(r"[äöüß]", text, re.I):
+        return "de"
+    words = re.findall(r"[a-zäöüß]+", text.lower())
+    german = sum(w in GERMAN_WORDS for w in words)
+    return "de" if german >= 2 or (german == 1 and words and words[0] in GERMAN_WORDS) else "en"
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -457,12 +745,52 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self.json(think(body))
             except Exception:                    # the contract is {} on any failure, never a dropped request
                 return self.json({})
-        if path != "/api/newworld":
+        if path == "/api/action":
+            if self.headers.get("X-Kritzel") != "1":
+                return self.json({"ok": False, "error": "forbidden"}, 403)
+            try:
+                n = int(self.headers.get("Content-Length", ""))
+                assert 0 <= n <= 16384
+                body = json.loads(self.rfile.read(n))
+                assert isinstance(body, dict)
+            except (ValueError, AssertionError, TypeError):
+                return self.json({"ok": False, "error": "say what should happen"}, 400)
+            text = _text(body.get("text"), 300).strip()
+            if not text:
+                return self.json({"ok": False, "error": "say what should happen"}, 400)
+            meta = {}
+            try:
+                cmd = action(text, body, meta)
+            except Exception:                    # the world is never half-changed by a mapping failure
+                cmd = {"kind": "unknown", "why": ACTION_UNKNOWN}
+            return self.json({"ok": True, "command": cmd, **meta})
+        if path == "/api/can":
+            if self.headers.get("X-Kritzel") != "1":
+                return self.json({"ok": False, "error": "forbidden"}, 403)
+            try:
+                n = int(self.headers.get("Content-Length", ""))
+                assert 0 <= n <= 16384
+                body = json.loads(self.rfile.read(n))
+                assert isinstance(body, dict)
+            except (ValueError, AssertionError, TypeError):
+                return self.json({"ok": False, "error": "say which figure and thing"}, 400)
+            actor, thing = clean_can_actor(body.get("actor")), clean_can_thing(body.get("thing"))
+            if not actor or not thing:
+                return self.json({"ok": False, "error": "say which figure and thing"}, 400)
+            meta = {}
+            try:
+                out = can(actor, thing, meta)
+            except Exception:
+                out = {"ok": False, "why": CAN_UNKNOWN}
+            return self.json({**out, **meta})
+        if path not in ("/api/text-thing", "/api/newworld"):
             return self.json({"error": "not found"}, 404)
         # only the viewer itself: a page on another site can send a plain POST without asking first,
         # but not one with this header (that needs a CORS preflight, which we never grant)
         if self.headers.get("X-Kritzel") != "1":
             return self.json({"error": "forbidden"}, 403)
+        if path == "/api/text-thing":
+            return self.text_thing()
         # a new world: scripts/newworld.sh archives this one to worlds/ (never deletes) and empties things/
         with NEWWORLD_LOCK:
             if time.time() - last_newworld[0] < NEWWORLD_GAP_S:
@@ -475,6 +803,43 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self.json({"error": (r.stderr or r.stdout)[-300:]}, 500)
             last_newworld[0] = time.time()
         return self.json({"archived": r.stdout.strip().split("worlds/")[-1]})
+
+    def text_thing(self):
+        """A typed wish from the viewer: validate it and hand it to the generate watcher as a request file.
+        The model call happens in the watcher; this server never sees or handles the OpenRouter key."""
+        try:
+            n = int(self.headers.get("Content-Length", ""))
+            assert 0 < n <= 4096
+            body = json.loads(self.rfile.read(n))
+            text = body["text"]
+            assert isinstance(text, str)
+            text = re.sub(r"[\x00-\x1f\x7f]+", " ", text).strip()
+            assert 1 <= len(text) <= 80
+        except (ValueError, AssertionError, KeyError, TypeError):
+            return self.json({"ok": False, "error": "say what to build (1-80 characters)"}, 400)
+        mode = body.get("mode", "new")
+        if mode not in ("new", "change"):
+            return self.json({"ok": False, "error": "mode must be new or change"}, 400)
+        target = None
+        if mode == "change":
+            target = body.get("target")
+            ok = isinstance(target, str) and re.fullmatch(r"[A-Za-z0-9_][\w.-]*\.js", target) and ".." not in target \
+                and (ROOT / "viewer" / "things" / target).is_file()
+            if not ok:
+                return self.json({"ok": False, "error": "which thing should change?"}, 400)
+        with TEXT_LOCK:
+            REQUESTS.mkdir(parents=True, exist_ok=True)
+            # a text- namespace: never the same name as a capture frame report (frames/generated/<ts>.json)
+            base = "text-" + time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+            req_id, k = base, 2
+            while (REQUESTS / f"{req_id}.json").exists():
+                req_id, k = f"{base}-{k}", k + 1
+            req = {"text": text, "mode": mode, **({"target": target} if target else {}), "lang": guess_lang(text),
+                   "requested_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "id": req_id}
+            tmp = REQUESTS / f".{req_id}.json.tmp"
+            tmp.write_text(json.dumps(req, ensure_ascii=False) + "\n")
+            tmp.replace(REQUESTS / f"{req_id}.json")
+        return self.json({"ok": True, "id": req_id})
 
     def do_PUT(self):
         if urllib.parse.urlsplit(self.path).path == "/api/placement":

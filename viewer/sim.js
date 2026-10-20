@@ -129,7 +129,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     a.lastMet = {}; a.sayUntil = 0; a.hunger = R() * 0.5;
     a.getSpeed = () => a.speed;
     a.move = ['walk', 'hop', 'crawl', 'fly', 'swim', 'climb'].includes(a.move) ? a.move : 'walk';   // how it moves (moves.js)
-    a.alt = 0; a.mv = null;
+    a.alt = 0; a.mv = null; a.held = null;
     MV?.setup(a);
     if (st) {
       Object.assign(a, { energy: st.energy, social: st.social, fear: st.fear, hunger: st.hunger ?? a.hunger,
@@ -180,6 +180,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   // walking somewhere (the smaller one more); held characters and those busy with someone else stay
   // put; partners nudge each other to a polite distance. One far above the other doesn't count.
   function give(a, other) {
+    if (a.held) return 0;
     if (a.hold) return 0;
     if (now < (a.partnerUntil ?? 0)) return a.partner === other ? 1 : 0;
     if (now < a.busyUntil) return 0;
@@ -187,12 +188,23 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   }
   function separate(dt) {
     const k = Math.min(1, dt * 8);
+    // a crowd must not push a figure into a drawn thing; a special mover (fly/swim/climb) is exempt
+    const nudge = (c, dx, dz, mag) => {
+      if (MV?.special(c, envNow)) { c.pos.x += dx * mag; c.pos.z += dz * mag; return; }
+      if (c.hold) return;                       // a jail holds its prisoner; a crowd does not move it
+      const cur = bodyPen(c.pos.x, c.pos.z, c);
+      const free = (x, z) => { const p = bodyPen(x, z, c); return p <= 0 || p <= cur + 1e-6; };
+      const nx = c.pos.x + dx * mag, nz = c.pos.z + dz * mag;
+      if (free(nx, nz)) { c.pos.x = nx; c.pos.z = nz; }
+      else if (free(nx, c.pos.z)) { c.pos.x = nx; }
+      else if (free(c.pos.x, nz)) { c.pos.z = nz; }
+    };
     for (let i = 0; i < actors.length; i++) {
       const a = actors[i];
-      if (a.hidden) continue;
+      if (a.hidden || a.held) continue;
       for (let j = i + 1; j < actors.length; j++) {
         const c = actors[j];
-        if (c.hidden || Math.abs((a.alt || 0) - (c.alt || 0)) > 0.8 * Math.max(a.height || 1, c.height || 1)) continue;
+        if (c.hidden || c.held || Math.abs((a.alt || 0) - (c.alt || 0)) > 0.8 * Math.max(a.height || 1, c.height || 1)) continue;
         let dx = c.pos.x - a.pos.x, dz = c.pos.z - a.pos.z;
         const d = Math.hypot(dx, dz), min = a.radius + c.radius;
         if (d >= min) continue;
@@ -200,8 +212,8 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         const wa = give(a, c), wc = give(c, a);
         if (!wa && !wc) continue;
         const push = (min - d) * k, sa = wa / (wa + wc), sc = wc / (wa + wc);
-        a.pos.x -= dx * push * sa; a.pos.z -= dz * push * sa;
-        c.pos.x += dx * push * sc; c.pos.z += dz * push * sc;
+        nudge(a, -dx, -dz, push * sa);
+        nudge(c, dx, dz, push * sc);
       }
     }
   }
@@ -275,12 +287,26 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         const [wx, wz] = toWorld(x, y);
         if (a.hold && Math.hypot(wx - a.hold.x, wz - a.hold.z) > a.hold.r) continue;   // held by a drawn thing (a jail, a fence)
         // wide bodies keep clear of tree trunks too
-        if (trees.every(tr => Math.hypot(wx - tr.x, wz - tr.z) > tr.r + Math.max(0, a.radius - 0.25))) ok.add(k);
+        const clearOfTrees = trees.every(tr => Math.hypot(wx - tr.x, wz - tr.z) > tr.r + Math.max(0, a.radius - 0.25));
+        // a thing's measured footprint is a solid body too: keep the figure's whole width off it, not only its
+        // centre. A little over half a cell extra: a diagonal step between two free cells must not clip a corner.
+        const clearOfFeet = feet.every(f => Math.abs(wx - f.x) > f.hx + a.radius + 0.35 || Math.abs(wz - f.z) > f.hz + a.radius + 0.35);
+        if (clearOfTrees && clearOfFeet) ok.add(k);
       }
       a._pass = (x, y) => ok.has(key(x, y));
     }
     return a._pass;
   }
+  // the rendered body, not only its cell: a figure easing from cell to cell may cut a corner, so its own
+  // circle is kept off every drawn footprint and tree as it moves (the grid keeps the path, this keeps the body).
+  // bodyPen is how deep it is (<=0 clear); a body already inside may move, but never deeper.
+  function bodyPen(x, z, a) {
+    let pen = 0;
+    for (const f of feet) pen = Math.max(pen, Math.min(f.hx + a.radius - Math.abs(x - f.x), f.hz + a.radius - Math.abs(z - f.z)));
+    for (const t of trees) pen = Math.max(pen, t.r + Math.max(0, a.radius - 0.25) - Math.hypot(x - t.x, z - t.z));
+    return pen;
+  }
+  const bodyClear = (x, z, a) => bodyPen(x, z, a) <= 0;
   const dist = (a, b) => Math.max(Math.abs(a.cell.x - b.cell.x), Math.abs(a.cell.y - b.cell.y));
   const rel = (a, b) => a.rel[b.id] ?? 0;
   const bond = (a, b, d) => {
@@ -333,7 +359,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   // and the fallback. Off unless the server says KRITZEL_THINK=1 and a key is configured.
   const THINK_EVERY = 6, THINK_USE_S = 8, MEET_USE_S = 60;
   let thinkOn = false, thinkProbed = false, thinkAt = -Infinity, thinkBusy = false, thinkCursor = 0, thinkRound = 0;
-  let fps = 0, frames = 0, fpsAt = typeof performance === 'undefined' ? 0 : performance.now();
+  let fps = 0, frames = 0, updates = 0, fpsAt = typeof performance === 'undefined' ? 0 : performance.now();
   const thinkStats = { requests: 0, answers: 0, goalsApplied: 0, failed: 0, latency: [], cost: 0 };
   const moodWord = a => a.fear > 0.4 ? 'scared' : a.energy < 0.3 ? 'tired' : a.hunger > 0.6 ? 'hungry' : a.social < 0.3 ? 'lonely' : 'happy';
   const needsOf = a => [['tired', 1 - a.energy], ['hungry', a.hunger], ['lonely', 1 - a.social], ['scared', a.fear]]
@@ -355,7 +381,8 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     };
   }
   function askDirector() {
-    const pool = actors.filter(a => !a.hidden);
+    // flyers, swimmers and climbers move off the grid (moves.js) and never run decide(): don't ask for them
+    const pool = actors.filter(a => !a.hidden && !MV?.special(a, envNow));
     if (!pool.length) return;
     const n = Math.min(5, Math.max(3, Math.round(pool.length / 2))), picked = [];
     for (let i = 0; i < n && i < pool.length; i++) picked.push(pool[(thinkCursor + i) % pool.length]);
@@ -428,7 +455,37 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
       return c ? { type: 'wander', cell: [c.x, c.y], target: t } : null;
     },
   };
+  // Action mode: a typed instruction becomes a strong goal for ~60 s through the same goal machinery
+  const whereActor = w => w && actors.find(o => o.file === w.file && !o.hidden);
+  function actionGoal(a, act) {
+    const w = act.where, o = whereActor(w) || nearestOther(a);
+    switch (act.what) {
+      case 'fly_to': case 'go_to': {
+        if (!w) return null;
+        if (Math.hypot(a.pos.x - w.x, a.pos.z - w.z) < 0.8) { a.action = null; return null; }   // arrived
+        const c = nearestCell(w.x, w.z, a);
+        return c ? { type: 'wander', cell: [c.x, c.y], target: { name: w.file } } : null;
+      }
+      case 'dance': return o ? { type: 'approach', target: o, meet: 'dance' } : null;
+      case 'sleep': return { type: 'rest', until: Math.min(act.until, now + 60) };
+      case 'hide': {
+        const door = spots.find(s => s.kind === 'door'), c = door && spotCell(door, a);
+        if (c) return { type: 'visit', spot: door, cell: c, phase: 'walk' };
+        const f = farthestCell(a);
+        return f ? { type: 'wander', cell: f } : null;
+      }
+      case 'follow': return o && Math.hypot(o.pos.x - a.pos.x, o.pos.z - a.pos.z) > 2 ? { type: 'follow', target: o } : null;
+      case 'greet': return o ? { type: 'approach', target: o, meet: 'greet' } : null;
+    }
+    return null;
+  }
+  function endAction(a) {
+    a.action = null; a.actionTarget = null;
+    if (a.landedFrom) { a.move = a.landedFrom; a.landedFrom = null; a.mv = null; }   // a flyer/swimmer/climber takes its mover back
+  }
   function decide(a) {
+    if (a.held) return;
+    a.meet = null;                       // a new decision replaces any earlier meeting intent (hidden/blocked clear too)
     const opts = [];
     const add = (u, goal) => opts.push({ u: u + R() * 0.3, goal });
     add(0.3 + a.traits.curiosity * 0.35, { type: 'wander', cell: pick(groundCells) });
@@ -479,6 +536,17 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         a.meet = g.meet ? { with: g.target.id, what: g.meet, word: pref.goal, at: now } : null;
         thinkStats.goalsApplied++;
         console.info(`[think] ${a.id}: ${pref.goal} instead of ${local?.type ?? 'nothing'}`);
+        chosen = g;
+      }
+    }
+    // an action-mode instruction beats the director's slow opinion while it lasts
+    const act = a.action && now < a.action.until ? a.action : null;
+    if (a.action && !act) endAction(a);
+    if (act && local?.type !== 'flee' && local?.type !== 'chase') {
+      const g = actionGoal(a, act);
+      if (g) {
+        g.why = 'action';
+        a.meet = g.meet ? { with: g.target.id, what: g.meet, word: 'action', at: now } : null;   // the meeting runs the asked interaction
         chosen = g;
       }
     }
@@ -533,6 +601,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
   }
 
   function act(a) {
+    if (a.held) return;
     if (MV?.special(a, envNow)) return;        // flies, swims or climbs: moves.js runs it, off the grid
     a.energy = Math.max(0, a.energy - 0.004 * (1 + nightNow));   // night makes everyone tired sooner
     a.hunger = Math.min(1, a.hunger + 0.003);
@@ -545,7 +614,8 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     if (a.flee && now < a.flee.until) { if (!X.hide?.(a, a.flee.from, api)) stepAway(a, a.flee.from); return; }
     a.flee = null;
 
-    if (!a.goal || (now - a.goalSince > 15 && !/visit|fetch|bring/.test(a.goal.type))) decide(a);
+    // a Jev approach is kept until it arrives or its meeting intent expires: a long walk must not lose the word
+    if (!a.goal || (now - a.goalSince > 15 && !/visit|fetch|bring/.test(a.goal.type) && !a.goal.meet)) decide(a);
     const g = a.goal;
     switch (g.type) {
       case 'wander':
@@ -596,9 +666,12 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
       case 'visit': case 'fetch': case 'bring': X.visit?.(a, g, api); break;
       case 'pick': case 'carry': case 'give': X.portable?.(a, g, api); break;
       case 'approach':
-        if (g.target.hidden) { a.goal = null; break; }
+        if (g.target.hidden) { if (a.meet?.with === g.target.id) a.meet = null; a.goal = null; break; }
         if (near(a, g.target, 0.9)) { interact(a, g.target); }   // wider margin: two bodies waiting on each other would deadlock
-        else if (!stepToward(a, g.target.cell.x, g.target.cell.y, g.target)) a.goal = null;
+        else if (!stepToward(a, g.target.cell.x, g.target.cell.y, g.target)) {
+          if (a.meet?.with === g.target.id) a.meet = null;        // the way is blocked: drop the meeting's intent
+          a.goal = null;
+        }
         break;
       case 'chase': {
         const prey = g.target;
@@ -751,9 +824,11 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
 
   return {
     addActor, removeActor,
-    actors: () => actors, byId: () => byId, spots: () => spots, weather: () => weatherNow, trace: () => picks.slice(), solved: () => X.solvedQuests?.() ?? [],   // read-only views for the UI and tests
+    actors: () => actors, byId: () => byId, spots: () => spots, things: () => thingsNow, time: () => now,
+    weather: () => weatherNow, trace: () => picks.slice(), solved: () => X.solvedQuests?.() ?? [],   // read-only views for the UI and tests
+    blockingFeet: () => feet.map(f => ({ x: f.x, z: f.z, hx: f.hx, hz: f.hz })),   // for tests: what the grid treats as solid
     // the director's numbers for a measured run (latency in ms, cost in dollars, fps of the whole page)
-    think: () => ({ on: thinkOn, ...thinkStats, latency: thinkStats.latency.slice(), cost: +thinkStats.cost.toFixed(8),
+    think: () => ({ on: thinkOn, updates, ...thinkStats, latency: thinkStats.latency.slice(), cost: +thinkStats.cost.toFixed(8),
       median: thinkStats.latency.length ? [...thinkStats.latency].sort((p, q) => p - q)[Math.floor(thinkStats.latency.length / 2)] : null, fps }),
     // obstacles/spots changed (a drawn thing was added, changed or removed)
     setWorld({ trees: tr, spots: sp, feet: ft = feet }) {
@@ -772,6 +847,57 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     // walks inside its circle and is brought in if it is outside. Actors no longer held walk free again.
     // something new appeared at (x, z): curious characters nearby go and look
     inspect(x, z) { X.inspect?.(x, z, null, api); },
+    // action mode: a typed instruction for one figure ({target: file, action, where: file|null})
+    action(cmd) {
+      const a = actors.find(x => x.file === cmd.target) || actors.find(x => x.name === cmd.target);
+      if (!a || a.hidden || a.hold || a.held) return false;   // in a jail/door, or in the hand
+      // a new instruction replaces the last one completely: a flyer must not keep holding at the old place
+      const wasLanded = a.landedFrom;
+      if (a.landedFrom) { a.move = a.landedFrom; a.landedFrom = null; a.mv = null; }
+      a.actionTarget = null; a.action = null; a.mv = null;
+      const t = cmd.where && thingsNow.find(x => x.file === cmd.where);
+      const w = t ? { x: t.x, z: t.z, y: t.y ?? 0, file: t.file } : null;
+      a.action = { what: cmd.action, where: w, at: now, until: now + 60 };
+      a.think = null;
+      a.goal = null;
+      if (a.move === 'fly' && w && (cmd.action === 'fly_to' || cmd.action === 'go_to')) {
+        a.actionTarget = { x: w.x, y: (w.y ?? 0) + 0.5, z: w.z, until: now + 60 };
+        a.mv = null;
+        return true;
+      }
+      // a non-flight instruction for a flyer/swimmer/climber: land it so the page's goal machinery can run it
+      const special = wasLanded || MV?.special(a, envNow);
+      if (special) {
+        a.landedFrom = a.move;
+        a.move = 'walk';
+        const c = nearestCell(a.pos.x, a.pos.z, a);
+        a.cell = c;
+        const [wx, wz] = toWorld(c.x, c.y);
+        a.pos.set(wx, 0, wz); a.alt = 0; a.mv = null;
+      }
+      if (now >= a.busyUntil) decide(a);
+      return true;
+    },
+    // the hand: carry a figure above the page, then put it down on a free cell near the release
+    hold(a) {
+      if (!a || a.hidden || a.hold) return false;          // in a jail or inside a door: not pickable
+      a.held = { x: a.pos.x, z: a.pos.z };
+      a.goal = null; a.goalSince = 0; a.meet = null; a.action = null; a.actionTarget = null;
+      a.mv = null; a.partner = null; a.partnerUntil = 0; a.busyUntil = 0;
+      return true;
+    },
+    moveHeld(a, x, z) { if (a?.held) { a.held.x = x; a.held.z = z; } },
+    release(a, x, z) {
+      if (!a?.held) return false;
+      a.held = null;
+      const c = nearestCell(x, z, a) || a.cell;
+      a.cell = c;
+      const [wx, wz] = toWorld(c.x, c.y);
+      a.pos.set(wx, 0, wz);
+      a.alt = 0; a.goal = null; a.goalSince = 0; a.busyUntil = now + 0.4; a.mv = null;
+      if (!a.lift) a.rig.g.position.y = 0;
+      return true;
+    },
     // someone tapped this character: a little jump, a giggle and hello
     tap(a) {
       if (!a || a.hidden) return;
@@ -799,6 +925,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
     update(t, dt, { cover = 0, birdsLow = false, night = 0, lamps = [], weather = {}, perches = [], water = [] } = {}) {
       envNow = { perches, water, feet, actors }; weatherNow = weather;     // climbers keep off things and figures (moves.js)
       now = t; nightNow = night; lampsNow = lamps;
+      updates++;
       // the director: ask every ~6 s while the page is visible, and only when the server has it switched on
       frames++;
       if (performance.now() - fpsAt >= 2000) { fps = Math.round(frames * 1000 / (performance.now() - fpsAt)); frames = 0; fpsAt = performance.now(); }
@@ -818,6 +945,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
       // a goal with an end time ends by the clock, every frame: act() only sees it when the figure is scheduled,
       // and a slow frame rate starved long goals (a circle dance) until the end of the world
       // (a visit, fetch or bring uses until as a phase timer: its own exit runs, so it is left alone, as in the 15 s rule)
+      for (const a of actors) if (a.action && now > a.action.until) endAction(a);
       for (const a of actors) if (a.goal?.until != null && now > a.goal.until && !/visit|fetch|bring/.test(a.goal.type)) a.goal = null;
       while (acc >= TICK) { acc -= TICK; const a = scheduler.next(); if (a) guarded(a, () => act(a)); }   // empty world: nobody to act
       try { X.frame?.(actors, api); } catch (e) { reportOnce('frame', e); }   // portable things move every frame (sim-extra.js frame)
@@ -892,7 +1020,9 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
         let moving;
         // in a dialogue (or another moment with a partner): stay put and keep facing them until it ends
         const withPartner = now < (a.partnerUntil ?? 0) && a.partner && !a.partner.hidden;
-        if (withPartner) {
+        if (a.held) {                     // the hand carries it: follow the pointer, a little above the page
+          a.pos.x = a.held.x; a.pos.z = a.held.z; a.alt = 0.6; moving = false;
+        } else if (withPartner) {
           moving = false;
           a.face = Math.atan2(a.partner.pos.x - a.pos.x, a.partner.pos.z - a.pos.z);
         } else if (MV?.special(a, envNow)) {      // flying, swimming, climbing (moves.js)
@@ -918,7 +1048,13 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
               }
             }
             const n = Math.hypot(ux, uz) || 1; ux /= n; uz /= n;
-            a.pos.x += ux * step; a.pos.z += uz * step; a.face = Math.atan2(ux, uz);
+            const nx = a.pos.x + ux * step, nz = a.pos.z + uz * step;
+            const cur = bodyPen(a.pos.x, a.pos.z, a);
+            const free = (x, z) => { const p = bodyPen(x, z, a); return p <= 0 || p <= cur + 1e-6; };
+            if (free(nx, nz)) { a.pos.x = nx; a.pos.z = nz; }     // or slide along the edge, not deeper
+            else if (free(nx, a.pos.z)) { a.pos.x = nx; }
+            else if (free(a.pos.x, nz)) { a.pos.z = nz; }
+            a.face = Math.atan2(ux, uz);
           }
           else if (a.partner) a.face = Math.atan2(a.partner.pos.x - a.pos.x, a.partner.pos.z - a.pos.z);
           a.alt = a.move === 'hop' && moving ? Math.abs(Math.sin(now * 8 * a.speed)) * 0.3 : 0;   // hoppers bounce along
@@ -940,6 +1076,7 @@ export function create({ THREE, actors, trees, pond, spots = [], feet = [], isla
           ACT_MOTION[anim](g, k);
           a.acting = { ry: g.rotation.y - ry, py, scale };
         }
+        if (a.held && !a.lift) a.rig.g.position.y = groundY(a.pos.x) + 0.6;   // walkers have no lift group
       });
     },
   };

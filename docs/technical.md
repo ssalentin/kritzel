@@ -40,10 +40,51 @@ camera ──► frame ──► generation (generate/) ────────
   relationships; goals are picked by utility.
 - **`viewer/sim-extra.js`** — speech lines and interactions (chats, dances, tag,
   hiding, visiting doors, carrying keys to locks, inspecting newly drawn things).
-- **`viewer/sound.js`** — procedural Web Audio sound, no sound files: Animal-Crossing
-  style babble per speaker, small word-triggered effects, a quiet wind bed, all
-  spatialised relative to the camera. Off until the user clicks.
+- **`viewer/sound.js`** — Web Audio sound: Animal-Crossing style babble per speaker,
+  small word-triggered effects, a quiet wind bed, and a nine-role bank in
+  `viewer/sounds/` (arrival, page turn, tap, giggle, weather sparkle, rain, thunder,
+  new world, typed thing). All of it is spatialised relative to the camera and stays off
+  until the user clicks; the bank is fetched only then.
 - **`viewer/serve.py`** — a no-cache static server on `127.0.0.1:8765`.
+
+### The sound bank
+
+`viewer/sounds/*.ogg` is rendered by `scripts/make-sounds.sh` from
+[earshot](https://github.com/Leonxlnx/earshot), a build-time tool only: earshot is not a
+runtime dependency, and the browser just decodes the small Ogg files after the first
+click. The script pins the earshot checkout and the render/measure dependency versions,
+renders each role with earshot (mostly `--peak -5` for the Ogg encoder's headroom, the
+sparkle a little hotter so it is not lost under the tap), low-passes the 3 s rain bed and
+the 3.5 s thunder rumble, and prints `earshot measure` for the bank. The giggle is a
+0.4 s two-pulse take, deliberately longer than the 0.15 s tap. Re-run it when a role
+needs a different sound. The procedural effects in `sound.js` stay as the fallback for
+the moment before the bank has decoded.
+
+### A sound for each thing
+
+Every thing written by `generate/` also gets a short Ogg of its own,
+`viewer/sounds/things/<file>.ogg`. `scripts/thing_sounds.py` maps the thing's
+`meta.name` (German and English words) and its actor's `move` to a small recipe family — person,
+fly, swim, walk, plant, thing, building, vehicle, light, magic, weather — and renders it with
+only earshot's DSP layer (`earshot.forge.dsp`): no CLAP search, torch, model or API key. The seed
+is the module's file name, so the same thing sounds the same; renders are 0.3–0.9 s mono 48 kHz,
+peak about −3 dBFS, one Ogg q4 under 30 KB. `generate/` renders the sound before it writes the
+module, so the first arrival can already play it; a failed render is logged and never blocks the
+thing.
+
+One-time setup, with network:
+
+```bash
+python3 scripts/thing_sounds.py --ensure
+```
+
+It clones the pinned earshot commit into `.kritzel/earshot` and creates
+`.kritzel/earshot-venv` with numpy, scipy and soundfile only. After that rendering works offline.
+Without the setup a thing is still built and the generate log says why it has no sound;
+`KRITZEL_THING_SOUNDS=0` turns the render off. The viewer fetches a thing's Ogg when it loads,
+plays it on arrival and tap with the same pan/distance as the bank and ±5 % playback rate, and
+caches a 404: a thing without a sound keeps today's `arrival`/`tap`. Nothing is fetched or played
+before the first click. A new world archives the whole `viewer/sounds/` tree, thing sounds included.
 
 The viewer speaks German or English (the world is made for drawing with kids): the DE/EN
 button next to 📷 switches all UI texts and the characters' speech; the choice is kept in
@@ -347,16 +388,32 @@ finished report. A failing frame gets 3 tries with backoff, then it is marked fa
 Not automatic yet: archiving the world when a new sheet appears (it is only reported).
 Placement uses the camera frame, not a detected paper outline.
 
+**Typed things.** `POST /api/text-thing` with `{"text": "a lantern"}` (1-80 characters, German or
+English) and the same `X-Kritzel: 1` header as `/api/newworld` writes `frames/requests/text-<id>.json`;
+the watcher also watches that folder. Each request is
+one model call with **no image**, the same module contract, the same static and real-build checks,
+and the same one-fix retry, and leaves `frames/generated/<id>.json` with the reply, cost and timing.
+The thing is written as `viewer/things/<slug>.js` with `meta.paper { x: 0.5, y: 0.5 }`; the viewer
+on the page spreads it to a free spot like any new thing. A failed request always leaves a report
+and sets the generate status line to `failed`; the same id is never built twice.
+
+With `"mode": "change"` and a `target` (a bare filename in `viewer/things/`, e.g. `hexe.js`), the
+request rewrites that module in place: the model gets the correction and the current module, the
+checks keep its name, actor ids, starts and `meta.paper`, and a failed rewrite leaves the old file
+untouched and the failure in the report. Requests run in their own loop, so a typed wish does not
+wait behind a sheet that is being built.
+
 ## Repository layout
 
 ```
 viewer/          the engine (served at /viewer/)
 viewer/things/   one module per drawn object (empty in the repo)
+viewer/sounds/   the generic bank, and things/ for each thing's generated Ogg
 generate/        the generation stage: frame → things/*.js
 kritzel          setup / start / stop / status / camera: the one entry point
 scripts/         start.sh (server + camera window), dev.sh (server + capture + generate),
                  capture.py (camera → frames/settled/), camera_server.py (shares a camera),
-                 newworld.sh (archive + reset)
+                 newworld.sh (archive + reset), thing_sounds.py (a thing → its Ogg)
 docs/            logo and screenshots for this README (rendered from the live book)
 VERSION          the version the viewer shows (with the commit)
 BACKLOG.md       ideas and requests that are not scheduled work yet
