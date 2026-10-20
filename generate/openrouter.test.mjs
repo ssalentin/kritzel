@@ -154,3 +154,9 @@ test('a missing key fails loudly, at the call and at startup', async () => {
 test('the default model for the OpenRouter path is DeepSeek v4.1 flash', () => {
   assert.equal(MODEL, 'deepseek/deepseek-v4.1-flash');
 });
+
+test('text requests keep their own Claude provider and model under the OpenRouter provider', async () => {
+  const { TEXT_PROVIDER, TEXT_MODEL } = await import('./generate.mjs');
+  assert.equal(TEXT_PROVIDER, 'claude');
+  assert.equal(TEXT_MODEL, 'claude-sonnet-5-5');
+});

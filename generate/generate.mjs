@@ -6,7 +6,7 @@
 //
 // Per settled frame (format agreed with pipeline-capture: <ts>.jpg renamed in after its <ts>.json
 // sidecar { previous, changed_box, reason, ... }):
-//   crop to changed_box + margin, downscale → ONE model call (OpenRouter by default; image inline) that
+//   crop to changed_box + margin, downscale → ONE model call (Claude by default; image inline) that
 //   answers NOTHING, UNCLEAR: …, or the module → static + real build() checks (< 1 s) → atomic
 //   write to things/. A failed check gets one retry, then one try on the fallback model.
 //   Each module is checked and written as soon as it is complete in the streamed reply; on a new
