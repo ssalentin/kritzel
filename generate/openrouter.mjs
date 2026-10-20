@@ -105,7 +105,9 @@ async function attempt({ key, body, model, timeoutMs, onText, signal, state }) {
         if (j?.usage) usage = j.usage;
       }
     }
-    if (!finished && !state.sofar && !usage) throw Object.assign(new Error(`openrouter (${model}) closed the stream without a reply`), { network: true });
+    // A clean HTTP close is not a complete reply: without [DONE] it may be a truncated module. Fail it
+    // rather than returning partial text that looks like a finished section.
+    if (!finished) throw Object.assign(new Error(`openrouter (${model}) closed the stream without [DONE]`), { network: true });
     return { text: state.sofar, cost: usage ? (Number.isFinite(Number(usage.cost)) ? Number(usage.cost) : null) : null,
       seconds: (Date.now() - t0) / 1000, model: actual };
   } finally {

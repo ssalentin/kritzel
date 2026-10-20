@@ -3,6 +3,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 process.env.KRITZEL_PROVIDER = 'openrouter';
 process.env.KRITZEL_OPENROUTER_BACKOFF_MS = '1';
 process.env.OPENROUTER_API_KEY = 'test-key';
@@ -122,6 +126,43 @@ test('an aborted call resolves with the text so far', async () => {
     assert.equal(r.aborted, true);
     assert.equal(r.text, 'half a ');
   } finally { await s.close(); }
+});
+
+test('a clean SSE close without [DONE] fails instead of returning partial text', async () => {
+  const s = await serve(({ res }) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'partial' } }] })}\n\n`);
+    res.end();                       // clean close, but no final [DONE]
+  });
+  try {
+    await assert.rejects(openrouterCall({ system: 's', text: 't', model: 'deepseek/deepseek-v4.1-flash', onText: () => {} }),
+      /without \[DONE\]/);
+    assert.equal(s.requests.length, 1);   // partial text is never retried
+  } finally { await s.close(); }
+});
+
+test('a frame whose OpenRouter stream closes without [DONE] fails with no thing written', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kritzel-or-frame-'));
+  const s = await serve(({ res }) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "### NEW\nexport const meta = { name: 'Halb' };\n" } }] })}\n\n`);
+    res.end();
+  });
+  try {
+    for (const d of ['things', 'reports']) mkdirSync(join(dir, d));
+    const frame = join(dir, '20261020-104000.jpg');
+    execFileSync('convert', ['-size', '640x480', 'xc:white', frame]);
+    const { processFrame } = await import('./generate.mjs');
+    const r = await processFrame(frame, { thingsDir: join(dir, 'things'), reportsDir: join(dir, 'reports'), box: [100, 100, 200, 200] });
+    assert.match(r.error, /without \[DONE\]/);
+    assert.deepEqual(readdirSync(join(dir, 'things')), []);
+    const saved = JSON.parse(readFileSync(join(dir, 'reports', '20261020-104000.json'), 'utf8'));
+    assert.match(saved.error, /without \[DONE\]/);
+    assert.deepEqual(saved.written, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await s.close();
+  }
 });
 
 test('a signal already aborted starts no request', async () => {
