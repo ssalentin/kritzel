@@ -55,6 +55,7 @@ ROOT = Path(os.environ.get("KRITZEL_ROOT", Path(__file__).resolve().parent.paren
 OUT = ROOT / "frames" / "settled"
 STATUS = ROOT / "frames" / "status"
 VIEWER = os.environ.get("VIEWER", "http://127.0.0.1:8765")
+CAMERA_PORT = int(os.environ.get("CAMERA_PORT", "8766"))   # where camera_server.py listens on this machine
 W, H = 320, 180          # compare at this size: averages away sensor noise, keeps pencil lines
 PIXEL = 20               # brightness step (0-255) that counts as a changed pixel
 NEW_PX = 15              # changed pixels that count: vs the still picture = movement, vs the last sheet = new
@@ -989,13 +990,47 @@ def box(diff, size):
     return [int(x0 * sx), int(y0 * sy), int(x1 * sx) - int(x0 * sx), int(y1 * sy) - int(y0 * sy)]
 
 
+def local_camera(label):
+    """The id of this machine's camera called `label`, or None.
+
+    The picker stores a local choice as {kind: local, label}, with the device's id nowhere in it;
+    the camera server still knows which id answers to that name, so ask it. A label that matches
+    nothing (the camera was unplugged since it was chosen) gives None: wait, don't guess.
+    """
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{CAMERA_PORT}/cameras.json", timeout=1.5) as r:
+            cams = json.load(r)["cameras"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    for c in cams if isinstance(cams, list) else []:
+        if not isinstance(c, dict):
+            continue
+        if label in (str(c.get("name") or ""), f"{c.get('name')}: {c.get('name')}"):
+            cam = str(c.get("id", ""))
+            if re.fullmatch(r"video\d+", cam):
+                return cam
+    return None
+
+
 def camera():
-    """The chosen remote camera as (snapshot URL, info), or None."""
+    """The chosen camera as (snapshot URL, info), or None."""
     try:
         c = json.loads((ROOT / "camera.json").read_text())
     except (OSError, ValueError):
         return None
-    if not isinstance(c, dict) or c.get("kind") != "remote":
+    if not isinstance(c, dict):
+        return None
+    if c.get("kind") == "local":
+        # here, not on another machine: read the camera server directly; the viewer's proxy only
+        # knows tailnet peers, and a camera on this host need not be one
+        label = str(c.get("label") or "")[:200]
+        cam = local_camera(label)
+        if cam is None:
+            return None
+        base = f"http://127.0.0.1:{CAMERA_PORT}"
+        return (f"{base}/snapshot/{cam}.jpg", {"host": "this computer", "id": cam, "name": label or cam,
+                                               "base": base})
+    if c.get("kind") != "remote":
         return None
     ip, cam = str(c.get("ip", "")), str(c.get("id", ""))
     if not re.fullmatch(r"[\d.]+", ip) or not re.fullmatch(r"video\d+", cam):
@@ -1235,7 +1270,11 @@ def main():
         if stream is None:
             print(f"watching {cam[1]['name']} on {cam[1]['host']}", flush=True)
             url = cam[0]
-            stream = Stream(url[:-4] + ".mjpg?small")   # the 960 px preview is enough to watch
+            # the 960 px preview is enough to watch; a local server keeps stream and snapshot on
+            # separate paths (/stream/x.mjpg vs /snapshot/x.jpg), the viewer's proxy takes one (x.mjpg)
+            base = cam[1].get("base")
+            stream = Stream(f"{base}/stream/{cam[1]['id']}.mjpg?small" if base
+                            else url[:-4] + ".mjpg?small")
         px, seq = stream.next(seq)
         if px is None:
             if stream.error:
