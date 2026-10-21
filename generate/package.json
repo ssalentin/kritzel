@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Settled camera frame → viewer/things/<thing>.js, via headless Claude Code",
   "scripts": {
-    "test": "KRITZEL_THING_SOUNDS=0 node --test"
+    "test": "KRITZEL_THING_SOUNDS=0 KRITZEL_THING_SPRITES=0 node --test"
   },
   "dependencies": {
     "playwright-core": "^1.56.0",

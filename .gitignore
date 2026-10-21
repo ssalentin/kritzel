@@ -1,6 +1,12 @@
 # camera captures, test renders and scratch harnesses
 frames/
 viewer/sounds/things/*.ogg
+viewer/pixel/sprites/*.px.js
+viewer/pixel/sprites/*.png
+!viewer/pixel/sprites/fallback-*.png
+viewer/pixel/things/*.json
+viewer/pixel/things/*.px.js
+viewer/pixel/things/*.png
 *.jpg
 !worlds/**/*.jpg
 !docs/*.jpg

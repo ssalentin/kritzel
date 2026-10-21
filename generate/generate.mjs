@@ -15,7 +15,7 @@
 // each stage (things read, crop, first text, SEEN, first thing written, done; each call's end as "at"). --render also
 // renders each written thing in the real viewer (headless) to <reports>/<frame>-<thing>-front.png.
 import { readFileSync, writeFileSync, renameSync, existsSync, readdirSync, mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -92,6 +92,86 @@ export function soundFor(file, name, code, info, thingsDir) {
     log(`sound ${base}: ${why} (the thing still arrives)`);
     return null;
   }
+}
+
+// ---------- a 32x32 claude-pxl sprite for each thing, in the background ----------
+// The 3D thing never waits: the job runs after its module is written, two at a time, and the last
+// write for a file wins (a draft's job is superseded by the final's). A failure is logged and leaves
+// the old sprite (if any) in place; the thing itself is unaffected.
+const spritePending = new Map();
+const spriteActive = new Map();              // file → { child, job }: a newer write kills the running one
+const spriteVersion = new Map();             // file → the latest write's generation
+let spriteRunning = 0;
+const SPRITE_SLOTS = Math.max(1, Number(process.env.KRITZEL_SPRITE_SLOTS) || 2);
+const moveOf = code => code.match(/\bmove:\s*['"](fly|swim|hop|crawl|climb|walk)['"]/)?.[1] || '';
+function runSprite(job) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(job.cmd, [job.script, '--name', job.name, '--drawing', job.drawing, '--kind', job.kind,
+      '--move', job.move, '--file', job.file, '--out', job.outDir, '--report', job.report],
+    { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+    spriteActive.set(job.file, { child, job });
+    let out = '', err = '', settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true; child.kill('SIGTERM');
+      reject(new Error('sprite job timed out'));
+    }, 120_000);
+    child.stdout.on('data', d => { out += d; });
+    child.stderr.on('data', d => { err += d; });
+    child.on('error', e => {
+      if (spriteActive.get(job.file)?.child === child) spriteActive.delete(job.file);
+      if (settled) return;
+      settled = true; clearTimeout(timer); reject(e);
+    });
+    child.on('close', code => {
+      if (spriteActive.get(job.file)?.child === child) spriteActive.delete(job.file);
+      if (settled) return;
+      settled = true; clearTimeout(timer);
+      // a newer write owns this file now (or killed this child): do not publish/accept the old result
+      if (job.superseded || spriteVersion.get(job.file) !== job.version) return resolve({ superseded: true });
+      if (code !== 0) return reject(new Error((err || out).trim().split('\n')[0].slice(0, 220) || `exit ${code}`));
+      let info = {};
+      try { info = JSON.parse(out.trim().split('\n').at(-1) || '{}'); } catch { /* the files are what matter */ }
+      log(`sprite ${job.base}.png (${info.buildMs ?? '?'} ms, $${Number(info.cost || 0).toFixed(5)})`);
+      resolve(info);
+    });
+  });
+}
+function pumpSprites() {
+  while (spriteRunning < SPRITE_SLOTS && spritePending.size) {
+    const [file, job] = spritePending.entries().next().value;
+    spritePending.delete(file);
+    spriteRunning++;
+    runSprite(job).then(job.resolve, e => {
+      log(`sprite ${job.base}: ${e.message} (the thing stays)`);
+      job.resolve(null);
+    }).finally(() => { spriteRunning--; pumpSprites(); });
+  }
+}
+export function spriteFor(file, name, drawing, kind, move, thingsDir, reportsDir) {
+  if (process.env.KRITZEL_THING_SPRITES === '0' || !drawing) return Promise.resolve(null);
+  const base = file.replace(/\.js$/, '');
+  const job = {
+    file, base, name: name || base, drawing, kind: kind || '', move: move || '',
+    version: (spriteVersion.get(file) || 0) + 1,
+    cmd: process.env.KRITZEL_THING_SPRITES_CMD || process.execPath,
+    script: process.env.KRITZEL_THING_SPRITES_SCRIPT || join(ROOT, 'scripts', 'thing_sprite.mjs'),
+    outDir: join(dirname(thingsDir), 'pixel', 'sprites'),
+    report: join(reportsDir, base + '.sprite.json'),
+  };
+  spriteVersion.set(file, job.version);
+  return new Promise(resolve => {
+    const old = spritePending.get(file);
+    if (old) old.resolve({ superseded: true });       // a newer write is already waiting: only it matters
+    const active = spriteActive.get(file);
+    if (active) {
+      active.job.superseded = true;
+      try { active.child.kill('SIGTERM'); } catch { /* already gone */ }
+    }
+    job.resolve = resolve;
+    spritePending.set(file, job);
+    pumpSprites();
+  });
 }
 
 // changed_box (+ margin) → a JPEG, and where it goes on the island. A tight crop is sharp at 768 px; a whole
@@ -407,6 +487,7 @@ export async function processTextRequest(reqPath, { thingsDir, reportsDir, onPro
           if (now !== base.code) return { raced: now };
           const sound = soundFor(target, name, f.code, f.info, thingsDir);
           atomicWrite(join(thingsDir, target), f.code);       // only now: a failed rewrite leaves the old file as it was
+          spriteFor(target, name, f.info?.drawing, f.info?.actors?.length ? 'actor' : '', moveOf(f.code), thingsDir, reportsDir);
           // the report joins the write under the same lock: an archive either sees the thing and its report,
           // or neither, so it never archives a thing the request loop will not build again
           report.written.push({ kind: 'UPDATE', file: target, name, model: f.model, at: T(), ids: base.ids, ...(sound && { sound }),
@@ -484,6 +565,7 @@ export async function processTextRequest(reqPath, { thingsDir, reportsDir, onPro
         const file = base + '.js';
         const sound = soundFor(file, name, code, f.info, thingsDir);
         atomicWrite(join(thingsDir, file), code);
+      spriteFor(file, name, f.info?.drawing, f.info?.actors?.length ? 'actor' : '', moveOf(code), thingsDir, reportsDir);
         const entry = { kind: 'NEW', file, name, model: f.model, at: T(),
           ids: [...code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(x => x[1]),
           ...(f.info?.paper && { paper: f.info.paper }), ...(sound && { sound }),
@@ -814,6 +896,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
         const file = base + '.js';
         const sound = soundFor(file, thingName, f.code, f.info, thingsDir);
         atomicWrite(join(thingsDir, file), f.code);
+        spriteFor(file, thingName, f.info?.drawing, f.info?.actors?.length ? 'actor' : '', moveOf(f.code), thingsDir, reportsDir);
         return { base, file, code: f.code, name: thingName, sound };
       });
       if (!written) { log(`${name}: ${old.file} changed meanwhile (typed request won); not overwriting`); return; }
@@ -902,6 +985,7 @@ ${draft}`;
           if (now !== draft) { log(`${name}: final of ${file} dropped: the thing changed or was removed meanwhile`); return done({ dropped: 'changed meanwhile' }); }
           const sound = soundFor(file, thingName, f.code, f.info, thingsDir);
           atomicWrite(path, s.says ? withSaid(f.code, s.says) : f.code);
+          spriteFor(file, thingName, f.info?.drawing, f.info?.actors?.length ? 'actor' : '', moveOf(f.code), thingsDir, reportsDir);
           log(`${name}: FINAL ${file} (${thingName}) by ${MODEL}, ${((Date.now() - settledAt) / 1000).toFixed(1)}s after the frame settled`);
           // the other things the draft had taken for one: written as new things, checked like any
           const parts = [];
@@ -934,6 +1018,7 @@ ${draft}`;
             const partFile = base + '.js';
             const sound = soundFor(partFile, partName, code, g.info, thingsDir);
             atomicWrite(join(thingsDir, partFile), code);
+            spriteFor(partFile, partName, g.info?.drawing, g.info?.actors?.length ? 'actor' : '', moveOf(code), thingsDir, reportsDir);
             const pm = code.match(/paper:\s*\{\s*x:\s*([\d.]+),\s*y:\s*([\d.]+)/);
             if (pm) { paper[partFile] = { x: +pm[1], y: +pm[2] }; writePaper(reportsDir, paper); }
             report.written.push({ kind: 'NEW', file: partFile, name: partName, model: MODEL, at: T(), ids: [...code.matchAll(/\bid:\s*['"]([\w-]+)['"]/g)].map(m => m[1]), splitFrom: file, ...(sound && { sound }) });
