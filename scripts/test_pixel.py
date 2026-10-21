@@ -25,6 +25,9 @@ SHOT_REACT = Path("/tmp/kritzel-pixel-react.png")
 SHOT_REACT_ALT = Path("/tmp/kritzel-pixel-react-bob.png")
 MOVIE = Path("/tmp/kritzel-pixel-live.gif")
 GREET_MOVIE = Path("/tmp/kritzel-pixel-greet.gif")
+PHYSICS_MOVIE = Path("/tmp/kritzel-pixel-physics.gif")
+SHOT_PHYSICS_FINAL = Path("/tmp/kritzel-pixel-physics-final.png")
+THROW_MOVIE = Path("/tmp/kritzel-pixel-throw.gif")
 
 THINGS = [
     {"file": "gelbe-blume.json", "name": "Gelbe Blume", "drawing": "a yellow flower",
@@ -35,6 +38,10 @@ THINGS = [
      "kind": "actor", "paper": {"x": .43, "y": .65}, "sprite": "laeufer.png"},
     {"file": "kritzel.json", "name": "Kritzel", "drawing": "a scribble ball",
      "kind": "actor", "move": "fly", "paper": {"x": .71, "y": .7}, "sprite": "kritzel.png"},
+    {"file": "truhe.json", "name": "Truhe", "drawing": "a small wooden chest",
+     "kind": "scenery", "portable": True, "paper": {"x": .55, "y": .62}, "sprite": "truhe.png"},
+    {"file": "baum.json", "name": "Baum", "drawing": "a tall tree",
+     "kind": "scenery", "portable": False, "paper": {"x": .2, "y": .4}, "sprite": "baum.png"},
 ]
 
 
@@ -62,6 +69,8 @@ class Pixel(unittest.TestCase):
         for thing in THINGS:
             (pixel / "things" / thing["file"]).write_text(json.dumps(thing))
         shutil.copy(pixel / "sprites" / "fallback-tree.png", pixel / "things" / "kritzel.png")
+        if not (pixel / "scenes" / "kritzel.png").exists():
+            shutil.copy(pixel / "scenes" / "book.png", pixel / "scenes" / "kritzel.png")
         (cls.world / "world-mode.json").write_text('{"render":"pixel"}\n')
         future = time.time() + 30
         for png in [*pixel.glob("scenes/*.png"), *pixel.glob("sprites/*.png")]:
@@ -88,7 +97,12 @@ class Pixel(unittest.TestCase):
         cls.page.route("**/api/pixel-world",
                        lambda route: route.fulfill(json={"ok": True, "built": False, "bytes": len(cls.scene_bytes)}))
         cls.page.goto(f"http://127.0.0.1:{cls.port}/viewer/pixel/", wait_until="load")
-        cls.page.wait_for_function("() => window.__pixelApp?.dynamic", timeout=30000)
+        try:
+            cls.page.wait_for_function("() => window.__pixelApp?.dynamic", timeout=30000)
+        except Exception:
+            print("page errors:", cls.errors)
+            print(cls.page.evaluate("() => ({text: document.body.textContent, app: !!window.__pixelApp})"))
+            raise
         time.sleep(1)
 
     @classmethod
@@ -126,7 +140,8 @@ class Pixel(unittest.TestCase):
         state = self.page.evaluate("""() => ({
           smooth: document.querySelector('#scene').getContext('2d').imageSmoothingEnabled,
           things: window.__pixelThings,
-          items: window.__pixelApp.items.map(i => ({name: i.name, kind: i.kind, form: i.form, source: i.source, frames: i.frames})),
+          items: window.__pixelApp.items.map(i => ({name: i.name, kind: i.kind, form: i.form, source: i.source,
+            frames: i.frames, portable: i.portable})),
           pixel: document.querySelector('#renderMode button[data-mode="pixel"]').getAttribute('aria-pressed'),
           group: document.querySelector('#renderMode').getBoundingClientRect().toJSON(),
         })""")
@@ -137,6 +152,8 @@ class Pixel(unittest.TestCase):
         walker = next(i for i in state["items"] if i["name"] == "Läufer")
         self.assertEqual(walker["source"], "fallback-strip")
         self.assertEqual(walker["frames"], 4)
+        chest = next(i for i in state["items"] if i["name"] == "Truhe")
+        self.assertTrue(chest["portable"])
         flower = next(i for i in state["items"] if i["name"] == "Gelbe Blume")
         self.assertEqual((flower["kind"], flower["form"], flower["source"]), ("scenery", "flower", "fallback"))
         self.assertLessEqual(state["group"]["right"], 1600)
@@ -200,6 +217,67 @@ class Pixel(unittest.TestCase):
         }""")
         self.assertIn(resumed["state"], {"idle", "move"})
         self.assertGreater(abs(resumed["x"] - point["ax"]) + abs(resumed["y"] - point["ay"]), .3, resumed)
+
+    def test_4_physics_push_and_throw(self):
+        self.page.set_viewport_size({"width": 1440, "height": 900})
+        self.page.evaluate("""() => {
+          const app = window.__pixelApp, p = window.__pixelPhysics;
+          const actor = app.actors.find(a => a.mover === 'walk');
+          const chest = app.items.find(i => i.name === 'Truhe');
+          const flower = app.items.find(i => i.name === 'Gelbe Blume');
+          p.place(chest, 90, 130); p.place(flower, 90, 92);
+          actor.x = 55; actor.y = 130; actor.pause = 0; actor.target = {x: 100, y: 130};
+        }""")
+        before = self.page.evaluate("""() => {
+          const chest = window.__pixelApp.items.find(i => i.name === 'Truhe');
+          const b = window.__pixelPhysics.portableBodies.get(chest); return {x: b.position.x, y: b.position.y};
+        }""")
+        shots = []
+        for i in range(4):
+            shot = Path(f"/tmp/kritzel-pixel-physics-{i}.png")
+            self.page.screenshot(path=str(shot), timeout=120000)
+            shots.append(shot)
+            time.sleep(.25)
+        after = self.page.evaluate("""() => {
+          const chest = window.__pixelApp.items.find(i => i.name === 'Truhe');
+          const b = window.__pixelPhysics.portableBodies.get(chest); return {x: b.position.x, y: b.position.y};
+        }""")
+        self.assertGreater(after["x"], before["x"] + .5, (before, after))
+
+        point = self.page.evaluate("""() => {
+          const item = window.__pixelApp.items.find(i => i.name === 'Gelbe Blume');
+          const chest = window.__pixelApp.items.find(i => i.name === 'Truhe');
+          window.__pixelPhysics.place(item, 90, 92); window.__pixelPhysics.place(chest, 135, 92);
+          const b = window.__pixelPhysics.portableBodies.get(item), c = document.querySelector('#scene');
+          const r = c.getBoundingClientRect(), s = Math.min(r.width / 320, r.height / 200);
+          return {x: r.left + (r.width - 320 * s) / 2 + b.position.x * s,
+                  y: r.top + (r.height - 200 * s) / 2 + b.position.y * s};
+        }""")
+        self.page.mouse.move(point["x"], point["y"]); self.page.mouse.down()
+        for n in range(1, 6):
+            self.page.mouse.move(point["x"] + n * 20, point["y"])
+            self.page.wait_for_timeout(25)
+        self.page.mouse.up()
+        throw_shots = []
+        for i in range(5):
+            shot = Path(f"/tmp/kritzel-pixel-throw-{i}.png")
+            self.page.screenshot(path=str(shot), timeout=120000)
+            throw_shots.append(shot)
+            time.sleep(.1)
+        thrown = self.page.evaluate("""() => {
+          const item = window.__pixelApp.items.find(i => i.name === 'Gelbe Blume');
+          const chest = window.__pixelApp.items.find(i => i.name === 'Truhe');
+          const a = window.__pixelPhysics.portableBodies.get(item), b = window.__pixelPhysics.portableBodies.get(chest);
+          return {x: a.position.x, speed: a.speed, chestX: b.position.x, gap: b.position.x - a.position.x};
+        }""")
+        self.assertGreater(thrown["x"], 90.5, thrown)
+        self.assertGreater(abs(thrown["gap"]), 18, thrown)
+        self.assertLess(thrown["speed"], 8, thrown)
+        self.page.screenshot(path=str(SHOT_PHYSICS_FINAL), timeout=120000)
+        subprocess.run(["convert", "-delay", "25", "-loop", "0", *map(str, shots + [SHOT_PHYSICS_FINAL]),
+                        "-resize", "720x450", str(PHYSICS_MOVIE)], check=True)
+        subprocess.run(["convert", "-delay", "10", "-loop", "0", *map(str, throw_shots),
+                        "-resize", "720x450", str(THROW_MOVIE)], check=True)
 
 
 if __name__ == "__main__":
