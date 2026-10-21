@@ -11,6 +11,11 @@ test('the mover follows explicit meta, then the drawing', () => {
   assert.equal(moverFor({ name: 'Spinne', drawing: 'a spider' }), 'climb');
   assert.equal(moverFor({ name: 'Roter Panda', drawing: 'a red panda in a tree' }), 'climb');
   assert.equal(moverFor({ name: 'Mira', drawing: 'a child' }), 'walk');
+  assert.equal(moverFor({ name: 'Maedchen', drawing: 'a girl walking across the book' }), 'walk');
+  assert.equal(moverFor({ name: 'Stuhl', drawing: 'a chair with a friendly face' }), 'walk');
+  assert.equal(moverFor({ name: 'Tasse', drawing: 'a cup of coffee' }), 'walk');
+  assert.equal(moverFor({ name: 'Mond', drawing: 'the moon phase' }), 'walk');
+  assert.equal(moverFor({ name: 'Kind', drawing: 'a girl carrying a cookie' }), 'walk');
 });
 
 test('an actor moves toward its target and a solid thing blocks it', () => {

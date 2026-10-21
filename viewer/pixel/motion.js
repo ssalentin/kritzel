@@ -4,15 +4,27 @@ export const PAGE = { x0: 28, x1: 292, y0: 64, y1: 172 };
 
 const DEFAULT_SPEED = { walk: 22, roll: 34, fly: 28, swim: 17, hop: 19, climb: 15 };
 
+function wordsOf(text) {
+  const clean = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ß/g, 'ss').toLowerCase();
+  return new Set(clean.match(/[a-z0-9]+/g) || []);
+}
+
 export function moverFor(thing) {
   const explicit = String(thing.move || thing.mover || '').toLowerCase();
   if (MOVERS.includes(explicit)) return explicit;
-  const text = `${thing.name || ''} ${thing.drawing || ''}`.toLowerCase();
-  if (/rollstuhl|wheelchair|fahrrad|bike|auto|car|bus|zug|train/.test(text)) return 'roll';
-  if (/drache|dragon|vogel|bird|eule|owl|hexe|witch|fliege|biene|bee|flug|flugzeug|plane/.test(text)) return 'fly';
-  if (/fisch|fish|wal|whale|hai|shark|ente|duck|pinguin|penguin|meerjungfrau|mermaid/.test(text)) return 'swim';
-  if (/spinne|spider|eichh|squirrel|affe|monkey|kletter|climb|im baum|in a tree|in the tree|auf dem baum/.test(text)) return 'climb';
-  if (/hase|rabbit|frosch|frog|hüpf|hop/.test(text)) return 'hop';
+  const clean = `${thing.name || ''} ${thing.drawing || ''}`.normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '').replace(/ß/g, 'ss').toLowerCase();
+  const words = wordsOf(clean), has = (...items) => items.some(x => words.has(x));
+  const starts = (...items) => [...words].some(word => items.some(x => word.startsWith(x)));
+  if (starts('auto') || has('rollstuhl', 'wheelchair', 'fahrrad', 'bike', 'bikes', 'car', 'cars', 'bus', 'zug', 'train')) return 'roll';
+  if (starts('drach', 'flieg', 'vogel') || has('dragon', 'bird', 'eule', 'owl', 'hexe', 'witch', 'biene', 'bee',
+    'flugzeug', 'plane', 'schmetterling', 'butterfly', 'fledermaus', 'bat')) return 'fly';
+  if (starts('fisch', 'pinguin') || has('fish', 'wal', 'wale', 'whale', 'whales', 'hai', 'haie', 'shark', 'ente', 'enten',
+    'duck', 'ducks', 'penguin', 'meerjungfrau', 'mermaid')) return 'swim';
+  if (/in (a|the) tree|im baum|auf dem baum/.test(clean)
+    || starts('eichh', 'kletter', 'climb')
+    || has('spinne', 'spinnen', 'spider', 'spiders', 'squirrel', 'affe', 'affen', 'monkey', 'monkeys')) return 'climb';
+  if (starts('hupf') || has('hase', 'hasen', 'rabbit', 'rabbits', 'frosch', 'froesche', 'frog', 'frogs')) return 'hop';
   return 'walk';
 }
 
