@@ -581,7 +581,13 @@ def pixel_things():
             out.append({"file": p.name, "name": str(t.get("name") or p.stem)[:80],
                         "drawing": str(t.get("drawing") or "")[:500], "kind": str(t.get("kind") or "")[:40],
                         "paper": t.get("paper") if isinstance(t.get("paper"), dict) else None,
-                        "sprite": sprite})
+                        "sprite": sprite,
+                        **({"move": str(t["move"])[:20]} if isinstance(t.get("move"), str) else {}),
+                        **({"mover": str(t["mover"])[:20]} if isinstance(t.get("mover"), str) else {}),
+                        **({"state": str(t["state"])[:20]} if isinstance(t.get("state"), str) else {}),
+                        **({"speed": float(t["speed"])} if isinstance(t.get("speed"), (int, float)) else {}),
+                        **({"frames": int(t["frames"])} if isinstance(t.get("frames"), int) else {}),
+                        **({"fps": float(t["fps"])} if isinstance(t.get("fps"), (int, float)) else {})})
         except (OSError, ValueError):
             continue
     return out[:200]
