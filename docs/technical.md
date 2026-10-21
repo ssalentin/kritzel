@@ -47,6 +47,31 @@ camera ──► frame ──► generation (generate/) ────────
   until the user clicks; the bank is fetched only then.
 - **`viewer/serve.py`** — a no-cache static server on `127.0.0.1:8765`.
 
+### Pixel mode
+
+The **3D | Pixel** switch opens a separate lightweight app at `viewer/pixel/`. It does not run
+the simulation or load three.js. The 3D viewer writes a compact things/actors snapshot to
+`frames/status/pixel-world.json` before switching; the pixel app places each thing on the same
+two book pages from its `meta.paper` position. A generated per-thing PNG in
+`viewer/pixel/sprites/<base>.png` is the primary sprite. Until that exists, the renderer uses the
+matching `fallback-<kind>.png`; `scenes/kritzel.png` is the complete first-paint and archived-world
+fallback.
+
+The scene is built with [claude-pxl](https://github.com/crsolver/claude-pxl), pinned at commit
+`21fee41f7ecce00bc868d7567f24ffd0f3acc8fa` (MIT, Copyright © 2026 crsolver). The generated
+`art/pixel-world.px.js` and `viewer/pixel/scenes/kritzel.png` are committed as the first-paint
+fallback. On the live viewer, `POST /api/pixel-world` rebuilds them only when a thing is newer
+than the PNG; archived worlds only use their copied PNG. To rebuild explicitly:
+
+```bash
+node scripts/pixel-world.mjs
+```
+
+The script clones the pinned tool into `/tmp` when it is not already there (`PXL_DIR` overrides
+that path), writes the art file, and runs `pxl build` into `viewer/pixel/`. The fallback art library
+uses exact 32 × 32 grid strings with selective dark edges and four to six tones per material;
+[`docs/pixel-library.png`](pixel-library.png) is its nearest-neighbour 4× preview sheet.
+
 ### The sound bank
 
 `viewer/sounds/*.ogg` is rendered by `scripts/make-sounds.sh` from

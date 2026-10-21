@@ -528,6 +528,15 @@ export async function build(api, prevState = null) {
     book: () => ({ w: GROUND.w, d: GROUND.d }),   // the book's size now (the page turn uses it: index.html has its own module instance)
     feet: () => [...loaded].map(([f, e]) => ({ file: f, foot: e.foot, obstacles: e.obstacles, pinned: !!pinned(e) })),   // for tests   // for the light that shows where a drawing will appear
     brain: () => brain,                   // for UI in index.html (e.g. click a character); sim exposes its actors
+    // the small shared snapshot the pixel app reads; the pixel app never runs a sim
+    pixelSnapshot: () => ({
+      at: Date.now(),
+      things: [...loaded.entries()].map(([file, e]) => ({ file, name: e.meta?.name || file,
+        drawing: e.meta?.drawing || '', kind: e.meta?.kind || '', paper: e.meta?.paper || null,
+        actors: e.actors.map(a => a.id) })),
+      actors: [...loaded.values()].flatMap(e => e.actors).map(a => ({ id: a.id, name: a.name || a.id, kind: a.kind || 'figure',
+        file: a.file, x: +(a.pos?.x ?? 0).toFixed(2), z: +(a.pos?.z ?? 0).toFixed(2), alt: +(a.alt ?? 0).toFixed(2) })),
+    }),
     actions: () => actions,
     update(t, dt) {
       clockNow = t;

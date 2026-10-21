@@ -13,6 +13,8 @@ Camera selection (see scripts/camera_server.py for the remote side):
   POST /api/newworld            → runs scripts/newworld.sh: archive this world to worlds/, start an empty one
   POST /api/text-thing          → {text} → frames/requests/<id>.json, for the generate watcher to build
   GET /api/stamps               → mtime:size of every engine file and every thing, so the viewer's poll is one request
+  POST /api/pixel-world         → rebuild the static pixel scene when the things changed
+  GET/POST /api/pixel-snapshot  → the 3D viewer's small world snapshot, for the pixel app
   PUT /api/placement            → {file, d: [dx, dz] | null}: where the viewer moved a new thing (viewer/things/placement.json)
   GET  /api/think               → {on, model}: is the Jev director switched on (KRITZEL_THINK=1 and a key)?
   POST /api/think               → {scene, actors} → {goals, usage, ms}: a local director; {} when it is off or fails
@@ -90,6 +92,13 @@ def changelog_walk(n):
     return items
 CAMERA_PORT = int(os.environ.get("CAMERA_PORT", "8766"))   # where camera_server.py (or replay_camera.py) listens
 STATUS = ROOT / "frames" / "status"
+PIXEL_SNAPSHOT = STATUS / "pixel-world.json"   # the 3D viewer writes it; the pixel app only reads it
+PIXEL_SCENE = ROOT / "viewer" / "pixel" / "scenes" / "kritzel.png"
+PIXEL_BOOK = ROOT / "viewer" / "pixel" / "scenes" / "book.png"
+PIXEL_SOURCE = ROOT / "scripts" / "pixel-world.mjs"
+PIXEL_CODE = (PIXEL_SOURCE, ROOT / "viewer" / "pixel" / "art.js", ROOT / "viewer" / "pixel" / "layout.js")
+PIXEL_LOCK = threading.Lock()
+PIXEL_TIMEOUT_S = 120
 PLACEMENT_LOCK = threading.Lock()
 SITUATION_LEASE = {"client": None, "at": 0.0}
 SITUATION_LEASE_S = 60
@@ -548,6 +557,48 @@ def can(actor, thing, meta=None):
         CAN_LOCK.release()
 
 
+def pixel_snapshot(body):
+    """Save the small shared world snapshot; never let a malformed viewer update replace it."""
+    if not isinstance(body, dict):
+        return {"ok": False, "error": "snapshot must be an object"}
+    try:
+        raw = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+        if len(raw.encode()) > 200_000:
+            return {"ok": False, "error": "snapshot too large"}
+        STATUS.mkdir(parents=True, exist_ok=True)
+        tmp = PIXEL_SNAPSHOT.with_suffix(".json.tmp")
+        tmp.write_text(raw + "\n")
+        tmp.replace(PIXEL_SNAPSHOT)
+        return {"ok": True, "bytes": len(raw.encode())}
+    except (OSError, TypeError, ValueError) as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+def pixel_build():
+    """Build the claude-pxl scene from the current things; best effort, the committed PNG is the fallback."""
+    with PIXEL_LOCK:
+        started = time.time()
+        try:
+            source_at = max(p.stat().st_mtime_ns for p in PIXEL_CODE)
+            for thing in (ROOT / "viewer" / "things").glob("*.js"):
+                source_at = max(source_at, thing.stat().st_mtime_ns)
+            fallbacks = list((ROOT / "viewer" / "pixel" / "sprites").glob("fallback-*.png"))
+            artifacts = [PIXEL_SCENE, PIXEL_BOOK, *fallbacks]
+            if len(fallbacks) >= 10 and all(p.exists() and p.stat().st_mtime_ns >= source_at for p in artifacts):
+                return {"ok": True, "built": False, "bytes": PIXEL_SCENE.stat().st_size}
+        except OSError:
+            pass
+        try:
+            r = subprocess.run(["node", str(ROOT / "scripts" / "pixel-world.mjs")], cwd=str(ROOT),
+                               env={**os.environ, "KRITZEL_PIXEL_PREVIEW": "0"},
+                               capture_output=True, text=True, timeout=PIXEL_TIMEOUT_S)
+        except (OSError, subprocess.SubprocessError) as e:
+            return {"ok": False, "error": str(e)[:300], "ms": round((time.time() - started) * 1000)}
+        size = PIXEL_SCENE.stat().st_size if PIXEL_SCENE.exists() else 0
+        return {"ok": r.returncode == 0 and size > 0, "built": True, "ms": round((time.time() - started) * 1000), "bytes": size,
+                "log": (r.stdout + r.stderr)[-1200:]}
+
+
 def read_mode():
     try:
         m = json.loads(MODE_FILE.read_text()).get("mode")
@@ -691,6 +742,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.json({"mode": read_mode()})
         if path == "/api/think":
             return self.json(think_config())
+        if path == "/api/pixel-snapshot":
+            try:
+                return self.json(json.loads(PIXEL_SNAPSHOT.read_text()))
+            except (OSError, ValueError):
+                return self.json({})
         if path == "/api/status":
             return self.json(self.status())
         if path == "/api/status/cutout.png":
@@ -783,6 +839,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except Exception:
                 out = {"ok": False, "why": CAN_UNKNOWN}
             return self.json({**out, **meta})
+        if path == "/api/pixel-world":
+            if self.headers.get("X-Kritzel") != "1":
+                return self.json({"ok": False, "error": "forbidden"}, 403)
+            try:
+                return self.json(pixel_build())
+            except Exception as e:
+                return self.json({"ok": False, "error": str(e)[:300]})
+        if path == "/api/pixel-snapshot":
+            if self.headers.get("X-Kritzel") != "1":
+                return self.json({"ok": False, "error": "forbidden"}, 403)
+            try:
+                n = int(self.headers.get("Content-Length", ""))
+                assert 0 <= n <= 220_000
+                body = json.loads(self.rfile.read(n))
+            except (ValueError, AssertionError, TypeError):
+                return self.json({"ok": False, "error": "bad snapshot"}, 400)
+            return self.json(pixel_snapshot(body))
         if path not in ("/api/text-thing", "/api/newworld"):
             return self.json({"error": "not found"}, 404)
         # only the viewer itself: a page on another site can send a plain POST without asking first,

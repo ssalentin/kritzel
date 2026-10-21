@@ -37,7 +37,8 @@
   #status.silent:has(.note:not([hidden])), #status.silent:has(.gen:not([hidden])) { display: flex; }
   @keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
   @media (max-width: 560px) { #status { top: auto; bottom: 245px; max-width: calc(100vw - 32px); border-radius: 16px; }
-    #status .text { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; } }
+    #status .text { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    #renderMode { right: auto; left: 12px; top: 12px; } }
   /* the name of a drawing that just came alive, big for a moment (status.js) */
   #arrive { position: fixed; left: 50%; top: 16%; transform: translate(-50%, 0) scale(.6); opacity: 0; pointer-events: none;
     font: 800 clamp(30px, 7vw, 64px)/1.1 system-ui, sans-serif; color: #fff; white-space: nowrap;
@@ -119,6 +120,11 @@
     border: 0; border-radius: 10px; padding: 6px 10px; cursor: pointer; opacity: .8; }
   #camBtn { position: fixed; right: 124px; top: 12px; font: 13px system-ui, sans-serif; color: var(--fg); background: var(--panel);
     border: 0; border-radius: 10px; padding: 6px 10px; cursor: pointer; opacity: .8; }
+  #renderMode { position: fixed; right: 312px; top: 12px; display: flex; gap: 2px; padding: 2px; border-radius: 10px;
+    background: var(--panel); box-shadow: 0 4px 12px #0002; }
+  #renderMode button { border: 0; border-radius: 7px; padding: 4px 7px; font: 600 12px system-ui, sans-serif;
+    color: var(--fg); background: none; cursor: pointer; opacity: .7; }
+  #renderMode button[aria-pressed=true] { background: #6aa65a; color: #fff; opacity: 1; }
   /* world mode and 'new world' (issue #16): a second row under the buttons */
   #worldBar { position: fixed; right: 16px; top: 48px; display: flex; gap: 6px; }
   #worldBar button { font: 13px system-ui, sans-serif; color: var(--fg); background: var(--panel); border: 0;
@@ -151,6 +157,7 @@
 </script>
 </head>
 <body>
+<script>try { if (sessionStorage.getItem('kritzelPixelMode') === '1') location.replace('pixel/'); } catch {}</script>
 <div id="hud"><div id="err"></div></div>
 <div id="arrive" aria-live="polite"></div>
 <div id="status" class="silent" data-tone="ok"><span class="dot"></span><span class="text"></span><span class="note" hidden></span><span class="gen" hidden>⚠ Generator aus</span></div>
@@ -177,6 +184,7 @@
 <button id="snd" type="button" aria-pressed="false">🔇 Ton an</button>
 <button id="camBtn" type="button">📷 Kamera</button>
 <button id="langBtn" type="button"></button>
+<div id="renderMode" role="group"><button type="button" data-mode="3d" aria-pressed="true">3D</button><button type="button" data-mode="pixel" aria-pressed="false">Pixel</button></div>
 <div id="worldBar"><button id="modeBtn" type="button"></button><button id="newBtn" type="button"></button></div>
 <div id="cam" hidden>
   <div class="row"><select aria-label="Kamera"></select><button class="refresh" type="button" title="Neu suchen">↻</button></div>
@@ -200,6 +208,7 @@ import { createHand } from './hand.js';
 // the book's size now: world.js grows its own copy of the book module, so the page turn asks the world
 const bookSize = () => current?.book?.() ?? { w: BOOK_BASE.w, d: BOOK_BASE.d };
 import { createStyle } from './style.js';
+import { savePixelMode } from './pixel/mode.js';
 import { t, lang, setLang, onLang } from './i18n.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -446,6 +455,27 @@ onLang(() => {
   langBtn.title = t('langTitle');
 });
 langBtn.addEventListener('click', e => { e.stopPropagation(); setLang(lang() === 'de' ? 'en' : 'de'); });
+// 3D | Pixel: Pixel is its own app surface at viewer/pixel/; 3D is this page.
+const renderMode = document.getElementById('renderMode');
+const renderButtons = [...renderMode.querySelectorAll('button')];
+const showRenderMode = () => {
+  for (const b of renderButtons) b.setAttribute('aria-pressed', String(b.dataset.mode === 'pixel' ? false : true));
+};
+onLang(() => {
+  renderButtons[0].textContent = t('mode3d'); renderButtons[1].textContent = t('modePixel');
+  renderMode.setAttribute('aria-label', t('renderModeGroup'));
+  showRenderMode();
+});
+renderButtons[0].addEventListener('click', e => { e.stopPropagation(); savePixelMode(sessionStorage, false); showRenderMode(); });
+renderButtons[1].addEventListener('click', e => {
+  e.stopPropagation();
+  savePixelMode(sessionStorage, true);
+  let snap = {};
+  try { snap = current?.pixelSnapshot?.() || {}; } catch {}
+  fetch('/api/pixel-snapshot', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Kritzel': '1' }, body: JSON.stringify(snap) })
+    .catch(() => {}).finally(() => { location.href = 'pixel/'; });
+});
+showRenderMode();
 
 // text → thing: say what to add ("eine Laterne"), Enter builds it in the book (POST /api/text-thing).
 // The 200 answer's id comes back for the tests; the generate watcher does the rest.
