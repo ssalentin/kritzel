@@ -89,6 +89,7 @@ async function loadWorldOnce(force) {
     }
     window.__pixelThings = things;
     expected = things.length;
+    dynamic = false;                     // things changed: the drawn scene is stale until items are rebuilt
     const laidOut = layoutThings(things);
     items = (await Promise.all(laidOut.map(async thing => {
       const base = thing.file.replace(/\.json$/, '');
