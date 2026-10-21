@@ -20,6 +20,7 @@ test('pixel world picks a readable sprite for common drawings', () => {
     ['Maus', 'a tiny mouse', 'mouse'],
     ['Kritzelwesen', 'a scribble creature', 'scribble'],
     ['Keks', 'a biscuit', 'cookie'],
+    ['Läufer', 'a girl walking across the book', 'person'],
   ];
   for (const [name, drawing, kind] of cases) assert.equal(archetype({ name, drawing, kind: '' }), kind);
 });

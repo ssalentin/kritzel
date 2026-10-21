@@ -2,9 +2,10 @@
 // A tiny local motion loop brings actors to life; the 3D simulation is not loaded here.
 import { t } from '../i18n.js';
 import { archetype } from './art.js';
+import { stripFrame } from './animation.js';
 import { layoutThings, SCENE } from './layout.js';
 import { createModeSwitch } from './mode-switch.js';
-import { createActor, PAGE, react, stepActor } from './motion.js';
+import { createActor, moverFor, PAGE, react, stepActor } from './motion.js';
 
 const canvas = document.getElementById('scene'), ctx = canvas.getContext('2d');
 const note = document.getElementById('note'), mode = document.getElementById('renderMode');
@@ -27,11 +28,16 @@ function fitCanvas() {
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
 }
 
+function actorFrameWidth(actor) {
+  return stripFrame(actor.thing.image.width, actor.thing.image.height,
+    { frames: actor.thing.frames }).width;
+}
+
 function actorDraw(actor, now) {
-  const image = actor.thing.image, frames = Math.max(1, Math.round(+actor.thing.frames || 1));
-  const frameW = image.width / frames;
-  const fps = Math.max(1, +actor.thing.fps || 8);
-  const frame = actor.state === 'move' && frames > 1 ? Math.floor(now / 1000 * fps) % frames : 0;
+  const image = actor.thing.image;
+  const strip = stripFrame(image.width, image.height,
+    { frames: actor.thing.frames, fps: actor.thing.fps, state: actor.state, now });
+  const frames = strip.count, frameW = strip.width, frame = strip.index;
   let dy = 0;
   if (actor.state === 'greet') dy = Math.floor(now / 120) % 2 ? -3 : -2;
   else if (actor.mover === 'hop') dy = -Math.abs(Math.sin(actor.phase)) * 5;
@@ -40,7 +46,7 @@ function actorDraw(actor, now) {
   else if (actor.mover === 'walk' && actor.state === 'move' && frames === 1) dy = Math.floor(actor.phase * 2) % 2 ? -1 : 0;
   else if (frames === 1 && actor.state === 'idle') dy = Math.floor(now / 380) % 2 ? -1 : 0;
   const y = Math.round(actor.y - image.height + dy);
-  const wide = Math.max(5, Math.round(image.width * .62)), narrow = Math.max(3, Math.round(image.width * .36));
+  const wide = Math.max(5, Math.round(frameW * .62)), narrow = Math.max(3, Math.round(frameW * .36));
   ctx.fillStyle = '#333c57';
   ctx.fillRect(Math.round(actor.x - wide / 2), Math.round(actor.y), wide, 2);
   ctx.fillRect(Math.round(actor.x - narrow / 2), Math.round(actor.y + 2), narrow, 1);
@@ -148,7 +154,7 @@ function draw(now = performance.now()) {
     ctx.drawImage(item.image, Math.round(item.cx - item.image.width / 2), Math.round(item.cy - item.image.height));
   }
   for (const actor of actors) {
-    sunShadow(actor.x, actor.y + 1, actor.thing.image.width);
+    sunShadow(actor.x, actor.y + 1, actorFrameWidth(actor));
     actorDraw(actor, now);
     if (actor.fireUntil > now) fireDraw(actor, now);
   }
@@ -206,9 +212,13 @@ async function loadWorldOnce(force) {
       const form = archetype(thing);
       const sprite = thing.sprite && /^[\w.-]+\.png$/.test(thing.sprite) ? thing.sprite : `${base}.png`;
       const custom = await imageAt(`things/${encodeURIComponent(sprite)}`);
-      const fallback = custom ? null : await imageAt(`sprites/fallback-${form}.png`);
-      const image = custom || fallback;
-      return image ? { ...thing, form, image, source: custom ? 'thing' : 'fallback' } : null;
+      const walkFallback = !custom && form === 'person' && moverFor(thing) === 'walk'
+        ? await imageAt('sprites/fallback-person-walk.png') : null;
+      const fallback = custom || walkFallback ? null : await imageAt(`sprites/fallback-${form}.png`);
+      const image = custom || walkFallback || fallback;
+      const animatedFallback = !custom && walkFallback;
+      return image ? { ...thing, form, image, source: custom ? 'thing' : animatedFallback ? 'fallback-strip' : 'fallback',
+        frames: animatedFallback ? 4 : thing.frames, fps: animatedFallback ? 10 : thing.fps } : null;
     }))).filter(Boolean);
     worldReady = true;
     dynamic = bookReady && items.length === expected;
@@ -262,7 +272,7 @@ canvas.addEventListener('pointerdown', event => {
   const py = (event.clientY - rect.top) * canvas.height / rect.height;
   const s = Math.min(canvas.width / SCENE.w, canvas.height / SCENE.h);
   const x = (px - (canvas.width - SCENE.w * s) / 2) / s, y = (py - (canvas.height - SCENE.h * s) / 2) / s;
-  const hit = actors.slice().reverse().find(a => x >= a.x - a.thing.image.width / 2 && x <= a.x + a.thing.image.width / 2
+  const hit = actors.slice().reverse().find(a => x >= a.x - actorFrameWidth(a) / 2 && x <= a.x + actorFrameWidth(a) / 2
     && y >= a.y - a.thing.image.height - 4 && y <= a.y + 6);
   if (!hit) return;
   react(hit);

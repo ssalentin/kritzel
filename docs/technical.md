@@ -65,10 +65,11 @@ A Pixel `kind: "actor"` wanders in a small pixel-side loop; scenery stays put an
 an obstacle. Actors default to walking, or to roll/fly/swim/hop/climb from an optional `move` or
 `mover`; otherwise their name and drawing choose the mover. Optional `speed`, `state`, `frames`
 and `fps` fields support per-thing pacing, sleeping states and horizontal sprite-sheet frames.
+Each declared frame is drawn whole at `image.width / frames`; the renderer never slices a figure
+into body parts. The person fallback includes a four-frame whole-body walk strip.
 A tap wakes a sleeping figure, makes the actor greet/bob, shows its name and plays the tap sound,
-then movement resumes. Single-frame walkers use an alternating two-half leg cycle with planted
-feet and a one-pixel body bob; supplied multi-frame art plays its move frames instead. There is
-no three.js world underneath this loop.
+then movement resumes. Single-frame walkers get only a whole-body bob until real frames exist.
+There is no three.js world underneath this loop.
 
 The scene is built with [claude-pxl](https://github.com/crsolver/claude-pxl), pinned at commit
 `21fee41f7ecce00bc868d7567f24ffd0f3acc8fa` (MIT, Copyright © 2026 crsolver). The generated
