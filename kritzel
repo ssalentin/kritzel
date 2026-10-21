@@ -16,6 +16,12 @@ url="http://127.0.0.1:$port/viewer/"
 run="$root/.kritzel"
 mkdir -p "$run"
 
+# a key stays out of the repo: OpenRouter's lives in a private file, only sourced if it is there.
+# `set -a` exports what it defines, else the launched parts never inherit the key.
+if [ -f "${KRITZEL_ENV:-$HOME/.config/kritzel/env}" ]; then
+  set -a; . "${KRITZEL_ENV:-$HOME/.config/kritzel/env}"; set +a
+fi
+
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; missing=1; }
 note() { printf '    %s\n' "$*"; }

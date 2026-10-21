@@ -15,6 +15,13 @@ export function cameraPicker({ button, panel, preview = null }) {
 
   const keyOf = c => c?.kind === 'local' || c?.kind === 'remote' ? (c.kind === 'local' ? 'local:' + c.label : `remote:${c.ip}:${c.id}`) : '';
 
+  // "IPEVO V4K: IPEVO V4K" → "IPEVO V4K": the kernel repeats a name that already names the device
+  const shortName = n => {
+    const half = String(n || '').split(':').map(s => s.trim()).filter(Boolean);
+    return half.length === 2 && half[0] === half[1] ? half[0] : String(n || '');
+  };
+  const optionLabel = c => c.kind === 'local' ? shortName(c.label) : `${shortName(c.name)} (${c.host})`;
+
   async function localCameras() {
     if (!navigator.mediaDevices?.enumerateDevices) return { cams: [], why: t('camHttps') };
     let devs = await navigator.mediaDevices.enumerateDevices();
@@ -39,15 +46,34 @@ export function cameraPicker({ button, panel, preview = null }) {
     const group = (label, list) => {
       const g = document.createElement('optgroup');
       g.label = label;
-      for (const c of list) g.append(new Option(c.kind === 'local' ? c.label : `${c.name} (${c.host})`, keyOf(c)));
+      for (const c of list) g.append(new Option(optionLabel(c), keyOf(c)));
       return g;
     };
-    select.replaceChildren(new Option(t('camNone'), ''), group(t('camHere'), local.cams), group(t('camNetwork'), remote));
+    // a local camera names itself, a network one carries the machine it sits on; the kernel's own
+    // device name repeats itself ("IPEVO V4K: IPEVO V4K"), so a doubled half is dropped
+    // the camera list is never empty-handed: this machine's own cameras first, then every server
+    // that answers on the network; a group with nothing in it is left out rather than shown empty
+    const groups = [[t('camHere'), local.cams], [t('camNetwork'), remote]]
+      .filter(([, list]) => list.length)
+      .map(([label, list]) => group(label, list));
+    select.replaceChildren(new Option(t('camNone'), ''), ...groups);
     const want = keyOf(saved);
     select.value = options.some(c => keyOf(c) === want) ? want : '';
-    note.textContent = [local.why, remote.length ? '' : t('camNoRemote')]
-      .filter(Boolean).join(' ');
-    if ((saved?.kind === 'local' || saved?.kind === 'remote') && !select.value) note.textContent = `Gespeicherte Kamera nicht erreichbar: ${saved.label || saved.name}. ` + note.textContent;
+    // a local choice is stored as a label only (the browser's deviceId means nothing to the server),
+    // so a reload cannot match it by key: fall back to the label, else the picker looks empty
+    if (!select.value && saved?.kind === 'local' && saved.label) {
+      const same = options.find(c => c.kind === 'local' &&
+        (c.label === saved.label || shortName(c.label) === shortName(saved.label)));
+      if (same) select.value = keyOf(same);
+    }
+    // only worth saying when it is true of the cameras that are actually on offer: a working
+    // network camera with no local ones needs no warning next to a live picture
+    const notes = [];
+    if (!remote.length) {                     // nothing on the network: what this browser can offer is all there is
+      notes.push(local.why || t('camNoRemote'));
+    }
+    note.textContent = notes.filter(Boolean).join(' ');
+    if (saved && !select.value) note.textContent = `Gespeicherte Kamera nicht erreichbar: ${saved.label || saved.name}. ` + note.textContent;
     await show(options.find(c => keyOf(c) === select.value));
   }
 
