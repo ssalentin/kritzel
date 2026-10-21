@@ -49,19 +49,23 @@ camera ──► frame ──► generation (generate/) ────────
 
 ### Pixel mode
 
-The **3D | Pixel** switch opens a separate lightweight app at `viewer/pixel/`. It does not run
-the simulation or load three.js. The 3D viewer writes a compact things/actors snapshot to
-`frames/status/pixel-world.json` before switching; the pixel app places each thing on the same
-two book pages from its `meta.paper` position. A generated per-thing PNG in
-`viewer/pixel/sprites/<base>.png` is the primary sprite. Until that exists, the renderer uses the
-matching `fallback-<kind>.png`; `scenes/kritzel.png` is the complete first-paint and archived-world
-fallback.
+The **3D | Pixel** switch selects which world is active; the two never render side by side. The
+first tap arms the switch and the second archives the current world through `newworld.sh`, empties
+both mode folders, writes `world-mode.json`, and reloads into the other app. `GET
+/api/world-mode` exposes `{"render":"3d"|"pixel"}` and an archived world carries its own copy, so
+it reopens in the mode in which it was made.
+
+The pixel app at `viewer/pixel/` does not run the simulation or load three.js. Its source of truth
+is `viewer/pixel/things/*.json`; each file has `name`, `drawing`, `kind`, `paper`, and `sprite`.
+The renderer places things from `paper` on the two book pages, uses
+`viewer/pixel/things/<sprite>`, and falls back to `viewer/pixel/sprites/fallback-<kind>.png` while
+a per-thing image is missing. `scenes/kritzel.png` is the first-paint and archived fallback.
 
 The scene is built with [claude-pxl](https://github.com/crsolver/claude-pxl), pinned at commit
 `21fee41f7ecce00bc868d7567f24ffd0f3acc8fa` (MIT, Copyright © 2026 crsolver). The generated
 `art/pixel-world.px.js` and `viewer/pixel/scenes/kritzel.png` are committed as the first-paint
-fallback. On the live viewer, `POST /api/pixel-world` rebuilds them only when a thing is newer
-than the PNG; archived worlds only use their copied PNG. To rebuild explicitly:
+fallback. On the live viewer, `POST /api/pixel-world` rebuilds them only when a pixel thing is
+newer than the PNG. To rebuild explicitly:
 
 ```bash
 node scripts/pixel-world.mjs

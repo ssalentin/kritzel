@@ -3,7 +3,7 @@
 import { t } from '../i18n.js';
 import { archetype } from './art.js';
 import { layoutThings, SCENE } from './layout.js';
-import { savePixelMode } from './mode.js';
+import { createModeSwitch } from './mode-switch.js';
 
 const canvas = document.getElementById('scene'), ctx = canvas.getContext('2d');
 const note = document.getElementById('note'), mode = document.getElementById('renderMode');
@@ -60,17 +60,23 @@ function imageAt(src) {
 }
 
 async function loadWorld() {
-  if (archived) return;
   try {
-    const j = await (await fetch('/api/pixel-snapshot', { cache: 'no-store' })).json();
-    window.__pixelSnapshot = j;
-    const things = Array.isArray(j.things) ? j.things : [];
+    let things;
+    if (archived) {
+      const listing = await (await fetch('things/', { cache: 'no-store' })).text();
+      const files = [...listing.matchAll(/href="([\w.-]+\.json)"/g)].map(m => m[1]);
+      if (!files.length) return;
+      things = await Promise.all(files.map(f => fetch('things/' + f, { cache: 'no-store' })
+        .then(r => r.json()).then(t => ({ ...t, file: f }))));
+    } else things = (await (await fetch('/api/pixel-things', { cache: 'no-store' })).json()).things || [];
+    window.__pixelThings = things;
     expected = things.length;
     const laidOut = layoutThings(things);
     items = (await Promise.all(laidOut.map(async thing => {
-      const base = thing.file.replace(/\.js$/, '');
+      const base = thing.file.replace(/\.json$/, '');
       const kind = archetype(thing);
-      const custom = await imageAt(`sprites/${encodeURIComponent(base)}.png`);
+      const sprite = thing.sprite && /^[\w.-]+\.png$/.test(thing.sprite) ? thing.sprite : `${base}.png`;
+      const custom = await imageAt(`things/${encodeURIComponent(sprite)}`);
       const fallback = custom ? null : await imageAt(`sprites/fallback-${kind}.png`);
       const image = custom || fallback;
       return image ? { ...thing, kind, image, source: custom ? 'thing' : 'fallback' } : null;
@@ -78,7 +84,7 @@ async function loadWorld() {
     worldReady = true;
     dynamic = bookReady && items.length === expected;
     draw();
-  } catch { /* archived or offline: the committed fallback scene remains visible */ }
+  } catch { /* offline: the committed fallback scene remains visible */ }
 }
 
 function rebuild() {
@@ -95,12 +101,12 @@ function rebuild() {
 }
 
 addEventListener('resize', draw);
-const buttons = [...mode.querySelectorAll('button')];
-buttons[0].textContent = t('mode3d'); buttons[1].textContent = t('modePixel');
-mode.setAttribute('aria-label', t('renderModeGroup'));
 note.textContent = t('pixelBuilding');
-buttons[0].addEventListener('click', () => { savePixelMode(sessionStorage, false); location.href = '../'; });
-buttons[1].addEventListener('click', () => savePixelMode(sessionStorage, true));
+createModeSwitch({
+  active: 'pixel', group: mode, archived,
+  go: () => { location.href = '../'; },
+  onError: () => { note.hidden = false; note.textContent = t('modeFailed'); },
+});
 window.__pixelApp = {
   draw, rebuild,
   get ready() { return sceneReady; },

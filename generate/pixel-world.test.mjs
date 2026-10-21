@@ -1,20 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeSource, parseMeta } from '../scripts/pixel-world.mjs';
+import { makeSource, parseThing } from '../scripts/pixel-world.mjs';
 import { archetype } from '../viewer/pixel/art.js';
 import { label } from '../viewer/pixel/layout.js';
 
-const thing = (file, name, drawing, x, y) => `export const meta = {
-  name: ${JSON.stringify(name)},
-  drawing: ${JSON.stringify(drawing)},
-  paper: { x: ${x}, y: ${y} },
-};
-export function build() { return {}; }
-`;
+const thing = (name, drawing, x, y, sprite) => JSON.stringify({ name, drawing, paper: { x, y }, sprite });
 
-test('pixel world reads the same thing meta the viewer uses', () => {
-  const meta = parseMeta('gelbe-blume.js', thing('gelbe-blume.js', 'Gelbe Blume', 'a yellow flower', .62, .31));
-  assert.deepEqual(meta, { file: 'gelbe-blume.js', name: 'Gelbe Blume', drawing: 'a yellow flower', kind: '', paper: { x: .62, y: .31 } });
+test('pixel world reads the pixel thing JSON and its sprite', () => {
+  const meta = parseThing('gelbe-blume.json', thing('Gelbe Blume', 'a yellow flower', .62, .31, 'gelbe-blume.png'));
+  assert.deepEqual(meta, { file: 'gelbe-blume.json', name: 'Gelbe Blume', drawing: 'a yellow flower', kind: '',
+    paper: { x: .62, y: .31 }, sprite: 'gelbe-blume.png' });
   assert.equal(archetype(meta), 'flower');
 });
 
@@ -31,8 +26,8 @@ test('pixel world picks a readable sprite for common drawings', () => {
 
 test('pixel world source is valid JavaScript and deterministic', () => {
   const things = [
-    parseMeta('hexe.js', thing('hexe.js', 'Hexe', 'a witch', .2, .3)),
-    parseMeta('baum.js', thing('baum.js', 'Baum', 'a tree', .8, .7)),
+    parseThing('hexe.json', thing('Hexe', 'a witch', .2, .3, 'hexe.png')),
+    parseThing('baum.json', thing('Baum', 'a tree', .8, .7, 'baum.png')),
   ];
   const first = makeSource(things), second = makeSource(things.slice().reverse());
   assert.equal(first, second);
