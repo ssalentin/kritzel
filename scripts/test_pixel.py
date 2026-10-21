@@ -20,16 +20,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SHOT_DESKTOP = Path("/tmp/kritzel-pixel-1600.png")
 SHOT_PHONE = Path("/tmp/kritzel-pixel-390.png")
+SHOT_MOVED = Path("/tmp/kritzel-pixel-moved.png")
+SHOT_REACT = Path("/tmp/kritzel-pixel-react.png")
+MOVIE = Path("/tmp/kritzel-pixel-live.gif")
 
 THINGS = [
     {"file": "gelbe-blume.json", "name": "Gelbe Blume", "drawing": "a yellow flower",
-     "paper": {"x": .55, "y": .34}, "sprite": "gelbe-blume.png"},
+     "kind": "scenery", "paper": {"x": .55, "y": .34}, "sprite": "gelbe-blume.png"},
     {"file": "gelbe-blume-2.json", "name": "Gelbe Blume 2", "drawing": "a yellow flower",
-     "paper": {"x": .64, "y": .39}, "sprite": "gelbe-blume-2.png"},
+     "kind": "scenery", "paper": {"x": .64, "y": .39}, "sprite": "gelbe-blume-2.png"},
     {"file": "kritzelwesen.json", "name": "Kritzelwesen", "drawing": "a scribble creature",
-     "paper": {"x": .43, "y": .65}, "sprite": "kritzelwesen.png"},
+     "kind": "actor", "move": "walk", "paper": {"x": .43, "y": .65}, "sprite": "kritzelwesen.png"},
     {"file": "kritzel.json", "name": "Kritzel", "drawing": "a scribble ball",
-     "paper": {"x": .71, "y": .7}, "sprite": "kritzel.png"},
+     "kind": "actor", "move": "fly", "paper": {"x": .71, "y": .7}, "sprite": "kritzel.png"},
 ]
 
 
@@ -114,13 +117,14 @@ class Pixel(unittest.TestCase):
         things = payload["things"]
         self.assertRegex(payload["version"], r"^[0-9a-f]{20}$")
         self.assertEqual(sorted(t["name"] for t in things), sorted(t["name"] for t in THINGS))
+        self.assertEqual(next(t for t in things if t["name"] == "Kritzel")["move"], "fly")
         self.assertEqual(self.api("/api/world-mode"), {"render": "pixel"})
 
     def test_2_pixel_renderer_and_confirm_reset(self):
         state = self.page.evaluate("""() => ({
           smooth: document.querySelector('#scene').getContext('2d').imageSmoothingEnabled,
           things: window.__pixelThings,
-          items: window.__pixelApp.items.map(i => ({name: i.name, kind: i.kind, source: i.source})),
+          items: window.__pixelApp.items.map(i => ({name: i.name, kind: i.kind, form: i.form, source: i.source})),
           pixel: document.querySelector('#renderMode button[data-mode="pixel"]').getAttribute('aria-pressed'),
           group: document.querySelector('#renderMode').getBoundingClientRect().toJSON(),
         })""")
@@ -129,7 +133,7 @@ class Pixel(unittest.TestCase):
         custom = next(i for i in state["items"] if i["name"] == "Kritzel")
         self.assertEqual(custom["source"], "thing")
         flower = next(i for i in state["items"] if i["name"] == "Gelbe Blume")
-        self.assertEqual((flower["kind"], flower["source"]), ("flower", "fallback"))
+        self.assertEqual((flower["kind"], flower["form"], flower["source"]), ("scenery", "flower", "fallback"))
         self.assertLessEqual(state["group"]["right"], 1600)
         self.page.screenshot(path=str(SHOT_DESKTOP), timeout=120000)
 
@@ -146,6 +150,44 @@ class Pixel(unittest.TestCase):
         self.assertLessEqual(group["right"], 390)
         self.assertGreaterEqual(group["left"], 0)
         self.assertEqual(self.errors, [])
+
+    def test_3_figures_move_and_a_tap_reacts(self):
+        self.page.set_viewport_size({"width": 1440, "height": 900})
+        time.sleep(.3)
+        before = self.page.evaluate("() => window.__pixelApp.actors.map(a => ({id: a.id, mover: a.mover, x: a.x, y: a.y}))")
+        self.assertEqual(sorted(a["mover"] for a in before), ["fly", "walk"])
+        frames = []
+        for i in range(12):
+            shot = Path(f"/tmp/kritzel-pixel-motion-{i:02d}.png")
+            self.page.screenshot(path=str(shot), timeout=120000)
+            frames.append(shot)
+            time.sleep(.25)
+        after = self.page.evaluate("() => window.__pixelApp.actors.map(a => ({id: a.id, mover: a.mover, x: a.x, y: a.y}))")
+        for old, new in zip(before, after):
+            self.assertGreater(abs(new["x"] - old["x"]) + abs(new["y"] - old["y"]), .4, (old, new))
+        self.page.screenshot(path=str(SHOT_MOVED), timeout=120000)
+        subprocess.run(["convert", "-delay", "25", "-loop", "0", *map(str, frames),
+                        "-resize", "720x450", str(MOVIE)], check=True)
+
+        point = self.page.evaluate("""() => {
+          const a = window.__pixelApp.actors.find(x => x.mover === 'walk'), c = document.querySelector('#scene');
+          const r = c.getBoundingClientRect(), s = Math.min(r.width / 320, r.height / 200);
+          return {x: r.left + (r.width - 320 * s) / 2 + a.x * s,
+                  y: r.top + (r.height - 200 * s) / 2 + (a.y - 8) * s, ax: a.x, ay: a.y};
+        }""")
+        self.page.mouse.click(point["x"], point["y"])
+        card = self.page.evaluate("""() => ({hidden: document.querySelector('#actorCard').hidden,
+          text: document.querySelector('#actorCard').textContent})""")
+        self.assertFalse(card["hidden"], card)
+        self.assertIn("Kritzelwesen", card["text"])
+        self.page.screenshot(path=str(SHOT_REACT), timeout=120000)
+        time.sleep(2)
+        resumed = self.page.evaluate("""() => {
+          const a = window.__pixelApp.actors.find(x => x.mover === 'walk');
+          return {state: a.state, x: a.x, y: a.y};
+        }""")
+        self.assertIn(resumed["state"], {"idle", "move"})
+        self.assertGreater(abs(resumed["x"] - point["ax"]) + abs(resumed["y"] - point["ay"]), .3, resumed)
 
 
 if __name__ == "__main__":

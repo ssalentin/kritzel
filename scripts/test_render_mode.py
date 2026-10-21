@@ -133,7 +133,7 @@ class RenderMode(unittest.TestCase):
         (self.pixel / "things" / "neu.json").write_text(json.dumps({**PIXEL_THING, "name": "Neuer Drache"}))
         shutil.copy(self.pixel / "sprites" / "fallback-dragon.png", self.pixel / "things" / "neu.png")
         self.page.wait_for_function("() => window.__pixelThings?.length === 1", timeout=30000)
-        self.page.wait_for_function("() => window.__pixelApp?.dynamic", timeout=30000)
+        self.page.wait_for_function("() => window.__pixelApp?.dynamic && window.__pixelApp?.items.length === 1", timeout=30000)
         self.assertEqual(self.page.evaluate("() => window.__pixelApp.items[0].name"), "Neuer Drache")
         self.page.screenshot(path=str(SHOT_PIXEL_THING), timeout=120000)
 
