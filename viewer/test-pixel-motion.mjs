@@ -60,6 +60,9 @@ test('a tap greets and then returns to movement; sleep waits for the tap', () =>
   assert.equal(actor.state, 'sleep');
   react(actor);
   assert.equal(actor.state, 'greet');
+  stepActor(actor, .05);
+  assert.equal(actor.state, 'greet');
+  assert.ok(actor.react > .9);
   actor.target = { x: 120, y: 100 };
   for (let i = 0; i < 20; i++) stepActor(actor, .05);
   assert.notEqual(actor.state, 'sleep');

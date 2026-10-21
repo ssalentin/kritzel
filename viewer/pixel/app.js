@@ -33,7 +33,7 @@ function actorDraw(actor, now) {
   const fps = Math.max(1, +actor.thing.fps || 8);
   const frame = actor.state === 'move' && frames > 1 ? Math.floor(now / 1000 * fps) % frames : 0;
   let dy = 0;
-  if (actor.state === 'greet') dy = -3;
+  if (actor.state === 'greet') dy = Math.floor(now / 120) % 2 ? -3 : -2;
   else if (actor.mover === 'hop') dy = -Math.abs(Math.sin(actor.phase)) * 5;
   else if (actor.mover === 'fly') dy = -16 + Math.sin(actor.phase) * 3;
   else if (actor.mover === 'swim') dy = Math.sin(actor.phase * .7) * 2;
@@ -213,8 +213,8 @@ function animate(now) {
   lastFrame = now;
   let moved = false;
   for (const actor of actors) moved = stepActor(actor, dt, obstacles, PAGE) || moved;
-  const idleBob = actors.some(a => a.state === 'idle' && (+a.thing.frames || 1) === 1);
-  if (moved || (idleBob && now - lastIdleDraw > 100)) { draw(now); lastIdleDraw = now; }
+  const pulse = actors.some(a => a.state === 'greet' || (a.state === 'idle' && (+a.thing.frames || 1) === 1));
+  if (moved || (pulse && now - lastIdleDraw > 100)) { draw(now); lastIdleDraw = now; }
   requestAnimationFrame(animate);
 }
 

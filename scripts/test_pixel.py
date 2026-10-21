@@ -22,7 +22,9 @@ SHOT_DESKTOP = Path("/tmp/kritzel-pixel-1600.png")
 SHOT_PHONE = Path("/tmp/kritzel-pixel-390.png")
 SHOT_MOVED = Path("/tmp/kritzel-pixel-moved.png")
 SHOT_REACT = Path("/tmp/kritzel-pixel-react.png")
+SHOT_REACT_ALT = Path("/tmp/kritzel-pixel-react-bob.png")
 MOVIE = Path("/tmp/kritzel-pixel-live.gif")
+GREET_MOVIE = Path("/tmp/kritzel-pixel-greet.gif")
 
 THINGS = [
     {"file": "gelbe-blume.json", "name": "Gelbe Blume", "drawing": "a yellow flower",
@@ -176,11 +178,18 @@ class Pixel(unittest.TestCase):
                   y: r.top + (r.height - 200 * s) / 2 + (a.y - 8) * s, ax: a.x, ay: a.y};
         }""")
         self.page.mouse.click(point["x"], point["y"])
+        time.sleep(.1)
         card = self.page.evaluate("""() => ({hidden: document.querySelector('#actorCard').hidden,
-          text: document.querySelector('#actorCard').textContent})""")
+          text: document.querySelector('#actorCard').textContent,
+          state: window.__pixelApp.actors.find(x => x.mover === 'walk').state})""")
         self.assertFalse(card["hidden"], card)
         self.assertIn("Kritzelwesen", card["text"])
+        self.assertEqual(card["state"], "greet")
         self.page.screenshot(path=str(SHOT_REACT), timeout=120000)
+        time.sleep(.13)
+        self.page.screenshot(path=str(SHOT_REACT_ALT), timeout=120000)
+        subprocess.run(["convert", "-delay", "13", "-loop", "0", str(SHOT_REACT), str(SHOT_REACT_ALT),
+                        "-resize", "720x450", str(GREET_MOVIE)], check=True)
         time.sleep(2)
         resumed = self.page.evaluate("""() => {
           const a = window.__pixelApp.actors.find(x => x.mover === 'walk');

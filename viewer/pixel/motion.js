@@ -73,7 +73,7 @@ export function stepActor(actor, dt, obstacles = [], bounds = PAGE) {
   if (actor.react > 0) actor.react = Math.max(0, actor.react - dt);
   if (actor.pause > 0) {
     actor.pause -= dt;
-    actor.state = actor.pause === Infinity ? 'sleep' : 'idle';
+    actor.state = actor.react > 0 ? 'greet' : actor.pause === Infinity ? 'sleep' : 'idle';
     return false;
   }
   if (!actor.target) actor.target = pickTarget(actor, obstacles, bounds);
