@@ -99,6 +99,8 @@ export function soundFor(file, name, code, info, thingsDir) {
 // write for a file wins (a draft's job is superseded by the final's). A failure is logged and leaves
 // the old sprite (if any) in place; the thing itself is unaffected.
 const spritePending = new Map();
+const spriteActive = new Map();              // file → { child, job }: a newer write kills the running one
+const spriteVersion = new Map();             // file → the latest write's generation
 let spriteRunning = 0;
 const SPRITE_SLOTS = Math.max(1, Number(process.env.KRITZEL_SPRITE_SLOTS) || 2);
 const moveOf = code => code.match(/\bmove:\s*['"](fly|swim|hop|crawl|climb|walk)['"]/)?.[1] || '';
@@ -107,6 +109,7 @@ function runSprite(job) {
     const child = spawn(job.cmd, [job.script, '--name', job.name, '--drawing', job.drawing, '--kind', job.kind,
       '--move', job.move, '--file', job.file, '--out', job.outDir, '--report', job.report],
     { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+    spriteActive.set(job.file, { child, job });
     let out = '', err = '', settled = false;
     const timer = setTimeout(() => {
       if (settled) return;
@@ -115,10 +118,17 @@ function runSprite(job) {
     }, 120_000);
     child.stdout.on('data', d => { out += d; });
     child.stderr.on('data', d => { err += d; });
-    child.on('error', e => { if (settled) return; settled = true; clearTimeout(timer); reject(e); });
+    child.on('error', e => {
+      if (spriteActive.get(job.file)?.child === child) spriteActive.delete(job.file);
+      if (settled) return;
+      settled = true; clearTimeout(timer); reject(e);
+    });
     child.on('close', code => {
+      if (spriteActive.get(job.file)?.child === child) spriteActive.delete(job.file);
       if (settled) return;
       settled = true; clearTimeout(timer);
+      // a newer write owns this file now (or killed this child): do not publish/accept the old result
+      if (job.superseded || spriteVersion.get(job.file) !== job.version) return resolve({ superseded: true });
       if (code !== 0) return reject(new Error((err || out).trim().split('\n')[0].slice(0, 220) || `exit ${code}`));
       let info = {};
       try { info = JSON.parse(out.trim().split('\n').at(-1) || '{}'); } catch { /* the files are what matter */ }
@@ -143,14 +153,21 @@ export function spriteFor(file, name, drawing, kind, move, thingsDir, reportsDir
   const base = file.replace(/\.js$/, '');
   const job = {
     file, base, name: name || base, drawing, kind: kind || '', move: move || '',
+    version: (spriteVersion.get(file) || 0) + 1,
     cmd: process.env.KRITZEL_THING_SPRITES_CMD || process.execPath,
     script: process.env.KRITZEL_THING_SPRITES_SCRIPT || join(ROOT, 'scripts', 'thing_sprite.mjs'),
     outDir: join(dirname(thingsDir), 'pixel', 'sprites'),
     report: join(reportsDir, base + '.sprite.json'),
   };
+  spriteVersion.set(file, job.version);
   return new Promise(resolve => {
     const old = spritePending.get(file);
     if (old) old.resolve({ superseded: true });       // a newer write is already waiting: only it matters
+    const active = spriteActive.get(file);
+    if (active) {
+      active.job.superseded = true;
+      try { active.child.kill('SIGTERM'); } catch { /* already gone */ }
+    }
     job.resolve = resolve;
     spritePending.set(file, job);
     pumpSprites();
