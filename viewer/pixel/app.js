@@ -37,6 +37,7 @@ function actorDraw(actor, now) {
   else if (actor.mover === 'hop') dy = -Math.abs(Math.sin(actor.phase)) * 5;
   else if (actor.mover === 'fly') dy = -16 + Math.sin(actor.phase) * 3;
   else if (actor.mover === 'swim') dy = Math.sin(actor.phase * .7) * 2;
+  else if (actor.mover === 'walk' && actor.state === 'move' && frames === 1) dy = Math.floor(actor.phase * 2) % 2 ? -1 : 0;
   else if (frames === 1 && actor.state === 'idle') dy = Math.floor(now / 380) % 2 ? -1 : 0;
   const y = Math.round(actor.y - image.height + dy);
   const wide = Math.max(5, Math.round(image.width * .62)), narrow = Math.max(3, Math.round(image.width * .36));
@@ -46,17 +47,7 @@ function actorDraw(actor, now) {
   ctx.save();
   ctx.translate(Math.round(actor.x), 0);
   ctx.scale(actor.facing, 1);
-  if (actor.mover === 'walk' && actor.state === 'move' && frames === 1) {
-    // A one-frame sprite still walks: the body bobs while the lower left/right halves alternate like planted legs.
-    const legH = Math.max(4, Math.round(image.height * .3)), bodyH = image.height - legH;
-    const swing = Math.sin(actor.phase), bob = Math.abs(swing) > .72 ? -1 : 0;
-    const leftW = Math.floor(frameW / 2), rightW = frameW - leftW;
-    ctx.drawImage(image, 0, 0, frameW, bodyH, Math.round(-frameW / 2), y + bob, frameW, bodyH);
-    ctx.drawImage(image, 0, bodyH, leftW, legH, Math.round(-frameW / 2 + swing * 1.5), y + bodyH - (swing > 0 ? 1 : 0),
-      leftW, legH);
-    ctx.drawImage(image, leftW, bodyH, rightW, legH, Math.round(-frameW / 2 + leftW - swing * 1.5), y + bodyH - (swing < 0 ? 1 : 0),
-      rightW, legH);
-  } else ctx.drawImage(image, frame * frameW, 0, frameW, image.height, Math.round(-frameW / 2), y, frameW, image.height);
+  ctx.drawImage(image, frame * frameW, 0, frameW, image.height, Math.round(-frameW / 2), y, frameW, image.height);
   ctx.restore();
 }
 
