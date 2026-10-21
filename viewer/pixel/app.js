@@ -60,6 +60,24 @@ function actorDraw(actor, now) {
   ctx.restore();
 }
 
+// A dragon breathes fire on tap: a short cone of pixel flames from the mouth.
+function fireDraw(actor, now) {
+  const face = actor.facing || 1, w = actor.thing.image.width, h = actor.thing.image.height;
+  const mouthX = Math.round(actor.x + face * w * .34);
+  const mouthY = Math.round(actor.y - h * .52);
+  let seed = (Math.floor(now / 70) + 1) * 2654435761 >>> 0;
+  const rnd = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
+  for (let i = 0; i < 9; i++) {
+    const x = mouthX + Math.round(face * i * 3);
+    const tall = Math.max(1, 5 - Math.floor(i / 2) + Math.round(rnd() * 2));
+    ctx.fillStyle = i < 3 ? '#fff6e0' : i < 6 ? '#ffa733' : '#e84a2a';
+    ctx.fillRect(x, mouthY - tall, 3, tall);
+  }
+  ctx.fillStyle = '#7c8794';
+  ctx.fillRect(mouthX + Math.round(face * 27), mouthY - 9, 3, 3);
+  ctx.fillRect(mouthX + Math.round(face * 32), mouthY - 13, 2, 2);
+}
+
 function draw(now = performance.now()) {
   fitCanvas();
   ctx.imageSmoothingEnabled = false;
@@ -83,7 +101,10 @@ function draw(now = performance.now()) {
     ctx.fillRect(Math.round(item.cx - narrow / 2), Math.round(item.cy + 2), narrow, 1);
     ctx.drawImage(item.image, Math.round(item.cx - item.image.width / 2), Math.round(item.cy - item.image.height));
   }
-  for (const actor of actors) actorDraw(actor, now);
+  for (const actor of actors) {
+    actorDraw(actor, now);
+    if (actor.fireUntil > now) fireDraw(actor, now);
+  }
   ctx.restore();
 }
 
@@ -198,8 +219,10 @@ canvas.addEventListener('pointerdown', event => {
     && y >= a.y - a.thing.image.height - 4 && y <= a.y + 6);
   if (!hit) return;
   react(hit);
+  const dragon = /drache|dragon/i.test(`${hit.thing.name || ''} ${hit.thing.drawing || ''}`);
+  if (dragon) hit.fireUntil = performance.now() + 1000;
   actorCard.firstElementChild.textContent = hit.thing.name || hit.id;
-  actorCard.lastElementChild.textContent = t('pixelHello');
+  actorCard.lastElementChild.textContent = dragon ? 'Feuer!' : t('pixelHello');
   actorCard.hidden = false;
   clearTimeout(cardTimer);
   cardTimer = setTimeout(() => { actorCard.hidden = true; }, 1400);
@@ -213,7 +236,7 @@ function animate(now) {
   lastFrame = now;
   let moved = false;
   for (const actor of actors) moved = stepActor(actor, dt, obstacles, PAGE) || moved;
-  const pulse = actors.some(a => a.state === 'greet' || (a.state === 'idle' && (+a.thing.frames || 1) === 1));
+  const pulse = actors.some(a => a.state === 'greet' || a.fireUntil > now || (a.state === 'idle' && (+a.thing.frames || 1) === 1));
   if (moved || (pulse && now - lastIdleDraw > 100)) { draw(now); lastIdleDraw = now; }
   requestAnimationFrame(animate);
 }
