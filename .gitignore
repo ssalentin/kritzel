@@ -25,3 +25,7 @@ __pycache__/
 
 # per-seat git worktrees
 .worktrees/
+
+# generated at runtime by the pixel world builder
+/art/pixel-world.px.js
+/viewer/pixel/scenes/kritzel.png
