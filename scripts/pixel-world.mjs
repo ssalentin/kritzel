@@ -26,6 +26,24 @@ const PAL = `pal({
 })
 ramps("kGg", "kRr", "kNn", "kPp", "kEe", "kSs")`;
 
+// The book: cloth cover, stacked page block, two pages tapering into a banded spine,
+// shading along the spine and page lines at the bottom. Shared by both scenes.
+const BOOK_OPS = `  rect(22, 30, 276, 162, "k"),
+  rect(8, 18, 304, 176, "R"),
+  rect(8, 18, 304, 4, "r"), rect(8, 190, 304, 4, "r"),
+  rect(8, 18, 4, 176, "r"), rect(308, 18, 4, 176, "r"),
+  rect(14, 24, 292, 166, "C"),
+  rect(16, 178, 288, 10, "C"),
+  poly([18,26, 150,30, 150,176, 18,172], "c"),
+  poly([170,30, 302,26, 302,172, 170,176], "c"),
+  poly([150,30, 170,30, 170,176, 150,176], "R"),
+  rect(150,54,20,3,"r"), rect(150,96,20,3,"r"), rect(150,138,20,3,"r"),
+  poly([140,30, 150,30, 150,176, 140,172], "C"),
+  poly([170,30, 180,26, 180,172, 170,176], "C"),
+  line(20,176,148,174,"C"), line(172,174,300,176,"C"),
+  line(18,181,150,179,"C"), line(170,179,302,181,"C"),
+`;
+
 // Procedural fill-ins for kinds not yet in the exact-pixel library below. Pixel-generated,
 // per-thing PNGs replace them; these keep unknown drawings visible in the first fallback scene.
 const SPRITES = {
@@ -497,20 +515,12 @@ scene("library", { w: 320, h: 200, bg: "B" },
 
 scene("book", { w: ${SCENE.w}, h: ${SCENE.h}, bg: "B" },
   rect(0, 0, 320, 200, "B"),
-  rect(12, 22, 142, 158, "c"),
-  rect(166, 22, 142, 158, "c"),
-  rect(150, 22, 20, 158, "R"),
-  rect(12, 180, 142, 6, "C"),
-  rect(166, 180, 142, 6, "C"),
+${BOOK_OPS}
 )
 
 scene("kritzel", { w: ${SCENE.w}, h: ${SCENE.h}, bg: "B" },
   rect(0, 0, 320, 200, "B"),
-  rect(12, 22, 142, 158, "c"),
-  rect(166, 22, 142, 158, "c"),
-  rect(150, 22, 20, 158, "R"),
-  rect(12, 180, 142, 6, "C"),
-  rect(166, 180, 142, 6, "C"),
+${BOOK_OPS}
 ${ops.join('\n')}
 )
 `;

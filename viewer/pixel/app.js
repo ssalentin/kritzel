@@ -87,13 +87,19 @@ const flakes = Array.from({ length: 70 }, (_, i) => {
   return { x: x * SCENE.w, y: y * SCENE.h, v, drift: (x - .5) * 8 };
 });
 function weatherDraw(now) {
-  const cx = SCENE.w - 26, cy = 16;
+  const cx = 34, cy = 22;
+  const R = 8;
+  for (let dy = -R; dy <= R; dy++) {
+    for (let dx = -R; dx <= R; dx++) {
+      if (dx * dx + dy * dy > R * R + 2) continue;
+      ctx.fillStyle = dx < -2 && dy < -2 ? '#ffec9e' : '#ffcd75';
+      ctx.fillRect(cx + dx, cy + dy, 1, 1);
+    }
+  }
   ctx.fillStyle = '#ffcd75';
-  for (const [dx, dy] of [[0,-11],[8,-8],[11,0],[8,8],[0,11],[-8,8],[-11,0],[-8,-8]]) {
+  for (const [dx, dy] of [[0,-13],[10,-10],[13,0],[10,10],[0,13],[-10,10],[-13,0],[-10,-10]]) {
     ctx.fillRect(cx + dx - 1, cy + dy - 1, 2, 2);
   }
-  ctx.fillStyle = '#ffcd75'; ctx.beginPath(); ctx.arc(cx, cy, 7, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#ffec9e'; ctx.fillRect(cx - 3, cy - 3, 3, 2);
   const t = now / 1000;
   ctx.fillStyle = '#fff6e0';
   for (const f of flakes) {
