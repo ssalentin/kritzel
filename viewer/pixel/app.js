@@ -78,6 +78,31 @@ function fireDraw(actor, now) {
   ctx.fillRect(mouthX + Math.round(face * 32), mouthY - 13, 2, 2);
 }
 
+// Day sky: a pixel sun with rays, and snow falling across the whole scene.
+const flakes = Array.from({ length: 70 }, (_, i) => {
+  let s = (i + 1) * 2654435761 >>> 0;
+  s = (Math.imul(s, 1664525) + 1013904223) >>> 0; const x = s / 4294967296;
+  s = (Math.imul(s, 1664525) + 1013904223) >>> 0; const y = s / 4294967296;
+  s = (Math.imul(s, 1664525) + 1013904223) >>> 0; const v = 14 + (s / 4294967296) * 26;
+  return { x: x * SCENE.w, y: y * SCENE.h, v, drift: (x - .5) * 8 };
+});
+function weatherDraw(now) {
+  const cx = SCENE.w - 26, cy = 16;
+  ctx.fillStyle = '#ffcd75';
+  for (const [dx, dy] of [[0,-11],[8,-8],[11,0],[8,8],[0,11],[-8,8],[-11,0],[-8,-8]]) {
+    ctx.fillRect(cx + dx - 1, cy + dy - 1, 2, 2);
+  }
+  ctx.fillStyle = '#ffcd75'; ctx.beginPath(); ctx.arc(cx, cy, 7, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#ffec9e'; ctx.fillRect(cx - 3, cy - 3, 3, 2);
+  const t = now / 1000;
+  ctx.fillStyle = '#fff6e0';
+  for (const f of flakes) {
+    const y = (f.y + t * f.v) % SCENE.h;
+    const x = (f.x + Math.sin(t * .6 + f.y) * f.drift + SCENE.w) % SCENE.w;
+    ctx.fillRect(Math.round(x), Math.round(y), 1, 2);
+  }
+}
+
 function draw(now = performance.now()) {
   fitCanvas();
   ctx.imageSmoothingEnabled = false;
@@ -93,6 +118,7 @@ function draw(now = performance.now()) {
   ctx.translate(ox, oy);
   ctx.scale(s, s);
   ctx.imageSmoothingEnabled = false;
+  weatherDraw(now);
   for (const item of scenery) {
     const r = item.image.width * .48;
     ctx.fillStyle = '#333c57';
@@ -237,7 +263,7 @@ function animate(now) {
   let moved = false;
   for (const actor of actors) moved = stepActor(actor, dt, obstacles, PAGE) || moved;
   const pulse = actors.some(a => a.state === 'greet' || a.fireUntil > now || (a.state === 'idle' && (+a.thing.frames || 1) === 1));
-  if (moved || (pulse && now - lastIdleDraw > 100)) { draw(now); lastIdleDraw = now; }
+  if (moved || pulse || now - lastIdleDraw > 50) { draw(now); lastIdleDraw = now; }
   requestAnimationFrame(animate);
 }
 
