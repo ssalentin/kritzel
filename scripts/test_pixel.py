@@ -31,8 +31,8 @@ THINGS = [
      "kind": "scenery", "paper": {"x": .55, "y": .34}, "sprite": "gelbe-blume.png"},
     {"file": "gelbe-blume-2.json", "name": "Gelbe Blume 2", "drawing": "a yellow flower",
      "kind": "scenery", "paper": {"x": .64, "y": .39}, "sprite": "gelbe-blume-2.png"},
-    {"file": "kritzelwesen.json", "name": "Kritzelwesen", "drawing": "a scribble creature",
-     "kind": "actor", "move": "walk", "paper": {"x": .43, "y": .65}, "sprite": "kritzelwesen.png"},
+    {"file": "laeufer.json", "name": "Läufer", "drawing": "a girl walking across the book",
+     "kind": "actor", "paper": {"x": .43, "y": .65}, "sprite": "laeufer.png"},
     {"file": "kritzel.json", "name": "Kritzel", "drawing": "a scribble ball",
      "kind": "actor", "move": "fly", "paper": {"x": .71, "y": .7}, "sprite": "kritzel.png"},
 ]
@@ -126,7 +126,7 @@ class Pixel(unittest.TestCase):
         state = self.page.evaluate("""() => ({
           smooth: document.querySelector('#scene').getContext('2d').imageSmoothingEnabled,
           things: window.__pixelThings,
-          items: window.__pixelApp.items.map(i => ({name: i.name, kind: i.kind, form: i.form, source: i.source})),
+          items: window.__pixelApp.items.map(i => ({name: i.name, kind: i.kind, form: i.form, source: i.source, frames: i.frames})),
           pixel: document.querySelector('#renderMode button[data-mode="pixel"]').getAttribute('aria-pressed'),
           group: document.querySelector('#renderMode').getBoundingClientRect().toJSON(),
         })""")
@@ -134,6 +134,9 @@ class Pixel(unittest.TestCase):
         self.assertEqual(state["pixel"], "true")
         custom = next(i for i in state["items"] if i["name"] == "Kritzel")
         self.assertEqual(custom["source"], "thing")
+        walker = next(i for i in state["items"] if i["name"] == "Läufer")
+        self.assertEqual(walker["source"], "fallback-strip")
+        self.assertEqual(walker["frames"], 4)
         flower = next(i for i in state["items"] if i["name"] == "Gelbe Blume")
         self.assertEqual((flower["kind"], flower["form"], flower["source"]), ("scenery", "flower", "fallback"))
         self.assertLessEqual(state["group"]["right"], 1600)
@@ -183,7 +186,7 @@ class Pixel(unittest.TestCase):
           text: document.querySelector('#actorCard').textContent,
           state: window.__pixelApp.actors.find(x => x.mover === 'walk').state})""")
         self.assertFalse(card["hidden"], card)
-        self.assertIn("Kritzelwesen", card["text"])
+        self.assertIn("Läufer", card["text"])
         self.assertEqual(card["state"], "greet")
         self.page.screenshot(path=str(SHOT_REACT), timeout=120000)
         time.sleep(.13)
