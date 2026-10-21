@@ -12,6 +12,7 @@ cp "$root"/viewer/*.js "$root"/viewer/index.html "$dest"/
 [ -f "$root/viewer/favicon.svg" ] && cp "$root/viewer/favicon.svg" "$dest"/
 cp -r "$root/viewer/things" "$dest/things"
 if [ -d "$root/viewer/sounds" ]; then cp -r "$root/viewer/sounds" "$dest/sounds"; fi   # the rendered bank (sound.js loads it next to the page)
+if [ -d "$root/viewer/pixel" ]; then cp -r "$root/viewer/pixel" "$dest/pixel"; fi      # the pixel app and its generated scene
 rm -f "$root"/viewer/things/*.js     # the live page notices the empty things/ and plays the new-world animation
 echo '{}' > "$root"/viewer/things/placement.json   # a new world: every thing that comes is placed (the old file is archived)
 echo "archived to worlds/$name"

@@ -146,6 +146,9 @@ class NewWorld(unittest.TestCase):
         last = self.page.evaluate("() => __paperSound.lastPlay()")
         self.assertIn(last["role"], {"newWorld", "pageTurn"}, last)
         self.assertTrue(self.note()["hidden"], "the wait note goes away when the page turns")
+        archive = sorted((self.world / "worlds").iterdir())[-1]
+        self.assertTrue((archive / "pixel" / "index.html").is_file(), archive)
+        self.assertTrue((archive / "pixel" / "scenes" / "kritzel.png").is_file(), archive)
         self.assertEqual(self.errors, [])
 
 

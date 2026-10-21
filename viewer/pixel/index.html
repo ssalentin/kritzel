@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kritzel · Pixel</title>
+  <style>
+    :root { --fg: #10202e; --panel: rgba(255,255,255,.86); }
+    html, body { margin: 0; height: 100%; background: #241a30; overflow: hidden; }
+    #scene { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block;
+      image-rendering: pixelated; image-rendering: crisp-edges; }
+    #renderMode { position: fixed; right: 16px; top: 12px; display: flex; gap: 2px; padding: 2px; border-radius: 10px;
+      background: var(--panel); box-shadow: 0 4px 12px #0003; font: 600 12px system-ui, sans-serif; color: var(--fg); }
+    #renderMode button { border: 0; border-radius: 7px; padding: 4px 7px; font: inherit; color: inherit;
+      background: none; cursor: pointer; opacity: .7; }
+    #renderMode button[aria-pressed=true] { background: #6aa65a; color: #fff; opacity: 1; }
+    #note { position: fixed; left: 16px; top: 12px; padding: 4px 9px; border-radius: 999px; background: var(--panel);
+      color: var(--fg); font: 12px system-ui, sans-serif; opacity: .8; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <canvas id="scene" aria-label="Kritzel pixel world"></canvas>
+  <div id="note">Pixel-Welt · wird gebaut …</div>
+  <div id="renderMode" role="group" aria-label="3D oder Pixel">
+    <button type="button" data-mode="3d">3D</button>
+    <button type="button" data-mode="pixel" aria-pressed="true">Pixel</button>
+  </div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
