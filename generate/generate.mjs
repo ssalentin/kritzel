@@ -1414,6 +1414,30 @@ function pixelWrite(report, { name, paper, drawing, kind, base, outDir, reportsD
   return entry;
 }
 
+// Typed requests with several subjects are all-or-nothing: build every sprite in a hidden
+// subdirectory of pixel/things, then publish all JSON/pxl/PNG only after the last succeeds.
+function stagePixelThing({ name, paper, drawing, kind, base, stageDir, stageReports }) {
+  const made = runPixelSprite({ name, drawing, kind, move: '', file: base + '.js', outDir: stageDir, reportsDir: stageReports });
+  return { name, paper, drawing, kind, base, made, stageDir, stageReports };
+}
+function publishPixelThing(staged, pixelDir, reportsDir) {
+  assertRenderMode('pixel', `the pixel thing ${staged.base}`);
+  mkdirSync(pixelDir, { recursive: true });
+  const png = join(pixelDir, staged.base + '.png');
+  const source = join(pixelDir, staged.base + '.px.js');
+  renameSync(join(staged.stageDir, staged.base + '.png'), png);
+  renameSync(join(staged.stageDir, staged.base + '.px.js'), source);
+  const thing = { name: staged.name, paper: staged.paper, drawing: staged.drawing, kind: staged.kind, sprite: staged.base + '.png' };
+  atomicWrite(join(pixelDir, staged.base + '.json'), JSON.stringify(thing, null, 1));
+  const stagedReport = join(staged.stageReports, staged.base + '.sprite.json');
+  if (existsSync(stagedReport)) {
+    mkdirSync(reportsDir, { recursive: true });
+    renameSync(stagedReport, join(reportsDir, staged.base + '.sprite.json'));
+  }
+  return { kind: 'NEW', file: staged.base + '.json', name: staged.name, paper: staged.paper, drawing: staged.drawing,
+    pixelKind: staged.kind, sprite: thing.sprite, source, png, model: staged.made.model, cost: staged.made.cost };
+}
+
 export async function processPixelFrame(frame, { pixelThingsDir, reportsDir, onProgress = () => {} }) {
   mkdirSync(reportsDir, { recursive: true });
   const name = basename(frame).replace(/\.\w+$/, '');
@@ -1493,19 +1517,30 @@ export async function processPixelTextRequest(reqPath, { thingsDir, reportsDir, 
     const existing = readPixelThings(pixelDir);
     const takenBases = new Set(existing.map(x => x.file.replace(/\.json$/, '')));
     const takenNames = new Set(existing.map(x => x.meta.name.toLowerCase()));
-    for (let i = 0; i < subjects.length; i++) {
-      let name = shortName(subjects[i].name);
-      if (takenNames.has(name.toLowerCase())) {
-        const original = name;
-        let n = 2;
-        while (takenNames.has(`${original} ${n}`.toLowerCase())) n++;
-        name = `${original} ${n}`;
+    mkdirSync(pixelDir, { recursive: true });
+    const stageDir = mkdtempSync(join(pixelDir, '.request-'));
+    const stageReports = join(stageDir, 'reports');
+    try {
+      const staged = [];
+      for (let i = 0; i < subjects.length; i++) {
+        let name = shortName(subjects[i].name);
+        if (takenNames.has(name.toLowerCase())) {
+          const original = name;
+          let n = 2;
+          while (takenNames.has(`${original} ${n}`.toLowerCase())) n++;
+          name = `${original} ${n}`;
+        }
+        takenNames.add(name.toLowerCase());
+        const base = freeName(slug(name), takenBases);
+        takenBases.add(base);
+        const paper = { x: +(subjects.length === 1 ? 0.5 : 0.3 + 0.4 * i / (subjects.length - 1)).toFixed(3), y: 0.5 };
+        staged.push(stagePixelThing({ name, paper, drawing: subjects[i].drawing, kind: subjects[i].kind, base, stageDir, stageReports }));
       }
-      takenNames.add(name.toLowerCase());
-      const base = freeName(slug(name), takenBases);
-      takenBases.add(base);
-      const paper = { x: +(subjects.length === 1 ? 0.5 : 0.3 + 0.4 * i / (subjects.length - 1)).toFixed(3), y: 0.5 };
-      pixelWrite(report, { name, paper, drawing: subjects[i].drawing, kind: subjects[i].kind, base, outDir: pixelDir, reportsDir });
+      // every sprite succeeded: publish the whole set only now
+      assertRenderMode('pixel', 'the typed pixel request');
+      for (const s of staged) report.written.push(publishPixelThing(s, pixelDir, reportsDir));
+    } finally {
+      rmSync(stageDir, { recursive: true, force: true });
     }
     onProgress({ state: 'new', id, detail: report.written.map(w => w.name).join(', ') });
     rebuildPixelScene();
@@ -1513,7 +1548,7 @@ export async function processPixelTextRequest(reqPath, { thingsDir, reportsDir, 
   } catch (e) {
     report.error = e.message.slice(0, 500);
     onProgress({ state: 'failed', id, detail: report.error });
-    throw e;
+    return report;
   } finally {
     report.finished = new Date().toISOString();
     report.timing.done = +((Date.now() - t0) / 1000).toFixed(1);

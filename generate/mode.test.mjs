@@ -121,6 +121,41 @@ test('typed pixel subjects split like 3D: Eiffelturm und Wolkenkratzer become tw
   } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(d, { recursive: true, force: true }); }
 });
 
+test('a typed pixel two-subject request is all-or-nothing when the second sprite fails', async () => {
+  mode('pixel');
+  const d = dirs();
+  writeFileSync(join(d, 'split.txt'), JSON.stringify({ subjects: [
+    { name: 'Eiffelturm', drawing: 'an Eiffel Tower with four legs', kind: 'scenery' },
+    { name: 'Wolkenkratzer', drawing: 'a tall skyscraper with windows', kind: 'scenery' },
+  ] }));
+  process.env.FAKE_CLAUDE_REPLY = join(d, 'split.txt');
+  const fake = join(d, 'fake-fail');
+  writeFileSync(fake, `#!/bin/sh
+out=""; report=""; file=""
+while [ $# -gt 0 ]; do case "$1" in --out) out=$2; shift 2;; --report) report=$2; shift 2;; --file) file=$2; shift 2;; *) shift;; esac; done
+base=$(basename "$file" .js)
+case "$base" in wolkenkratzer) echo "second sprite failed" >&2; exit 1;; esac
+mkdir -p "$out"
+printf 'fake' > "$out/$base.png"; printf 'fake' > "$out/$base.px.js"
+mkdir -p "$(dirname "$report")"; printf '{}' > "$report"
+echo '{"ok":true,"buildMs":1,"cost":0}'
+`);
+  chmodSync(fake, 0o755);
+  const oldCmd = process.env.KRITZEL_THING_SPRITES_CMD, oldScript = process.env.KRITZEL_THING_SPRITES_SCRIPT;
+  Object.assign(process.env, { KRITZEL_THING_SPRITES_CMD: fake, KRITZEL_THING_SPRITES_SCRIPT: '/does/not/matter' });
+  try {
+    writeFileSync(join(d, 'frames/requests/text-mode4.json'), JSON.stringify({ text: 'Eiffelturm und Wolkenkratzer', mode: 'new' }));
+    const r = await processTextRequest(join(d, 'frames/requests/text-mode4.json'), { thingsDir: join(d, 'viewer/things'), reportsDir: join(d, 'frames/generated') });
+    assert.match(r.error, /second sprite failed|not written/);
+    assert.deepEqual(readdirSync(join(d, 'viewer/pixel/things')), []);
+  } finally {
+    delete process.env.FAKE_CLAUDE_REPLY;
+    if (oldCmd === undefined) delete process.env.KRITZEL_THING_SPRITES_CMD; else process.env.KRITZEL_THING_SPRITES_CMD = oldCmd;
+    if (oldScript === undefined) delete process.env.KRITZEL_THING_SPRITES_SCRIPT; else process.env.KRITZEL_THING_SPRITES_SCRIPT = oldScript;
+    rmSync(d, { recursive: true, force: true });
+  }
+});
+
 test('a pixel frame writes descriptions and sprites, not 3D modules', async () => {
   mode('pixel');
   const d = dirs();
