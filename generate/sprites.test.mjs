@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { ROOT, parseGrid, validatePng, makeSprite, spritePrompt } from '../scripts/thing_sprite.mjs';
+import { ROOT, parseGrid, parseFrames, validatePng, makeSprite, spritePrompt, inferMove, moveFor } from '../scripts/thing_sprite.mjs';
 import { DRAGON, TOWER, TREE } from '../scripts/sprite-examples.mjs';
 process.env.KRITZEL_PROVIDER = 'claude';
 delete process.env.KRITZEL_MODEL; delete process.env.KRITZEL_DRAFT_MODEL;
@@ -18,11 +18,37 @@ test('the three worked examples are valid 32x32 grids', () => {
 });
 
 test('the prompt insists on the description\'s signature features and exact grid', () => {
-  const prompt = spritePrompt({ name: 'Hexe', drawing: 'a witch riding on a broom', kind: 'actor', move: 'fly' });
+  const prompt = spritePrompt({ name: 'Hexe', drawing: 'a witch riding on a broom', kind: 'actor', move: 'fly', frames: 3 });
   assert.match(prompt, /Drawing is the subject/);
-  assert.match(prompt, /witch riding a broom/);
-  assert.match(prompt, /exactly 32 lines of exactly 32 characters/);
+  assert.match(prompt, /witch riding on a broom/);
+  assert.match(prompt, /FRAME 1/);
+  assert.match(prompt, /3 WHOLE animation frames/);
   assert.match(prompt, /\. = transparent/);
+});
+
+test('animation parsing requires every whole frame and rejects identical frames', () => {
+  const four = [DRAGON, DRAGON.map((r, i) => i === 23 ? r.replace('k', 'g') : r),
+    DRAGON.map((r, i) => i === 23 ? r.replace('k', 'G') : r), DRAGON.map((r, i) => i === 23 ? r.replace('k', 'l') : r)];
+  const text = four.map((r, i) => `FRAME ${i + 1}\n${r.join('\n')}`).join('\n');
+  assert.equal(parseFrames(text, { frames: 4, height: 32 }).length, 4);
+  assert.throws(() => parseFrames(text.replace(/FRAME 3[\s\S]*/, ''), { frames: 4, height: 32 }), /FRAME 1 through FRAME 4/);
+  assert.throws(() => parseFrames([1, 2, 3, 4].map(i => `FRAME ${i}\n${DRAGON.join('\n')}`).join('\n'), { frames: 4 }), /identical/);
+});
+
+test('move inference uses whole words/stems and never writes the viewer-less crawl mover', () => {
+  const cases = [
+    ['Mara', 'a girl walking across the book', 'walk'],
+    ['Stuhl', 'a chair with a friendly face', 'walk'],
+    ['Tasse', 'a cup of coffee', 'walk'],
+    ['Mond', 'the moon phase', 'walk'],
+    ['Giraffe', 'a tall giraffe with long legs', 'walk'],
+    ['Fisch', 'a blue fish', 'swim'],
+    ['Vogel', 'a little bird', 'fly'],
+    ['Hase', 'a hopping rabbit', 'hop'],
+    ['Spinne', 'a spider', 'climb'],
+  ];
+  for (const [name, drawing, move] of cases) assert.equal(inferMove(name, drawing, 'actor'), move, name);
+  assert.equal(moveFor('Schnecke', 'a snail', 'actor', 'crawl'), 'walk');
 });
 
 test('a grid must have 32 exact rows, known keys, 15-90% coverage and more than one tone', () => {
@@ -50,7 +76,7 @@ test('a bad grid gets exactly one fix, then writes the sprite and report', async
     const calls = [];
     let asked = 0;
     const ask = async () => ({ text: asked++ ? DRAGON.join('\n') : 'not a grid', model: 'fake', seconds: 0.1, cost: 0.001 });
-    const r = await makeSprite({ name: 'Drache', drawing: 'a dragon', kind: 'actor', move: 'fly',
+    const r = await makeSprite({ name: 'Drache', drawing: 'a dragon', kind: 'scenery', move: '',
       file: 'drache.js', outDir: join(dir, 'out'), reportDir: join(dir, 'reports'), ask, build: fakeBuild(calls) });
     assert.equal(asked, 2);
     assert.deepEqual(calls, ['drache']);
@@ -92,14 +118,17 @@ test('a build failure leaves no partial source or PNG', async () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('the real claude-pxl build is 32x32, palette-only and byte-identical', async t => {
+test('the real claude-pxl build makes a whole-frame strip, palette-only and byte-identical', async t => {
   if (!existsSync(join(ROOT, '.kritzel', 'claude-pxl', 'bin', 'pxl.js'))) return t.skip('claude-pxl is not set up');
   const dir = mkdtempSync(join(tmpdir(), 'kritzel-sprite-png-'));
   try {
-    const ask = async () => ({ text: DRAGON.join('\n'), model: 'fake', seconds: 0.1, cost: 0 });
-    const one = await makeSprite({ name: 'Drache', file: 'drache.js', outDir: join(dir, 'one'), reportDir: join(dir, 'r'), ask });
-    const two = await makeSprite({ name: 'Drache', file: 'drache.js', outDir: join(dir, 'two'), reportDir: join(dir, 'r'), ask });
-    assert.deepEqual(validatePng(one.png), [32, 32]);
+    const four = [DRAGON, DRAGON.map((r, i) => i === 23 ? r.replace('k', 'g') : r),
+      DRAGON.map((r, i) => i === 23 ? r.replace('k', 'G') : r), DRAGON.map((r, i) => i === 23 ? r.replace('k', 'l') : r)];
+    const ask = async () => ({ text: four.map((r, i) => `FRAME ${i + 1}\n${r.join('\n')}`).join('\n'), model: 'fake', seconds: 0.1, cost: 0 });
+    const one = await makeSprite({ name: 'Ritter', kind: 'actor', move: 'walk', file: 'ritter.js', outDir: join(dir, 'one'), reportDir: join(dir, 'r'), ask });
+    const two = await makeSprite({ name: 'Ritter', kind: 'actor', move: 'walk', file: 'ritter.js', outDir: join(dir, 'two'), reportDir: join(dir, 'r'), ask });
+    assert.deepEqual(validatePng(one.png, { width: 128, height: 32 }), [128, 32]);
+    assert.deepEqual([one.frames, one.fps, one.move], [4, 10, 'walk']);
     assert.deepEqual(readFileSync(one.png), readFileSync(two.png));
     assert.deepEqual(readFileSync(one.source), readFileSync(two.source));
   } finally { rmSync(dir, { recursive: true, force: true }); }
