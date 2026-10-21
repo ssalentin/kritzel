@@ -106,6 +106,25 @@ failure is logged and leaves any existing sprite in place; `KRITZEL_THING_SPRITE
 stage off. Each attempt leaves a report at `frames/generated/<base>.sprite.json` with the exact
 prompt, reply, model, cost and grid.
 
+### 3D and Pixel mode routing
+
+`world-mode.json` at the repository root selects the active world: `{"render":"3d"}` or
+`{"render":"pixel"}`. Missing or malformed means 3D. The viewer's mode switch archives and empties
+the outgoing world (studio-world's half); generation reads the same file.
+
+- **3D** writes only `viewer/things/<base>.js` and the usual reactions, sounds and reports.
+- **Pixel** writes only `viewer/pixel/things/<base>.json` plus `<base>.px.js` and `<base>.png`.
+  The JSON is `{ name, paper:{x,y}, drawing, kind, sprite:'<base>.png' }`; the drawing is the
+  description from the detection call (or the typed subject), and `kind` is `actor` or `scenery`.
+  The pixel surface reads these JSON files; the viewer half owns the scene and its screenshots.
+
+Generation reads the mode for every frame and typed request. Both writers re-read it immediately
+before publishing, so a switch during a model call aborts the outgoing mode's write (and produces
+a visible frame error) instead of mixing a .js and a pixel thing. A typed **change** in pixel mode
+is refused: there is no 3D module to rewrite; type a new subject. An optional
+`KRITZEL_PIXEL_REBUILD_URL` (for example the viewer's `/api/pixel-world`) is POSTed after a pixel
+thing changes; without it the pixel surface's own polling is the refresh path.
+
 The viewer speaks German or English (the world is made for drawing with kids): the DE/EN
 button next to 📷 switches all UI texts and the characters' speech; the choice is kept in
 the browser, and without one the browser's language decides. UI texts live in

@@ -26,6 +26,7 @@ import { staticCheck, buildCheck, metaOf } from './check.mjs';
 import { SYSTEM, userText, fixText, DETECT_SYSTEM, detectText, oneOfText, DRAFT_NOTE, TEXT_SYSTEM, textThingText, CHANGE_SYSTEM, changeText } from './prompts.mjs';
 import { islandOf, movePaper } from './place.mjs';
 import { safeLine } from '../viewer/dialogues.js';
+import { readRenderMode, pixelThingsDirFor, readPixelThings, assertRenderMode } from './mode.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const log = (...a) => console.error(new Date().toISOString().slice(11, 19), ...a);
@@ -397,6 +398,7 @@ export function readThingIndex(dir) {
 // One request, one model call with no image and the same checks as a drawing. The report is always written,
 // including on failure, so a request never disappears silently.
 export async function processTextRequest(reqPath, { thingsDir, reportsDir, onProgress = () => {} }) {
+  if (readRenderMode() === 'pixel') return processPixelTextRequest(reqPath, { thingsDir, reportsDir, onProgress });
   mkdirSync(reportsDir, { recursive: true });
   const id = textRequestId(reqPath);
   const t0 = Date.now(), T = () => +((Date.now() - t0) / 1000).toFixed(1);
@@ -485,6 +487,7 @@ export async function processTextRequest(reqPath, { thingsDir, reportsDir, onPro
           try { now = readFileSync(join(thingsDir, target), 'utf8'); } catch { /* gone: archived or removed */ }
           if (now === null) return { gone: true };
           if (now !== base.code) return { raced: now };
+          assertRenderMode('3d', 'a 3D correction');
           const sound = soundFor(target, name, f.code, f.info, thingsDir);
           atomicWrite(join(thingsDir, target), f.code);       // only now: a failed rewrite leaves the old file as it was
           spriteFor(target, name, f.info?.drawing, f.info?.actors?.length ? 'actor' : '', moveOf(f.code), thingsDir, reportsDir);
@@ -563,6 +566,7 @@ export async function processTextRequest(reqPath, { thingsDir, reportsDir, onPro
         const base = freeName(slug(name), filesTaken);
         filesTaken.add(base);
         const file = base + '.js';
+      assertRenderMode('3d', 'a 3D thing');
         const sound = soundFor(file, name, code, f.info, thingsDir);
         atomicWrite(join(thingsDir, file), code);
       spriteFor(file, name, f.info?.drawing, f.info?.actors?.length ? 'actor' : '', moveOf(code), thingsDir, reportsDir);
@@ -717,6 +721,7 @@ export function parseList(text) {
     if (!b || b[2] <= b[0] || b[3] <= b[1] || !str(t.de, 60) || !str(t.en, 60) || !str(t.what, 300)) continue;
     if (WORD.test(t.what) || /^(?:ein|das|der)\s+(?:wort|schriftzug|titel|text)\b/i.test(t.de)) continue;   // a word alone is no drawing
     out.push({ ...(str(t.in_book, 60) && { inBook: t.in_book }), box: b.map(v => +v.toFixed(3)), up: t.face === 'eyes below mouth' && t.hangs !== true ? 'upside down' : 'upright',
+      face: t.face === 'eyes below mouth' || t.face === 'eyes beside mouth' || t.face === 'eyes above mouth' ? t.face : 'no face',
       // the words of its speech or thought bubble, only when they pass the child-safe filter (they become its lines)
       ...(t.says && typeof t.says.text === 'string' && t.says.text.length <= 60 && safeSaid(t.says.text) && ['speech', 'thought'].includes(t.says.kind) && { says: { text: t.says.text.trim(), kind: t.says.kind,
         ...(typeof t.says.en === 'string' && t.says.en.trim() && t.says.en.length <= 80 && safeLine(t.says.en, 'en') && { en: t.says.en.trim() }) } }),
@@ -837,6 +842,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
       })().catch(e => {                                         // a failed fix call (timeout, limit) costs this one thing, not the watcher
         thingState(s.n, 'failed');
         report.rejected.push({ kind: s.kind, file: s.file, problems: [`not written: ${e.message.slice(0, 200)}`] });
+        if (/^render mode is (pixel|3d):/.test(e.message)) report.error ||= e.message;   // a switch aborted the frame visibly
         log(`${name}: ${s.kind} ${s.file || ''} not written: ${e.message}`);
       });
       pending.push(job);
@@ -894,6 +900,7 @@ export async function processFrame(frame, { thingsDir, reportsDir, box = null, p
         }
         const base = old ? old.file.replace(/\.js$/, '') : freeName(slug(thingName), new Set(now.map(t => t.file.replace(/\.js$/, ''))));
         const file = base + '.js';
+        assertRenderMode('3d', 'a 3D thing');
         const sound = soundFor(file, thingName, f.code, f.info, thingsDir);
         atomicWrite(join(thingsDir, file), f.code);
         spriteFor(file, thingName, f.info?.drawing, f.info?.actors?.length ? 'actor' : '', moveOf(f.code), thingsDir, reportsDir);
@@ -983,6 +990,7 @@ ${draft}`;
           let now = null;
           try { now = readFileSync(path, 'utf8'); } catch { /* removed meanwhile */ }
           if (now !== draft) { log(`${name}: final of ${file} dropped: the thing changed or was removed meanwhile`); return done({ dropped: 'changed meanwhile' }); }
+          assertRenderMode('3d', 'a 3D final');
           const sound = soundFor(file, thingName, f.code, f.info, thingsDir);
           atomicWrite(path, s.says ? withSaid(f.code, s.says) : f.code);
           spriteFor(file, thingName, f.info?.drawing, f.info?.actors?.length ? 'actor' : '', moveOf(f.code), thingsDir, reportsDir);
@@ -1016,6 +1024,7 @@ ${draft}`;
             const base = freeName(slug(partName), new Set([...files, ...readdirSync(thingsDir).map(f => f.replace(/\.js$/, ''))]));
             files.add(base);
             const partFile = base + '.js';
+            assertRenderMode('3d', 'a 3D split thing');
             const sound = soundFor(partFile, partName, code, g.info, thingsDir);
             atomicWrite(join(thingsDir, partFile), code);
             spriteFor(partFile, partName, g.info?.drawing, g.info?.actors?.length ? 'actor' : '', moveOf(code), thingsDir, reportsDir);
@@ -1349,6 +1358,131 @@ export function modeOf(thingsDir) {
   try { return JSON.parse(readFileSync(join(thingsDir, 'mode.json'), 'utf8')).mode === 'switch' ? 'switch' : 'add'; } catch { return 'add'; }
 }
 
+// ---------- pixel mode: description -> pixel thing JSON + claude-pxl sprite ----------
+// 3D and 2D are separate worlds: pixel mode never writes viewer/things/*.js, and 3D never writes
+// viewer/pixel/things. Every writer re-reads world-mode.json just before publishing, so a switch
+// during a model call aborts the old mode's write.
+const LIVING_TEXT = /\b(mensch|person|kind|junge|jungen|mädchen|maedchen|frau|mann|baby|hexe|zauberer|fee|drache|dragon|vogel|bird|fisch|fish|hund|dog|katze|cat|maus|mouse|tier|animal|monster|vampir|wolf|bär|baer|bear|löwe|loewe|lion|pferd|horse|einhorn|unicorn|pinguin|penguin|krabbe|crab|wal|whale|rauti|bohni|zappel|spinne|spider|kobra|snake|wurm|worm|eule|owl|papagei|parrot)\b/i;
+const shortName = text => {
+  let s = String(text || '').trim().replace(/^(ein|eine|einen|der|die|das|a|an|the)\s+/i, '').trim();
+  if (!s) s = 'Ding';
+  s = s.charAt(0).toUpperCase() + s.slice(1);
+  return s.slice(0, 40);
+};
+const shortNameOfEntry = e => shortName(e.de || e.name_en || e.en || 'Ding');
+
+function runPixelSprite({ name, drawing, kind, move, file, outDir, reportsDir }) {
+  const base = file.replace(/\.js$/, '');
+  mkdirSync(outDir, { recursive: true });
+  const stage = mkdtempSync(join(outDir, '.sprite-'));
+  try {
+    const cmd = process.env.KRITZEL_THING_SPRITES_CMD || process.execPath;
+    const script = process.env.KRITZEL_THING_SPRITES_SCRIPT || join(ROOT, 'scripts', 'thing_sprite.mjs');
+    const stdout = execFileSync(cmd, [script,
+      '--name', name, '--drawing', drawing, '--kind', kind, '--move', move || '', '--file', file,
+      '--out', stage, '--report', join(stage, base + '.sprite.json')],
+    { encoding: 'utf8', timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] });
+    const made = JSON.parse(stdout.trim().split('\n').at(-1) || '{}');
+    // the viewer switch may have taken over while the model was writing
+    assertRenderMode('pixel', `a pixel sprite (${base})`);
+    renameSync(join(stage, base + '.png'), join(outDir, base + '.png'));
+    renameSync(join(stage, base + '.px.js'), join(outDir, base + '.px.js'));
+    const stagedReport = join(stage, base + '.sprite.json');
+    if (existsSync(stagedReport)) {
+      mkdirSync(reportsDir, { recursive: true });
+      renameSync(stagedReport, join(reportsDir, base + '.sprite.json'));
+    }
+    return { ...made, png: join(outDir, base + '.png'), source: join(outDir, base + '.px.js') };
+  } finally { rmSync(stage, { recursive: true, force: true }); }
+}
+
+function rebuildPixelScene() {
+  const url = process.env.KRITZEL_PIXEL_REBUILD_URL;
+  if (url) fetch(url, { method: 'POST', headers: { 'X-Kritzel': '1' } }).catch(() => {});
+}
+
+function pixelWrite(report, { name, paper, drawing, kind, base, outDir, reportsDir }) {
+  const made = runPixelSprite({ name, drawing, kind, move: '', file: base + '.js', outDir, reportsDir });
+  assertRenderMode('pixel', `the pixel thing ${base}`);
+  const thing = { name, paper, drawing, kind, sprite: base + '.png' };
+  atomicWrite(join(outDir, base + '.json'), JSON.stringify(thing, null, 1));
+  const entry = { kind: 'NEW', file: base + '.json', name, paper, drawing, sprite: thing.sprite, source: made.source, png: made.png, model: made.model, cost: made.cost };
+  report.written.push(entry);
+  return entry;
+}
+
+export async function processPixelFrame(frame, { pixelThingsDir, reportsDir, onProgress = () => {} }) {
+  mkdirSync(reportsDir, { recursive: true });
+  const name = basename(frame).replace(/\.\w+$/, '');
+  const t0 = Date.now(), T = () => +((Date.now() - t0) / 1000).toFixed(1);
+  const report = { frame, mode: 'pixel', started: new Date(t0).toISOString(), calls: [], listed: [], written: [], rejected: [], error: null, timing: {} };
+  const save = () => {
+    for (const c of report.calls) if (c.endedAt) { c.at = +((c.endedAt - t0) / 1000).toFixed(1); delete c.endedAt; }
+    atomicWrite(join(reportsDir, name + '.json'), JSON.stringify(report, null, 1));
+  };
+  try {
+    const existing = readPixelThings(pixelThingsDir);
+    const listed = await detectSheet({ images: [readFileSync(frame)], existing, calls: report.calls });
+    if (listed === null) throw new Error('the description call failed');
+    report.listed = listed;
+    const taken = new Set(existing.map(x => x.file.replace(/\.json$/, '')));
+    const names = new Set(existing.map(x => x.meta.name.toLowerCase()));
+    for (const e of listed) {
+      if (e.inBook && names.has(String(e.inBook).toLowerCase())) continue;   // the same drawing, already a pixel thing
+      const nameNow = shortNameOfEntry(e);
+      const base = freeName(slug(nameNow), taken);
+      taken.add(base);
+      names.add(nameNow.toLowerCase());
+      const paper = { x: +((e.box[0] + e.box[2]) / 2).toFixed(3), y: +((e.box[1] + e.box[3]) / 2).toFixed(3) };
+      const kind = e.face && e.face !== 'no face' ? 'actor' : 'scenery';
+      const entry = pixelWrite(report, { name: nameNow, paper, drawing: e.what, kind, base, outDir: pixelThingsDir, reportsDir });
+      log(`pixel ${base}: ${nameNow} (${kind}) at paper ${paper.x},${paper.y}`);
+      onProgress({ state: 'building', detail: nameNow, file: entry.file });
+    }
+    if (report.written.length) { onProgress({ state: 'new', detail: report.written.map(w => w.name).join(', ') }); rebuildPixelScene(); }
+    return report;
+  } catch (e) {
+    report.error = e.message.slice(0, 500);
+    throw e;
+  } finally {
+    report.finished = new Date().toISOString(); report.timing.done = T(); save();
+  }
+}
+
+export async function processPixelTextRequest(reqPath, { thingsDir, reportsDir, onProgress = () => {} }) {
+  mkdirSync(reportsDir, { recursive: true });
+  const id = basename(reqPath).replace(/\.json$/, '');
+  const t0 = Date.now();
+  const report = { request: null, mode: 'pixel', started: new Date(t0).toISOString(), calls: [], listed: [], written: [], rejected: [], error: null, timing: {} };
+  const save = () => atomicWrite(join(reportsDir, id + '.json'), JSON.stringify(report, null, 1));
+  try {
+    let req;
+    try { req = JSON.parse(readFileSync(reqPath, 'utf8')); } catch { throw new Error('the request is not valid JSON'); }
+    const text = typeof req?.text === 'string' ? req.text.trim() : '';
+    if (!text || text.length > 80) throw new Error('say what to build (1-80 characters)');
+    if (req?.mode === 'change') throw new Error('pixel mode has no 3D thing to change; type a new subject');
+    report.request = { id, text, mode: 'new', lang: req.lang === 'de' ? 'de' : 'en' };
+    onProgress({ state: 'building', id, detail: text });
+    const pixelDir = pixelThingsDirFor(thingsDir);
+    const existing = readPixelThings(pixelDir);
+    const name = shortName(text);
+    const base = freeName(slug(name), new Set(existing.map(x => x.file.replace(/\.json$/, ''))));
+    const kind = LIVING_TEXT.test(text) ? 'actor' : 'scenery';
+    pixelWrite(report, { name, paper: { x: 0.5, y: 0.5 }, drawing: text, kind, base, outDir: pixelDir, reportsDir });
+    onProgress({ state: 'new', id, detail: name });
+    rebuildPixelScene();
+    return report;
+  } catch (e) {
+    report.error = e.message.slice(0, 500);
+    onProgress({ state: 'failed', id, detail: report.error });
+    throw e;
+  } finally {
+    report.finished = new Date().toISOString();
+    report.timing.done = +((Date.now() - t0) / 1000).toFixed(1);
+    save();
+  }
+}
+
 // ---------- watch frames/settled ----------
 // Resumes after the newest frame with a finished report in reportsDir, so frames capture wrote
 // while generate was down still get made. On a first run ever, the frames already there count as
@@ -1379,6 +1513,8 @@ async function watch(dir, opts) {
   let last = frames.findLast(done) || null;
   if (!last && !readdirSync(opts.reportsDir).some(f => f.endsWith('.json'))) last = frames.at(-1) || null;
   log(`watching ${dir} → ${opts.thingsDir} (${DRAFT_MODEL ? `draft ${DRAFT_MODEL}, final ` : 'model '}${MODEL} via ${PROVIDER}${PROVIDER === 'pi' ? ` (${PI_FALLBACK} when pi fails)` : ''}, fallback ${FALLBACK_MODEL}); handled up to ${last || '(nothing)'}`);
+  let lastRenderMode = readRenderMode();
+  log(`render mode: ${lastRenderMode}`);
   if (PROVIDER === 'pi') prewarm(BUILD, SYSTEM, 6);            // warm for the first frame: a cold pi costs ~1.3 s, ~140 MB each
   if (PROVIDER === 'pi') prewarm(DETECT_MODEL, DETECT_SYSTEM, 1);
   loadPoolCalls(opts);
@@ -1443,6 +1579,26 @@ async function watch(dir, opts) {
   for (;;) {
     const newest = list().at(-1);
     if (newest && newest !== last) {
+      const render = readRenderMode();
+      if (render !== lastRenderMode) { lastRenderMode = render; log(`render mode: ${render}`); }
+      if (render === 'pixel') {
+        status('building', newest, 'Pixel');
+        try {
+          const r = await processPixelFrame(join(dir, newest), {
+            pixelThingsDir: pixelThingsDirFor(opts.thingsDir), reportsDir: opts.reportsDir,
+            onProgress: p => status(p.state || 'building', newest, p.detail || ''),
+          });
+          const names = r.written.map(w => w.name).join(', ');
+          if (r.written.length) status('new', newest, names, { made: r.written.map(w => ({ de: w.name, en: w.name })) });
+          else status('unclear', newest, '');
+          if (r.written.length) wantDialogues(opts, `pixel: ${names}`, r.written.map(w => w.name));
+        } catch (e) {
+          status('failed', newest, e.message.slice(0, 80));
+          log(`${newest}: pixel build failed: ${e.message.slice(0, 200)}`);
+        }
+        last = lastGenerated = newest;
+        continue;
+      }
       let side = {};
       try { side = JSON.parse(readFileSync(join(dir, newest.replace('.jpg', '.json')), 'utf8')); } catch {}
       // switch mode (things/mode.json, written by the viewer's switch): a new sheet is a new world. Archive
