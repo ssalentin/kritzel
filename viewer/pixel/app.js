@@ -65,6 +65,9 @@ function fireDraw(actor, now) {
   const face = actor.facing || 1, w = actor.thing.image.width, h = actor.thing.image.height;
   const mouthX = Math.round(actor.x + face * w * .34);
   const mouthY = Math.round(actor.y - h * .52);
+  const flicker = .16 + Math.abs(Math.sin(now / 90)) * .08;
+  pxEllipse(mouthX + face * 12, mouthY - 1, 16, 9, '#ff7a2a', flicker);
+  pxEllipse(mouthX + face * 9, mouthY - 1, 10, 6, '#ffd36b', flicker + .06);
   let seed = (Math.floor(now / 70) + 1) * 2654435761 >>> 0;
   const rnd = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
   for (let i = 0; i < 9; i++) {
@@ -78,6 +81,24 @@ function fireDraw(actor, now) {
   ctx.fillRect(mouthX + Math.round(face * 32), mouthY - 13, 2, 2);
 }
 
+// A hard-edged ellipse made of 1px rows (no canvas anti-aliasing).
+function pxEllipse(cx, cy, rx, ry, color, alpha = 1) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = color;
+  for (let dy = -ry; dy <= ry; dy++) {
+    const w = Math.round(rx * Math.sqrt(Math.max(0, 1 - (dy * dy) / (ry * ry))));
+    if (w > 0) ctx.fillRect(Math.round(cx - w), Math.round(cy + dy), w * 2, 1);
+  }
+  ctx.restore();
+}
+
+// Shadows fall away from the sun (top-left), and a warm halo surrounds it.
+function sunShadow(x, y, w) {
+  pxEllipse(x + 5, y + 2, Math.max(4, w * .42), 3, '#14101f', .22);
+  pxEllipse(x + 7, y + 3, Math.max(3, w * .3), 2, '#14101f', .14);
+}
+
 // Day sky: a pixel sun with rays, and snow falling across the whole scene.
 const flakes = Array.from({ length: 70 }, (_, i) => {
   let s = (i + 1) * 2654435761 >>> 0;
@@ -88,6 +109,7 @@ const flakes = Array.from({ length: 70 }, (_, i) => {
 });
 function weatherDraw(now) {
   const cx = 34, cy = 22;
+  pxEllipse(cx, cy, 22, 18, '#ffd36b', .10);
   const R = 8;
   for (let dy = -R; dy <= R; dy++) {
     for (let dx = -R; dx <= R; dx++) {
@@ -126,6 +148,7 @@ function draw(now = performance.now()) {
   ctx.imageSmoothingEnabled = false;
   weatherDraw(now);
   for (const item of scenery) {
+    sunShadow(item.cx, item.cy, item.image.width);
     const r = item.image.width * .48;
     ctx.fillStyle = '#333c57';
     const wide = Math.max(5, Math.round(r * 1.35)), narrow = Math.max(3, Math.round(r * .8));
@@ -134,6 +157,7 @@ function draw(now = performance.now()) {
     ctx.drawImage(item.image, Math.round(item.cx - item.image.width / 2), Math.round(item.cy - item.image.height));
   }
   for (const actor of actors) {
+    sunShadow(actor.x, actor.y + 1, actor.thing.image.width);
     actorDraw(actor, now);
     if (actor.fireUntil > now) fireDraw(actor, now);
   }
