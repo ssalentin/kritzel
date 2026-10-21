@@ -587,6 +587,19 @@ def pixel_things():
     return out[:200]
 
 
+def pixel_version():
+    """A cheap freshness stamp: every published JSON, PX source and PNG changes it."""
+    h = hashlib.sha256()
+    root = ROOT / "viewer" / "pixel" / "things"
+    for p in sorted(root.glob("*")):
+        try:
+            s = p.stat()
+            h.update(f"{p.name}:{s.st_size}:{s.st_mtime_ns}\n".encode())
+        except OSError:
+            pass
+    return h.hexdigest()[:20]
+
+
 def pixel_build():
     """Build the claude-pxl scene from the current things; best effort, the committed PNG is the fallback."""
     with PIXEL_LOCK:
@@ -758,7 +771,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/world-mode":
             return self.json({"render": read_world_mode()})
         if path == "/api/pixel-things":
-            return self.json({"things": pixel_things()})
+            return self.json({"things": pixel_things(), "version": pixel_version()})
         if path == "/api/status":
             return self.json(self.status())
         if path == "/api/status/cutout.png":
