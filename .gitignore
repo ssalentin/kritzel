@@ -15,6 +15,7 @@ viewer/pixel/things/*.png
 *.log
 mpv.sock
 node_modules/
+world-mode.json
 
 # local Claude Code settings
 .claude/settings.local.json
