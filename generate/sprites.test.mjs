@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { ROOT, parseGrid, parseFrames, validatePng, makeSprite, spritePrompt } from '../scripts/thing_sprite.mjs';
+import { ROOT, parseGrid, parseFrames, validatePng, makeSprite, spritePrompt, inferMove, moveFor } from '../scripts/thing_sprite.mjs';
 import { DRAGON, TOWER, TREE } from '../scripts/sprite-examples.mjs';
 process.env.KRITZEL_PROVIDER = 'claude';
 delete process.env.KRITZEL_MODEL; delete process.env.KRITZEL_DRAFT_MODEL;
@@ -33,6 +33,22 @@ test('animation parsing requires every whole frame and rejects identical frames'
   assert.equal(parseFrames(text, { frames: 4, height: 32 }).length, 4);
   assert.throws(() => parseFrames(text.replace(/FRAME 3[\s\S]*/, ''), { frames: 4, height: 32 }), /FRAME 1 through FRAME 4/);
   assert.throws(() => parseFrames([1, 2, 3, 4].map(i => `FRAME ${i}\n${DRAGON.join('\n')}`).join('\n'), { frames: 4 }), /identical/);
+});
+
+test('move inference uses whole words/stems and never writes the viewer-less crawl mover', () => {
+  const cases = [
+    ['Mara', 'a girl walking across the book', 'walk'],
+    ['Stuhl', 'a chair with a friendly face', 'walk'],
+    ['Tasse', 'a cup of coffee', 'walk'],
+    ['Mond', 'the moon phase', 'walk'],
+    ['Giraffe', 'a tall giraffe with long legs', 'walk'],
+    ['Fisch', 'a blue fish', 'swim'],
+    ['Vogel', 'a little bird', 'fly'],
+    ['Hase', 'a hopping rabbit', 'hop'],
+    ['Spinne', 'a spider', 'climb'],
+  ];
+  for (const [name, drawing, move] of cases) assert.equal(inferMove(name, drawing, 'actor'), move, name);
+  assert.equal(moveFor('Schnecke', 'a snail', 'actor', 'crawl'), 'walk');
 });
 
 test('a grid must have 32 exact rows, known keys, 15-90% coverage and more than one tone', () => {

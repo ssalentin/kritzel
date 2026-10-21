@@ -132,10 +132,11 @@ default, via `KRITZEL_TEXT_PROVIDER`/`KRITZEL_TEXT_MODEL`, never the frame model
 in the fixed palette: known keys, 15–90 % opaque coverage, a readable silhouette, selective dark
 outline, 4–6 tones per material, top-left light, and a face only for living things. Actors are
 animated by their move: walk 4 frames (contact/down/pass/up), fly 3 (wing up/level/down), swim 3,
-hop 2, climb/crawl/roll 4. Every frame is a complete redraw (the body and limbs change), never a
-cut or translated copy; frames that are identical are rejected. Scenery stays one frame. Each
-frame is 32×32; a giraffe/rider may use 32×48. One bad reply gets one fix with the exact error,
-then the job fails visibly and writes nothing.
+hop 2, climb/roll 4. A 3D `crawl` request becomes Pixel `walk`, because the Pixel viewer has no
+crawl mover. Every frame is a complete redraw (the body and limbs change), never a cut or
+translated copy; frames that are identical are rejected. Scenery stays one frame. Each frame is
+32×32; a giraffe/rider may use 32×48. One bad reply gets one fix with the exact error, then the job
+fails visibly and writes nothing.
 
 The strip is written as `viewer/pixel/things/<base>.px.js` and `<base>.png` (N columns,
 palette-only, hard edges, byte-identical on repeat); the thing JSON carries `move`, `frames` and

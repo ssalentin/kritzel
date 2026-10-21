@@ -15,6 +15,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { oneShot } from '../generate/claude.mjs';
 import { DRAGON, TOWER, TREE } from './sprite-examples.mjs';
+import { MOVERS, moverFor } from '../viewer/pixel/motion.js';
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const PXL_COMMIT = '21fee41f7ecce00bc868d7567f24ffd0f3acc8fa';
@@ -48,26 +49,20 @@ export const PAL = `pal({
 const ALLOWED = new Set(['.', ...Object.keys(PALETTE)]);
 const RGB = new Set(Object.values(PALETTE).map(h => h.slice(1).toUpperCase()));
 
-export const MOVES = ['walk', 'fly', 'swim', 'hop', 'climb', 'crawl', 'roll'];
-const FRAMES = { walk: 4, fly: 3, swim: 3, hop: 2, climb: 4, crawl: 4, roll: 4 };
-const FPS = { walk: 10, fly: 8, swim: 6, hop: 6, climb: 6, crawl: 6, roll: 8 };
+export const MOVES = MOVERS;
+const FRAMES = { walk: 4, fly: 3, swim: 3, hop: 2, climb: 4, roll: 4 };
+const FPS = { walk: 10, fly: 8, swim: 6, hop: 6, climb: 6, roll: 8 };
 
 // Missing move is inferred here once, so the JSON and the strip always carry a real animation.
 export function inferMove(name = '', drawing = '', kind = '') {
   if (kind !== 'actor') return '';
-  const words = `${name} ${drawing}`.toLowerCase();
-  const has = (...xs) => xs.some(x => words.includes(x));
-  if (has('vogel', 'bird', 'schmetterling', 'butterfly', 'biene', 'bee', 'libelle', 'dragonfly', 'fliege', 'fly', 'fledermaus', 'bat', 'eule', 'owl', 'papagei', 'parrot', 'drache', 'dragon', 'hexe', 'witch', 'fee', 'fairy', 'flugzeug', 'plane', 'rakete', 'rocket', 'hubschrauber', 'helicopter', 'ballon', 'balloon')) return 'fly';
-  if (has('fisch', 'fish', 'wal', 'whale', 'hai', 'shark', 'krabbe', 'crab', 'walross', 'seal', 'robbe', 'qualle', 'jellyfish', 'krake', 'octopus', 'oktopus', 'schildkröte', 'turtle', 'delphin', 'dolphin', 'pinguin', 'penguin', 'ente', 'duck')) return 'swim';
-  if (has('hase', 'rabbit', 'frosch', 'frog', 'känguru', 'kangaroo', 'hüpfer', 'hopper')) return 'hop';
-  if (has('spinne', 'spider', 'affe', 'monkey', 'eichhörnchen', 'squirrel', 'faultier', 'sloth')) return 'climb';
-  if (has('ball', 'kugel', 'reifen', 'wheel')) return 'roll';
-  return 'walk';
+  return moverFor({ name, drawing });
 }
 export function moveFor(name, drawing, kind, move) {
   if (kind !== 'actor') return '';
   const m = String(move || '').toLowerCase();
-  return MOVES.includes(m) ? m : inferMove(name, drawing, kind);
+  if (m === 'crawl') return 'walk';                 // the pixel viewer has no crawl mover
+  return MOVERS.includes(m) ? m : moverFor({ name, drawing, move });
 }
 export const framesFor = (kind, move) => kind === 'actor' ? (FRAMES[move] || 4) : 1;
 export const fpsFor = (kind, move) => kind === 'actor' ? (FPS[move] || 6) : 1;
@@ -135,7 +130,6 @@ const POSE = {
   swim: 'FRAME 1 tail/body bend left, FRAME 2 body straight, FRAME 3 bend right. Redraw the whole fish/creature; the tail changes shape.',
   hop: 'FRAME 1 crouch (legs compressed, body low), FRAME 2 airborne (legs tucked or spread, body high).',
   climb: 'FRAME 1 left hand and right foot reach, FRAME 2 body pulls up, FRAME 3 right hand and left foot reach, FRAME 4 body settles. Redraw whole limbs.',
-  crawl: 'FRAME 1 front reaches, FRAME 2 body gathers, FRAME 3 back pushes, FRAME 4 body settles. Redraw the whole creeping body.',
   roll: 'FRAME 1 upright mark, FRAME 2 mark rotated a quarter, FRAME 3 mark upside down, FRAME 4 mark rotated the other way. The whole round body stays whole.',
 };
 
