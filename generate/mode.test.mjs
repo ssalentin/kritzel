@@ -33,14 +33,16 @@ export function build(ctx) {
 const fakeSprite = dir => {
   const p = join(dir, 'fake-sprite');
   writeFileSync(p, `#!/bin/sh
-out=""; report=""; file=""
-while [ $# -gt 0 ]; do case "$1" in --out) out=$2; shift 2;; --report) report=$2; shift 2;; --file) file=$2; shift 2;; *) shift;; esac; done
+out=""; report=""; file=""; move=""
+while [ $# -gt 0 ]; do case "$1" in --out) out=$2; shift 2;; --report) report=$2; shift 2;; --file) file=$2; shift 2;; --move) move=$2; shift 2;; *) shift;; esac; done
 base=$(basename "$file" .js)
 mkdir -p "$out"
 printf 'fake-png' > "$out/$base.png"
 printf 'fake-source' > "$out/$base.px.js"
 mkdir -p "$(dirname "$report")"; printf '{}' > "$report"
-echo '{"ok":true,"buildMs":1,"cost":0.01,"model":"fake"}'
+frames=1; fps=1
+case "$move" in fly) frames=3; fps=8;; swim) frames=3; fps=6;; hop) frames=2; fps=6;; walk) frames=4; fps=10;; climb|crawl|roll) frames=4; fps=6;; esac
+echo "{\\"ok\\":true,\\"buildMs\\":1,\\"cost\\":0.01,\\"model\\":\\"fake\\",\\"move\\":\\"$move\\",\\"frames\\":$frames,\\"fps\\":$fps}"
 `);
   chmodSync(p, 0o755);
   return p;
@@ -90,7 +92,8 @@ test('typed pixel requests write JSON+png/pxl and no 3D module', async () => {
       assert.deepEqual(readdirSync(join(d, 'viewer/things')), []);
       assert.deepEqual(readdirSync(join(d, 'viewer/pixel/things')).sort(), ['drache.json', 'drache.png', 'drache.px.js']);
       const j = JSON.parse(readFileSync(join(d, 'viewer/pixel/things/drache.json'), 'utf8'));
-      assert.deepEqual([j.name, j.drawing, j.kind, j.sprite], ['Drache', 'a friendly green dragon with wings and horns', 'actor', 'drache.png']);
+      assert.deepEqual([j.name, j.drawing, j.kind, j.move, j.frames, j.fps, j.sprite],
+        ['Drache', 'a friendly green dragon with wings and horns', 'actor', 'fly', 3, 8, 'drache.png']);
     });
   } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(d, { recursive: true, force: true }); }
 });
@@ -216,7 +219,7 @@ test('a 3D sprite job is not queued in pixel mode, and a started build cannot pu
 
     // the child build re-checks the mode just before publishing: a job started in 3D is refused
     const out = join(d, 'viewer/pixel/sprites');
-    assert.throws(() => buildPng({ source: spriteSource('drache.js', 'drache', DRAGON), base: 'drache',
+    assert.throws(() => buildPng({ source: spriteSource('drache.js', 'drache', [DRAGON]), base: 'drache',
       outDir: out, requireMode: '3d' }), /render mode changed/);
     assert.equal(existsSync(join(out, 'drache.png')), false);
     assert.equal(existsSync(join(out, 'drache.px.js')), false);

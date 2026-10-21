@@ -27,6 +27,7 @@ import { SYSTEM, userText, fixText, DETECT_SYSTEM, detectText, oneOfText, DRAFT_
 import { islandOf, movePaper } from './place.mjs';
 import { safeLine } from '../viewer/dialogues.js';
 import { readRenderMode, pixelThingsDirFor, readPixelThings, assertRenderMode } from './mode.mjs';
+import { inferMove, MOVES } from '../scripts/thing_sprite.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const log = (...a) => console.error(new Date().toISOString().slice(11, 19), ...a);
@@ -1404,21 +1405,23 @@ function rebuildPixelScene() {
   if (url) fetch(url, { method: 'POST', headers: { 'X-Kritzel': '1' } }).catch(() => {});
 }
 
-function pixelWrite(report, { name, paper, drawing, kind, base, outDir, reportsDir }) {
-  const made = runPixelSprite({ name, drawing, kind, move: '', file: base + '.js', outDir, reportsDir });
+function pixelWrite(report, { name, paper, drawing, kind, move = '', base, outDir, reportsDir }) {
+  const made = runPixelSprite({ name, drawing, kind, move, file: base + '.js', outDir, reportsDir });
   assertRenderMode('pixel', `the pixel thing ${base}`);
-  const thing = { name, paper, drawing, kind, sprite: base + '.png' };
+  const moveNow = made.move || move || (kind === 'actor' ? inferMove(name, drawing, kind) : '');
+  const thing = { name, paper, drawing, kind, move: moveNow, frames: made.frames || 1, fps: made.fps || 1, sprite: base + '.png' };
   atomicWrite(join(outDir, base + '.json'), JSON.stringify(thing, null, 1));
-  const entry = { kind: 'NEW', file: base + '.json', name, paper, drawing, sprite: thing.sprite, source: made.source, png: made.png, model: made.model, cost: made.cost };
+  const entry = { kind: 'NEW', file: base + '.json', name, paper, drawing, move: moveNow, frames: thing.frames, fps: thing.fps,
+    sprite: thing.sprite, source: made.source, png: made.png, model: made.model, cost: made.cost };
   report.written.push(entry);
   return entry;
 }
 
 // Typed requests with several subjects are all-or-nothing: build every sprite in a hidden
 // subdirectory of pixel/things, then publish all JSON/pxl/PNG only after the last succeeds.
-function stagePixelThing({ name, paper, drawing, kind, base, stageDir, stageReports }) {
-  const made = runPixelSprite({ name, drawing, kind, move: '', file: base + '.js', outDir: stageDir, reportsDir: stageReports });
-  return { name, paper, drawing, kind, base, made, stageDir, stageReports };
+function stagePixelThing({ name, paper, drawing, kind, move = '', base, stageDir, stageReports }) {
+  const made = runPixelSprite({ name, drawing, kind, move, file: base + '.js', outDir: stageDir, reportsDir: stageReports });
+  return { name, paper, drawing, kind, move, base, made, stageDir, stageReports };
 }
 function publishPixelThing(staged, pixelDir, reportsDir) {
   assertRenderMode('pixel', `the pixel thing ${staged.base}`);
@@ -1427,7 +1430,9 @@ function publishPixelThing(staged, pixelDir, reportsDir) {
   const source = join(pixelDir, staged.base + '.px.js');
   renameSync(join(staged.stageDir, staged.base + '.png'), png);
   renameSync(join(staged.stageDir, staged.base + '.px.js'), source);
-  const thing = { name: staged.name, paper: staged.paper, drawing: staged.drawing, kind: staged.kind, sprite: staged.base + '.png' };
+  const moveNow = staged.made.move || staged.move || (staged.kind === 'actor' ? inferMove(staged.name, staged.drawing, staged.kind) : '');
+  const thing = { name: staged.name, paper: staged.paper, drawing: staged.drawing, kind: staged.kind, move: moveNow,
+    frames: staged.made.frames || 1, fps: staged.made.fps || 1, sprite: staged.base + '.png' };
   atomicWrite(join(pixelDir, staged.base + '.json'), JSON.stringify(thing, null, 1));
   const stagedReport = join(staged.stageReports, staged.base + '.sprite.json');
   if (existsSync(stagedReport)) {
@@ -1435,7 +1440,8 @@ function publishPixelThing(staged, pixelDir, reportsDir) {
     renameSync(stagedReport, join(reportsDir, staged.base + '.sprite.json'));
   }
   return { kind: 'NEW', file: staged.base + '.json', name: staged.name, paper: staged.paper, drawing: staged.drawing,
-    pixelKind: staged.kind, sprite: thing.sprite, source, png, model: staged.made.model, cost: staged.made.cost };
+    pixelKind: staged.kind, move: moveNow, frames: thing.frames, fps: thing.fps, sprite: thing.sprite, source, png,
+    model: staged.made.model, cost: staged.made.cost };
 }
 
 export async function processPixelFrame(frame, { pixelThingsDir, reportsDir, onProgress = () => {} }) {
@@ -1462,7 +1468,8 @@ export async function processPixelFrame(frame, { pixelThingsDir, reportsDir, onP
       names.add(nameNow.toLowerCase());
       const paper = { x: +((e.box[0] + e.box[2]) / 2).toFixed(3), y: +((e.box[1] + e.box[3]) / 2).toFixed(3) };
       const kind = e.face && e.face !== 'no face' ? 'actor' : 'scenery';
-      const entry = pixelWrite(report, { name: nameNow, paper, drawing: e.what, kind, base, outDir: pixelThingsDir, reportsDir });
+      const move = kind === 'actor' ? inferMove(nameNow, e.what, kind) : '';
+      const entry = pixelWrite(report, { name: nameNow, paper, drawing: e.what, kind, move, base, outDir: pixelThingsDir, reportsDir });
       log(`pixel ${base}: ${nameNow} (${kind}) at paper ${paper.x},${paper.y}`);
       onProgress({ state: 'building', detail: nameNow, file: entry.file });
     }
@@ -1511,8 +1518,14 @@ export async function processPixelTextRequest(reqPath, { thingsDir, reportsDir, 
           typeof s?.drawing !== 'string' || !s.drawing.trim() || s.drawing.length > 300 ||
           !['actor', 'scenery'].includes(s.kind))
         throw new Error('the subject split has an invalid subject');
+      if (s.kind === 'actor' && s.move !== undefined && !MOVES.includes(String(s.move).toLowerCase()))
+        throw new Error('the subject split has an invalid move');
     }
-    report.request.subjects = subjects.map(s => ({ name: s.name, drawing: s.drawing, kind: s.kind }));
+    const subjectsNow = subjects.map(s => {
+      const move = s.kind === 'actor' ? (MOVES.includes(String(s.move || '').toLowerCase()) ? String(s.move).toLowerCase() : inferMove(s.name, s.drawing, 'actor')) : '';
+      return { name: s.name, drawing: s.drawing, kind: s.kind, move };
+    });
+    report.request.subjects = subjectsNow;
     const pixelDir = pixelThingsDirFor(thingsDir);
     const existing = readPixelThings(pixelDir);
     const takenBases = new Set(existing.map(x => x.file.replace(/\.json$/, '')));
@@ -1522,8 +1535,8 @@ export async function processPixelTextRequest(reqPath, { thingsDir, reportsDir, 
     const stageReports = join(stageDir, 'reports');
     try {
       const staged = [];
-      for (let i = 0; i < subjects.length; i++) {
-        let name = shortName(subjects[i].name);
+      for (let i = 0; i < subjectsNow.length; i++) {
+        let name = shortName(subjectsNow[i].name);
         if (takenNames.has(name.toLowerCase())) {
           const original = name;
           let n = 2;
@@ -1533,8 +1546,9 @@ export async function processPixelTextRequest(reqPath, { thingsDir, reportsDir, 
         takenNames.add(name.toLowerCase());
         const base = freeName(slug(name), takenBases);
         takenBases.add(base);
-        const paper = { x: +(subjects.length === 1 ? 0.5 : 0.3 + 0.4 * i / (subjects.length - 1)).toFixed(3), y: 0.5 };
-        staged.push(stagePixelThing({ name, paper, drawing: subjects[i].drawing, kind: subjects[i].kind, base, stageDir, stageReports }));
+        const paper = { x: +(subjectsNow.length === 1 ? 0.5 : 0.3 + 0.4 * i / (subjectsNow.length - 1)).toFixed(3), y: 0.5 };
+        staged.push(stagePixelThing({ name, paper, drawing: subjectsNow[i].drawing, kind: subjectsNow[i].kind,
+          move: subjectsNow[i].move, base, stageDir, stageReports }));
       }
       // every sprite succeeded: publish the whole set only now
       assertRenderMode('pixel', 'the typed pixel request');

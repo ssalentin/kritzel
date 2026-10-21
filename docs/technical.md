@@ -126,23 +126,28 @@ before the first click. A new world archives the whole `viewer/sounds/` tree, th
 
 ### Pixel sprites for each thing
 
-`scripts/thing_sprite.mjs` turns a thing's recognised `meta.drawing` into a 32×32 pixel-art sprite
-for Pixel mode. It asks the text model (Claude `claude-sonnet-5-5` by default, via
-`KRITZEL_TEXT_PROVIDER`/`KRITZEL_TEXT_MODEL`, never the frame model) for a strict 32-row grid:
-known palette keys, 15–90 % opaque coverage, a readable silhouette, selective dark outline,
-4–6 tones per material, one or two signature features, and a face only for living things. The
-grid is validated; one bad reply gets one fix with the exact error, then the job fails visibly
-and writes nothing.
+`scripts/thing_sprite.mjs` turns a thing's recognised `meta.drawing` into a horizontal strip of
+whole pixel-art frames for Pixel mode. It asks the text model (Claude `claude-sonnet-5-5` by
+default, via `KRITZEL_TEXT_PROVIDER`/`KRITZEL_TEXT_MODEL`, never the frame model) for strict grids
+in the fixed palette: known keys, 15–90 % opaque coverage, a readable silhouette, selective dark
+outline, 4–6 tones per material, top-left light, and a face only for living things. Actors are
+animated by their move: walk 4 frames (contact/down/pass/up), fly 3 (wing up/level/down), swim 3,
+hop 2, climb/crawl/roll 4. Every frame is a complete redraw (the body and limbs change), never a
+cut or translated copy; frames that are identical are rejected. Scenery stays one frame. Each
+frame is 32×32; a giraffe/rider may use 32×48. One bad reply gets one fix with the exact error,
+then the job fails visibly and writes nothing.
 
-The grid is written as `viewer/pixel/sprites/<base>.px.js` and rendered with
-[claude-pxl](https://github.com/crsolver/claude-pxl) at pinned commit
-`21fee41f7ecce00bc868d7567f24ffd0f3acc8fa` into `<base>.png` (32×32, palette-only, hard edges,
-byte-identical on repeat). On first use the CLI is cloned into `.kritzel/claude-pxl` (gitignored);
-after that no network is needed. The generator enqueues the job after the 3D module is written
-(new, change, final or split), in the background: the thing never waits for its sprite. A
-failure is logged and leaves any existing sprite in place; `KRITZEL_THING_SPRITES=0` turns the
-stage off. Each attempt leaves a report at `frames/generated/<base>.sprite.json` with the exact
-prompt, reply, model, cost and grid.
+The strip is written as `viewer/pixel/things/<base>.px.js` and `<base>.png` (N columns,
+palette-only, hard edges, byte-identical on repeat); the thing JSON carries `move`, `frames` and
+`fps`, with `sprite` relative to `things/`. The 3D background sprite stage writes the same strips
+to `viewer/pixel/sprites/`. [claude-pxl](https://github.com/crsolver/claude-pxl) is pinned at
+`21fee41f7ecce00bc868d7567f24ffd0f3acc8fa`; on first use the CLI is cloned into
+`.kritzel/claude-pxl` (gitignored). An optional `KRITZEL_SPRITE_REFERENCE` image is passed to the
+model as a style-only reference. The generator enqueues the job after the 3D module is written
+(new, change, final or split), in the background: the thing never waits. A failure is logged and
+leaves any existing sprite in place; `KRITZEL_THING_SPRITES=0` turns the stage off. Each attempt
+leaves a report at `frames/generated/<base>.sprite.json` with the exact prompt, reply, model,
+cost, frames and grids. Test/preview GIFs and sheets live under `frames/generated/`.
 
 ### 3D and Pixel mode routing
 
@@ -152,8 +157,10 @@ the outgoing world (studio-world's half); generation reads the same file.
 
 - **3D** writes only `viewer/things/<base>.js` and the usual reactions, sounds and reports.
 - **Pixel** writes only `viewer/pixel/things/<base>.json` plus `<base>.px.js` and `<base>.png`.
-  The JSON is `{ name, paper:{x,y}, drawing, kind, sprite:'<base>.png' }`; the drawing is the
-  description from the detection call (or the typed subject), and `kind` is `actor` or `scenery`.
+  The JSON is `{ name, paper:{x,y}, drawing, kind, move, frames, fps, sprite:'<base>.png' }`; the
+  drawing is the description from the detection call (or the typed subject), `kind` is `actor` or
+  `scenery`, and the sprite is a horizontal whole-frame strip. The viewer selects a whole frame;
+  it never slices a figure.
   The pixel surface reads these JSON files; the viewer half owns the scene and its screenshots.
 
 Generation reads the mode for every frame and typed request. Both writers re-read it immediately
