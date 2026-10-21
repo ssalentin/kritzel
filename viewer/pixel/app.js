@@ -1,11 +1,14 @@
 // The pixel app: the shared book plus per-thing claude-pxl PNGs, with a 32x32 archetype fallback.
 // A tiny local motion loop brings actors to life; the 3D simulation is not loaded here.
 import { t } from '../i18n.js';
+import Matter from 'matter-js';
 import { archetype } from './art.js';
 import { stripFrame } from './animation.js';
 import { layoutThings, SCENE } from './layout.js';
 import { createModeSwitch } from './mode-switch.js';
 import { createActor, moverFor, PAGE, react, stepActor } from './motion.js';
+import { createPhysics, HOLD_LIFT } from './physics.js';
+const MatterAPI = Matter.Matter || Matter;
 
 const canvas = document.getElementById('scene'), ctx = canvas.getContext('2d');
 const note = document.getElementById('note'), mode = document.getElementById('renderMode');
@@ -21,6 +24,7 @@ if (activeMode !== 'pixel') {
 let sceneReady = false, bookReady = false, worldReady = false, expected = 0, dynamic = false, asked = false, items = [];
 let thingsVersion = '', loadingWorld = null;
 let actors = [], obstacles = [], scenery = [], lastFrame = 0, lastIdleDraw = 0, cardTimer = 0, animationStarted = false;
+let physics = null, heldPointer = null;
 const tapSound = new Audio('../sounds/tap.ogg'); tapSound.volume = .35;
 
 function fitCanvas() {
@@ -31,6 +35,34 @@ function fitCanvas() {
 function actorFrameWidth(actor) {
   return stripFrame(actor.thing.image.width, actor.thing.image.height,
     { frames: actor.thing.frames }).width;
+}
+
+function isPortableThing(thing) {
+  if (thing.kind === 'actor') return false;
+  if (typeof thing.portable === 'boolean') return thing.portable;
+  return ['flower', 'cookie', 'chest', 'lamp', 'blob'].includes(thing.form);
+}
+
+function itemFrameWidth(item) {
+  return stripFrame(item.image.width, item.image.height, { frames: item.frames }).width;
+}
+
+function itemDraw(item, now) {
+  const frame = stripFrame(item.image.width, item.image.height,
+    { frames: item.frames, fps: item.fps, state: 'idle', now });
+  const body = physics?.portableBodies.get(item);
+  if (!body) {
+    ctx.drawImage(item.image, frame.index * frame.width, 0, frame.width, item.image.height,
+      Math.round(item.cx - frame.width / 2), Math.round(item.cy - item.image.height), frame.width, item.image.height);
+    return;
+  }
+  const q = Math.PI / 12, angle = Math.round(body.angle / q) * q;
+  ctx.save();
+  ctx.translate(Math.round(body.position.x), Math.round(body.position.y));
+  ctx.rotate(angle);
+  ctx.drawImage(item.image, frame.index * frame.width, 0, frame.width, item.image.height,
+    -Math.round(frame.width / 2), -Math.round(item.image.height / 2), frame.width, item.image.height);
+  ctx.restore();
 }
 
 function actorDraw(actor, now) {
@@ -145,13 +177,16 @@ function draw(now = performance.now()) {
   ctx.imageSmoothingEnabled = false;
   weatherDraw(now);
   for (const item of scenery) {
-    sunShadow(item.cx, item.cy, item.image.width);
-    const r = item.image.width * .48;
+    const body = physics?.portableBodies.get(item), footX = body?.position.x ?? item.cx;
+    const footY = body ? body.position.y + item.image.height / 2 : item.cy;
+    const held = physics?.held === item;
+    sunShadow(footX, footY + (held ? HOLD_LIFT : 0), itemFrameWidth(item) * (held ? 1.25 : 1));
+    const r = itemFrameWidth(item) * .48;
     ctx.fillStyle = '#333c57';
     const wide = Math.max(5, Math.round(r * 1.35)), narrow = Math.max(3, Math.round(r * .8));
-    ctx.fillRect(Math.round(item.cx - wide / 2), Math.round(item.cy), wide, 2);
-    ctx.fillRect(Math.round(item.cx - narrow / 2), Math.round(item.cy + 2), narrow, 1);
-    ctx.drawImage(item.image, Math.round(item.cx - item.image.width / 2), Math.round(item.cy - item.image.height));
+    ctx.fillRect(Math.round(footX - wide / 2), Math.round(footY + (held ? HOLD_LIFT : 0)), wide, 2);
+    ctx.fillRect(Math.round(footX - narrow / 2), Math.round(footY + (held ? HOLD_LIFT : 0) + 2), narrow, 1);
+    itemDraw(item, now);
   }
   for (const actor of actors) {
     sunShadow(actor.x, actor.y + 1, actorFrameWidth(actor));
@@ -217,21 +252,38 @@ async function loadWorldOnce(force) {
       const fallback = custom || walkFallback ? null : await imageAt(`sprites/fallback-${form}.png`);
       const image = custom || walkFallback || fallback;
       const animatedFallback = !custom && walkFallback;
-      return image ? { ...thing, form, image, source: custom ? 'thing' : animatedFallback ? 'fallback-strip' : 'fallback',
-        frames: animatedFallback ? 4 : thing.frames, fps: animatedFallback ? 10 : thing.fps } : null;
+      const frames = animatedFallback ? 4 : thing.frames, fps = animatedFallback ? 10 : thing.fps;
+      const frameW = image ? stripFrame(image.width, image.height, { frames }).width : 0;
+      const item = image ? { ...thing, form, image, source: custom ? 'thing' : animatedFallback ? 'fallback-strip' : 'fallback',
+        frames, fps, w: Math.max(8, frameW * .72), h: Math.max(8, image.height * .72) } : null;
+      if (item) item.portable = isPortableThing(item);
+      return item;
     }))).filter(Boolean);
     worldReady = true;
     dynamic = bookReady && items.length === expected;
-    obstacles = items.filter(i => i.kind !== 'actor').map(i => ({
-      x: i.cx, y: i.cy, w: Math.max(12, i.image.width * .7), h: Math.max(10, i.image.height), kind: i.form,
-    }));
     scenery = items.filter(i => i.kind !== 'actor');
+    const solid = scenery.filter(i => !i.portable), portable = scenery.filter(i => i.portable);
+    obstacles = solid.map(i => ({ x: i.cx, y: i.cy, w: i.w, h: i.h, kind: i.form }));
     actors = items.filter(i => i.kind === 'actor').map((i, n) =>
-      createActor({ ...i, x: i.cx, y: i.cy, speed: i.speed }, n));
+      createActor({ ...i, x: i.cx, y: i.cy, speed: i.speed, radius: Math.max(4, itemFrameWidth(i) * .23) }, n));
+    physics = createPhysics(MatterAPI, {
+      bounds: PAGE,
+      statics: solid.map(i => ({ ...i, w: i.w, h: i.h })),
+      portables: portable,
+      actors,
+    });
+    window.__pixelPhysics = physics;
     draw();
-    if (actors.length && !animationStarted) { animationStarted = true; requestAnimationFrame(animate); }
+    if ((actors.length || physics.portableBodies.size) && !animationStarted) {
+      animationStarted = true;
+      requestAnimationFrame(animate);
+    }
     return true;
-  } catch { /* offline: the committed fallback scene remains visible */ }
+  } catch (error) {
+    console.error('pixel world:', error);
+    note.hidden = false;
+    note.textContent = `Pixel-Welt: ${error.message}`;
+  }
   return false;
 }
 
@@ -264,14 +316,27 @@ window.__pixelApp = {
   get obstacles() { return obstacles; },
 };
 
-canvas.addEventListener('pointerdown', event => {
-  // TODO: hand carry/pickup has no pixel-side equivalent yet; taps only greet for this slice.
-  if (!actors.length) return;
+function scenePoint(event) {
   const rect = canvas.getBoundingClientRect();
   const px = (event.clientX - rect.left) * canvas.width / rect.width;
   const py = (event.clientY - rect.top) * canvas.height / rect.height;
   const s = Math.min(canvas.width / SCENE.w, canvas.height / SCENE.h);
-  const x = (px - (canvas.width - SCENE.w * s) / 2) / s, y = (py - (canvas.height - SCENE.h * s) / 2) / s;
+  return { x: (px - (canvas.width - SCENE.w * s) / 2) / s, y: (py - (canvas.height - SCENE.h * s) / 2) / s };
+}
+
+canvas.addEventListener('pointerdown', event => {
+  const point = scenePoint(event);
+  const body = physics?.portableAt(point);
+  if (body) {
+    heldPointer = event.pointerId;
+    canvas.setPointerCapture(heldPointer);
+    physics.grab(body, point);
+    tapSound.currentTime = 0;
+    tapSound.play().catch(() => {});
+    draw();
+    return;
+  }
+  const { x, y } = point;
   const hit = actors.slice().reverse().find(a => x >= a.x - actorFrameWidth(a) / 2 && x <= a.x + actorFrameWidth(a) / 2
     && y >= a.y - a.thing.image.height - 4 && y <= a.y + 6);
   if (!hit) return;
@@ -288,13 +353,30 @@ canvas.addEventListener('pointerdown', event => {
   draw();
 });
 
+canvas.addEventListener('pointermove', event => {
+  if (heldPointer !== event.pointerId || !physics?.held) return;
+  physics.moveHeld(scenePoint(event), event.timeStamp || performance.now());
+  draw();
+});
+
+function dropHeld(event) {
+  if (heldPointer !== event.pointerId || !physics?.held) return;
+  physics.releaseHeld(event.timeStamp || performance.now());
+  heldPointer = null;
+  if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+  draw();
+}
+canvas.addEventListener('pointerup', dropHeld);
+canvas.addEventListener('pointercancel', dropHeld);
+
 function animate(now) {
   const dt = lastFrame ? (now - lastFrame) / 1000 : 0;
   lastFrame = now;
   let moved = false;
   for (const actor of actors) moved = stepActor(actor, dt, obstacles, PAGE) || moved;
+  const physical = physics?.step(dt);
   const pulse = actors.some(a => a.state === 'greet' || a.fireUntil > now || (a.state === 'idle' && (+a.thing.frames || 1) === 1));
-  if (moved || pulse || now - lastIdleDraw > 50) { draw(now); lastIdleDraw = now; }
+  if (moved || physical?.moved || pulse || now - lastIdleDraw > 50) { draw(now); lastIdleDraw = now; }
   requestAnimationFrame(animate);
 }
 

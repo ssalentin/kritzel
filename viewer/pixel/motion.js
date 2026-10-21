@@ -1,8 +1,8 @@
 // Deterministic movement for the pixel book; no simulation state is shared with the 3D viewer.
-export const MOVERS = ['walk', 'roll', 'fly', 'swim', 'hop', 'climb'];
+export const MOVERS = ['walk', 'crawl', 'roll', 'fly', 'swim', 'hop', 'climb'];
 export const PAGE = { x0: 28, x1: 292, y0: 64, y1: 172 };
 
-const DEFAULT_SPEED = { walk: 22, roll: 34, fly: 28, swim: 17, hop: 19, climb: 15 };
+const DEFAULT_SPEED = { walk: 22, crawl: 9, roll: 34, fly: 28, swim: 17, hop: 19, climb: 15 };
 
 function wordsOf(text) {
   const clean = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ß/g, 'ss').toLowerCase();
@@ -25,6 +25,8 @@ export function moverFor(thing) {
     || starts('eichh', 'kletter', 'climb')
     || has('spinne', 'spinnen', 'spider', 'spiders', 'squirrel', 'affe', 'affen', 'monkey', 'monkeys')) return 'climb';
   if (starts('hupf') || has('hase', 'hasen', 'rabbit', 'rabbits', 'frosch', 'froesche', 'frog', 'frogs')) return 'hop';
+  if (starts('kriech', 'crawl') || has('schnecke', 'schnecken', 'snail', 'wurm', 'wurmer', 'worm', 'worms',
+    'raupe', 'raupen', 'caterpillar')) return 'crawl';
   return 'walk';
 }
 

@@ -587,7 +587,8 @@ def pixel_things():
                         **({"state": str(t["state"])[:20]} if isinstance(t.get("state"), str) else {}),
                         **({"speed": float(t["speed"])} if isinstance(t.get("speed"), (int, float)) else {}),
                         **({"frames": int(t["frames"])} if isinstance(t.get("frames"), int) else {}),
-                        **({"fps": float(t["fps"])} if isinstance(t.get("fps"), (int, float)) else {})})
+                        **({"fps": float(t["fps"])} if isinstance(t.get("fps"), (int, float)) else {}),
+                        **({"portable": bool(t["portable"])} if isinstance(t.get("portable"), bool) else {})})
         except (OSError, ValueError):
             continue
     return out[:200]
@@ -717,8 +718,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     # things/*.js are written by a model from a camera picture anyone can draw on, and they run in
     # this page. The policy keeps whatever they do inside it: code only from here, the page's own
-    # inline scripts (by hash) and the two pinned CDN packages; requests and images only to here.
-    CDN = "https://cdn.jsdelivr.net/npm/three@0.160.0/ https://cdn.jsdelivr.net/npm/rot-js@2.2.1/"
+    # inline scripts (by hash) and the three pinned CDN packages; requests and images only to here.
+    CDN = ("https://cdn.jsdelivr.net/npm/three@0.160.0/ https://cdn.jsdelivr.net/npm/rot-js@2.2.1/ "
+           "https://cdn.jsdelivr.net/npm/matter-js@0.20.0/")
 
     def csp(self):
         hashes = ""

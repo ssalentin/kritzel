@@ -7,6 +7,7 @@ test('the mover follows explicit meta, then the drawing', () => {
   assert.equal(moverFor({ move: 'fly', name: 'Drache', drawing: 'a dragon' }), 'fly');
   assert.equal(moverFor({ name: 'Mara', drawing: 'a girl in a wheelchair' }), 'roll');
   assert.equal(moverFor({ name: 'Fisch', drawing: 'a blue fish' }), 'swim');
+  assert.equal(moverFor({ name: 'Schnecke', drawing: 'a slow snail' }), 'crawl');
   assert.equal(moverFor({ name: 'Hase', drawing: 'a hopping rabbit' }), 'hop');
   assert.equal(moverFor({ name: 'Spinne', drawing: 'a spider' }), 'climb');
   assert.equal(moverFor({ name: 'Roter Panda', drawing: 'a red panda in a tree' }), 'climb');

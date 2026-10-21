@@ -63,13 +63,22 @@ a per-thing image is missing. `scenes/kritzel.png` is the first-paint and archiv
 
 A Pixel `kind: "actor"` wanders in a small pixel-side loop; scenery stays put and its footprint is
 an obstacle. Actors default to walking, or to roll/fly/swim/hop/climb from an optional `move` or
-`mover`; otherwise their name and drawing choose the mover. Optional `speed`, `state`, `frames`
-and `fps` fields support per-thing pacing, sleeping states and horizontal sprite-sheet frames.
+`mover`; otherwise their name and drawing choose the mover. Optional `speed`, `state`, `frames`,
+`fps` and `portable` fields support per-thing pacing, sleeping states, horizontal sprite-sheet
+frames and the physics role of scenery.
 Each declared frame is drawn whole at `image.width / frames`; the renderer never slices a figure
 into body parts. The person fallback includes a four-frame whole-body walk strip.
 A tap wakes a sleeping figure, makes the actor greet/bob, shows its name and plays the tap sound,
 then movement resumes. Single-frame walkers get only a whole-body bob until real frames exist.
 There is no three.js world underneath this loop.
+
+Pixel objects use [Matter.js](https://brm.io/matter-js/) 0.20.0 (MIT, Liam Brummitt and
+contributors), loaded from the pinned jsDelivr ESM build. The page is a top-down plane with no
+gravity and a fixed 60 Hz accumulator. Page edges and non-portable scenery are static, small
+scenery is a dynamic body with air friction, friction, mild restitution and area-derived mass, and
+actors are kinematic colliders driven by the motion loop. Dragging a portable thing lifts it,
+follows the pointer and releases it with a capped velocity; bodies rotate and collide while held
+or thrown.
 
 The scene is built with [claude-pxl](https://github.com/crsolver/claude-pxl), pinned at commit
 `21fee41f7ecce00bc868d7567f24ffd0f3acc8fa` (MIT, Copyright © 2026 crsolver). The generated
