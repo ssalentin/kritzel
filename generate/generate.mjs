@@ -23,7 +23,7 @@ import { oneShot, MODEL, FALLBACK_MODEL, PI_FALLBACK, PROVIDER, providerProblem 
 import { prewarm } from './pi.mjs';
 import { live } from './children.mjs';
 import { staticCheck, buildCheck, metaOf } from './check.mjs';
-import { SYSTEM, userText, fixText, DETECT_SYSTEM, detectText, oneOfText, DRAFT_NOTE, TEXT_SYSTEM, textThingText, CHANGE_SYSTEM, changeText } from './prompts.mjs';
+import { SYSTEM, userText, fixText, DETECT_SYSTEM, detectText, oneOfText, DRAFT_NOTE, TEXT_SYSTEM, textThingText, PIXEL_SUBJECTS_SYSTEM, pixelSubjectsText, CHANGE_SYSTEM, changeText } from './prompts.mjs';
 import { islandOf, movePaper } from './place.mjs';
 import { safeLine } from '../viewer/dialogues.js';
 import { readRenderMode, pixelThingsDirFor, readPixelThings, assertRenderMode } from './mode.mjs';
@@ -108,7 +108,8 @@ const moveOf = code => code.match(/\bmove:\s*['"](fly|swim|hop|crawl|climb|walk)
 function runSprite(job) {
   return new Promise((resolve, reject) => {
     const child = spawn(job.cmd, [job.script, '--name', job.name, '--drawing', job.drawing, '--kind', job.kind,
-      '--move', job.move, '--file', job.file, '--out', job.outDir, '--report', job.report],
+      '--move', job.move, '--file', job.file, '--out', job.outDir, '--report', job.report,
+      ...(job.requireMode ? ['--require-mode', job.requireMode] : [])],
     { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
     spriteActive.set(job.file, { child, job });
     let out = '', err = '', settled = false;
@@ -151,6 +152,7 @@ function pumpSprites() {
 }
 export function spriteFor(file, name, drawing, kind, move, thingsDir, reportsDir) {
   if (process.env.KRITZEL_THING_SPRITES === '0' || !drawing) return Promise.resolve(null);
+  if (readRenderMode() !== '3d') return Promise.resolve(null);
   const base = file.replace(/\.js$/, '');
   const job = {
     file, base, name: name || base, drawing, kind: kind || '', move: move || '',
@@ -159,6 +161,7 @@ export function spriteFor(file, name, drawing, kind, move, thingsDir, reportsDir
     script: process.env.KRITZEL_THING_SPRITES_SCRIPT || join(ROOT, 'scripts', 'thing_sprite.mjs'),
     outDir: join(dirname(thingsDir), 'pixel', 'sprites'),
     report: join(reportsDir, base + '.sprite.json'),
+    requireMode: '3d',
   };
   spriteVersion.set(file, job.version);
   return new Promise(resolve => {
@@ -1380,7 +1383,7 @@ function runPixelSprite({ name, drawing, kind, move, file, outDir, reportsDir })
     const script = process.env.KRITZEL_THING_SPRITES_SCRIPT || join(ROOT, 'scripts', 'thing_sprite.mjs');
     const stdout = execFileSync(cmd, [script,
       '--name', name, '--drawing', drawing, '--kind', kind, '--move', move || '', '--file', file,
-      '--out', stage, '--report', join(stage, base + '.sprite.json')],
+      '--out', stage, '--report', join(stage, base + '.sprite.json'), '--require-mode', 'pixel'],
     { encoding: 'utf8', timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] });
     const made = JSON.parse(stdout.trim().split('\n').at(-1) || '{}');
     // the viewer switch may have taken over while the model was writing
@@ -1463,13 +1466,48 @@ export async function processPixelTextRequest(reqPath, { thingsDir, reportsDir, 
     if (req?.mode === 'change') throw new Error('pixel mode has no 3D thing to change; type a new subject');
     report.request = { id, text, mode: 'new', lang: req.lang === 'de' ? 'de' : 'en' };
     onProgress({ state: 'building', id, detail: text });
+    // The 3D path asks one text model call to split separate subjects; pixel mode does the same,
+    // then gives each subject its own grid/sprite call.
+    const split = await oneShot({ system: PIXEL_SUBJECTS_SYSTEM, text: pixelSubjectsText(text), images: [],
+      provider: TEXT_PROVIDER, model: TEXT_MODEL, timeoutMs: 90_000 });
+    report.calls.push(callOf(split, { split: true }));
+    report.splitPrompt = pixelSubjectsText(text);
+    report.splitReply = split.text.slice(0, 4000);
+    let parsed;
+    try {
+      const a = split.text.indexOf('{'), b = split.text.lastIndexOf('}');
+      parsed = JSON.parse(split.text.slice(a, b + 1));
+    } catch { throw new Error('the subject split could not be read'); }
+    if (parsed?.unclear) throw new Error(`cannot build this: ${String(parsed.unclear).slice(0, 240)}`);
+    const subjects = Array.isArray(parsed?.subjects) ? parsed.subjects : [];
+    if (!subjects.length) throw new Error('the subject split returned no subjects');
+    if (subjects.length > 6) throw new Error('the subject split returned too many subjects (at most 6)');
+    for (const s of subjects) {
+      if (typeof s?.name !== 'string' || !s.name.trim() || s.name.length > 40 ||
+          typeof s?.drawing !== 'string' || !s.drawing.trim() || s.drawing.length > 300 ||
+          !['actor', 'scenery'].includes(s.kind))
+        throw new Error('the subject split has an invalid subject');
+    }
+    report.request.subjects = subjects.map(s => ({ name: s.name, drawing: s.drawing, kind: s.kind }));
     const pixelDir = pixelThingsDirFor(thingsDir);
     const existing = readPixelThings(pixelDir);
-    const name = shortName(text);
-    const base = freeName(slug(name), new Set(existing.map(x => x.file.replace(/\.json$/, ''))));
-    const kind = LIVING_TEXT.test(text) ? 'actor' : 'scenery';
-    pixelWrite(report, { name, paper: { x: 0.5, y: 0.5 }, drawing: text, kind, base, outDir: pixelDir, reportsDir });
-    onProgress({ state: 'new', id, detail: name });
+    const takenBases = new Set(existing.map(x => x.file.replace(/\.json$/, '')));
+    const takenNames = new Set(existing.map(x => x.meta.name.toLowerCase()));
+    for (let i = 0; i < subjects.length; i++) {
+      let name = shortName(subjects[i].name);
+      if (takenNames.has(name.toLowerCase())) {
+        const original = name;
+        let n = 2;
+        while (takenNames.has(`${original} ${n}`.toLowerCase())) n++;
+        name = `${original} ${n}`;
+      }
+      takenNames.add(name.toLowerCase());
+      const base = freeName(slug(name), takenBases);
+      takenBases.add(base);
+      const paper = { x: +(subjects.length === 1 ? 0.5 : 0.3 + 0.4 * i / (subjects.length - 1)).toFixed(3), y: 0.5 };
+      pixelWrite(report, { name, paper, drawing: subjects[i].drawing, kind: subjects[i].kind, base, outDir: pixelDir, reportsDir });
+    }
+    onProgress({ state: 'new', id, detail: report.written.map(w => w.name).join(', ') });
     rebuildPixelScene();
     return report;
   } catch (e) {

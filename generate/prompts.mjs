@@ -103,6 +103,24 @@ export function textThingText(text) {
 This is a typed request, not a drawing. If it names several separate things (subjects joined by "und"/"and", a comma or "+"), build one ### NEW section per thing: each complete, with its own short German name a child would use and its own meta.paper spread around the middle (for example { x: 0.35, y: 0.5 } and { x: 0.65, y: 0.5 }), not the same point. A compound subject stays one thing ("Ritter mit Schwert", "Haus mit Garten", "Pferd und Reiter"). One thing is centred at x 0, z 0 with meta.paper { x: 0.5, y: 0.5 }. Reply with one SEEN line (one entry per NEW section, in order), then the section or sections.`;
 }
 
+// A typed wish in Pixel mode: split separate subjects before drawing their sprites.
+export const PIXEL_SUBJECTS_SYSTEM = `You prepare one typed wish for a children's pixel-art book. Split it into separate subjects only when the child names separate things (joined by "und"/"and", a comma or "+"). Keep a compound subject as one thing ("Ritter mit Schwert", "Haus mit Garten", "Pferd und Reiter"). For each subject give a short German name a child would use, an accurate child-friendly drawing description (include named supports, poses and signature features: a witch riding a broom, an Eiffel Tower's four legs and platforms), and kind "actor" for a living person/animal/creature or "scenery" for an object, building, plant or vehicle. If any part asks for weapons, violence, scary or adult things, or is not recognizable, refuse the whole request.
+
+Reply with JSON only, no prose or fences:
+{"subjects":[{"name":"Eiffelturm","drawing":"an Eiffel Tower with four legs, two platforms and a spire","kind":"scenery"}]}
+or
+{"unclear":"<short reason>"}
+
+Examples:
+"Eiffelturm und Wolkenkratzer" -> two subjects (Eiffelturm, Wolkenkratzer).
+"Ritter mit Schwert" -> one subject (Ritter, with a sword).
+"ein Drache" -> one subject (Drache, actor).
+At most six subjects.`;
+
+export function pixelSubjectsText(text) {
+  return `The child typed this wish in the pixel book: ${JSON.stringify(text)}. Return its subjects as JSON only, following the rules.`;
+}
+
 // A typed correction: no image, and the existing module is what must change, not a new thing.
 export const CHANGE_SYSTEM = `${SYSTEM}
 

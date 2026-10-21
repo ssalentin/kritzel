@@ -12,7 +12,9 @@ delete process.env.KRITZEL_MODEL; delete process.env.KRITZEL_DRAFT_MODEL;
 const modeDir = mkdtempSync(join(tmpdir(), 'kritzel-mode-'));
 process.env.KRITZEL_WORLD_MODE = join(modeDir, 'world-mode.json');
 const { readRenderMode } = await import('./mode.mjs');
-const { processFrame, processTextRequest, processPixelFrame } = await import('./generate.mjs');
+const { processFrame, processTextRequest, processPixelFrame, spriteFor } = await import('./generate.mjs');
+const { buildPng, spriteSource } = await import('../scripts/thing_sprite.mjs');
+const { DRAGON } = await import('../scripts/sprite-examples.mjs');
 after(() => rmSync(modeDir, { recursive: true, force: true }));
 
 const mode = render => writeFileSync(process.env.KRITZEL_WORLD_MODE, JSON.stringify({ render }));
@@ -76,6 +78,10 @@ test('typed 3d requests write a .js and no pixel thing', async () => {
 test('typed pixel requests write JSON+png/pxl and no 3D module', async () => {
   mode('pixel');
   const d = dirs();
+  writeFileSync(join(d, 'split.txt'), JSON.stringify({ subjects: [
+    { name: 'Drache', drawing: 'a friendly green dragon with wings and horns', kind: 'actor' },
+  ] }));
+  process.env.FAKE_CLAUDE_REPLY = join(d, 'split.txt');
   try {
     await withSprite(d, async () => {
       writeFileSync(join(d, 'frames/requests/text-mode2.json'), JSON.stringify({ text: 'ein Drache', mode: 'new' }));
@@ -84,9 +90,35 @@ test('typed pixel requests write JSON+png/pxl and no 3D module', async () => {
       assert.deepEqual(readdirSync(join(d, 'viewer/things')), []);
       assert.deepEqual(readdirSync(join(d, 'viewer/pixel/things')).sort(), ['drache.json', 'drache.png', 'drache.px.js']);
       const j = JSON.parse(readFileSync(join(d, 'viewer/pixel/things/drache.json'), 'utf8'));
-      assert.deepEqual([j.name, j.drawing, j.kind, j.sprite], ['Drache', 'ein Drache', 'actor', 'drache.png']);
+      assert.deepEqual([j.name, j.drawing, j.kind, j.sprite], ['Drache', 'a friendly green dragon with wings and horns', 'actor', 'drache.png']);
     });
-  } finally { rmSync(d, { recursive: true, force: true }); }
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(d, { recursive: true, force: true }); }
+});
+
+test('typed pixel subjects split like 3D: Eiffelturm und Wolkenkratzer become two things', async () => {
+  mode('pixel');
+  const d = dirs();
+  writeFileSync(join(d, 'split.txt'), JSON.stringify({ subjects: [
+    { name: 'Eiffelturm', drawing: 'an Eiffel Tower with four legs, two platforms and a spire', kind: 'scenery' },
+    { name: 'Wolkenkratzer', drawing: 'a tall skyscraper with rows of windows', kind: 'scenery' },
+  ] }));
+  process.env.FAKE_CLAUDE_REPLY = join(d, 'split.txt');
+  try {
+    await withSprite(d, async () => {
+      writeFileSync(join(d, 'frames/requests/text-mode3.json'), JSON.stringify({ text: 'Eiffelturm und Wolkenkratzer', mode: 'new' }));
+      const r = await processTextRequest(join(d, 'frames/requests/text-mode3.json'), { thingsDir: join(d, 'viewer/things'), reportsDir: join(d, 'frames/generated') });
+      assert.ok(!r.error, r.error);
+      assert.deepEqual(readdirSync(join(d, 'viewer/things')), []);
+      const files = readdirSync(join(d, 'viewer/pixel/things')).filter(f => f.endsWith('.json')).sort();
+      assert.deepEqual(files, ['eiffelturm.json', 'wolkenkratzer.json']);
+      const things = files.map(f => JSON.parse(readFileSync(join(d, 'viewer/pixel/things', f), 'utf8')));
+      assert.deepEqual(things.map(t => t.name).sort(), ['Eiffelturm', 'Wolkenkratzer']);
+      assert.deepEqual(things.map(t => t.paper.x).sort(), [0.3, 0.7]);
+      assert.ok(existsSync(join(d, 'viewer/pixel/things/eiffelturm.png')));
+      assert.ok(existsSync(join(d, 'viewer/pixel/things/wolkenkratzer.png')));
+      assert.equal(JSON.parse(readFileSync(join(d, 'frames/generated/text-mode3.json'), 'utf8')).written.length, 2);
+    });
+  } finally { delete process.env.FAKE_CLAUDE_REPLY; rmSync(d, { recursive: true, force: true }); }
 });
 
 test('a pixel frame writes descriptions and sprites, not 3D modules', async () => {
@@ -135,4 +167,23 @@ test('a switch to pixel during a 3D model call aborts the 3D write', async () =>
     for (const k of ['FAKE_CLAUDE_REPLY', 'FAKE_CLAUDE_LOG', 'FAKE_CLAUDE_SLOW_TEXT', 'FAKE_CLAUDE_SLOW_MS']) delete process.env[k];
     rmSync(d, { recursive: true, force: true });
   }
+});
+
+test('a 3D sprite job is not queued in pixel mode, and a started build cannot publish after the switch', async () => {
+  mode('pixel');
+  const d = dirs();
+  try {
+    const queued = await spriteFor('drache.js', 'Drache', 'a friendly dragon', 'actor', 'fly',
+      join(d, 'viewer/things'), join(d, 'frames/generated'));
+    assert.equal(queued, null);
+    assert.deepEqual(readdirSync(join(d, 'viewer/things')), []);
+    assert.equal(existsSync(join(d, 'viewer/pixel/sprites')), false);
+
+    // the child build re-checks the mode just before publishing: a job started in 3D is refused
+    const out = join(d, 'viewer/pixel/sprites');
+    assert.throws(() => buildPng({ source: spriteSource('drache.js', 'drache', DRAGON), base: 'drache',
+      outDir: out, requireMode: '3d' }), /render mode changed/);
+    assert.equal(existsSync(join(out, 'drache.png')), false);
+    assert.equal(existsSync(join(out, 'drache.px.js')), false);
+  } finally { rmSync(d, { recursive: true, force: true }); }
 });

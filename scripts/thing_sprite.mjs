@@ -21,6 +21,12 @@ export const PXL_COMMIT = '21fee41f7ecce00bc868d7567f24ffd0f3acc8fa';
 export const PXL_DIR = process.env.PXL_DIR || join(ROOT, '.kritzel', 'claude-pxl');
 export const TEXT_PROVIDER = process.env.KRITZEL_TEXT_PROVIDER || 'claude';
 export const TEXT_MODEL = process.env.KRITZEL_TEXT_MODEL || 'claude-sonnet-5-5';
+const currentMode = () => {
+  try {
+    const p = process.env.KRITZEL_WORLD_MODE || join(ROOT, 'world-mode.json');
+    return JSON.parse(readFileSync(p, 'utf8')).render === 'pixel' ? 'pixel' : '3d';
+  } catch { return '3d'; }
+};
 
 // The same fixed palette as the pixel-mode viewer. Dots are transparent; the model draws its own
 // selective outline with k (no automatic outline option: that would add a 1px frame → 34x34).
@@ -156,7 +162,7 @@ export function validatePng(png) {
   return dims;
 }
 
-export function buildPng({ source, base, outDir, pxlDir = PXL_DIR }) {
+export function buildPng({ source, base, outDir, pxlDir = PXL_DIR, requireMode = null }) {
   const started = Date.now();
   const dir = ensurePxl(pxlDir);
   const stage = mkdtempSync(join(tmpdir(), 'kritzel-sprite-'));
@@ -169,6 +175,8 @@ export function buildPng({ source, base, outDir, pxlDir = PXL_DIR }) {
     const png = join(out, 'sprites', base + '.png');
     if (!existsSync(png)) throw new Error(`claude-pxl wrote no ${base}.png`);
     validatePng(png);
+    if (requireMode && currentMode() !== requireMode)
+      throw new Error(`render mode changed to ${currentMode()}: not publishing a ${requireMode} sprite`);
     mkdirSync(outDir, { recursive: true });
     const finalSrc = join(outDir, base + '.px.js');
     const finalPng = join(outDir, base + '.png');
@@ -201,7 +209,7 @@ function writeReport(reportDir, base, report) {
 }
 
 export async function makeSprite({ name = '', drawing = '', kind = '', move = '', file = '', outDir, reportDir,
-  ask = defaultAsk, build = buildPng, pxlDir = PXL_DIR } = {}) {
+  ask = defaultAsk, build = buildPng, pxlDir = PXL_DIR, requireMode = null } = {}) {
   const base = basename(String(file || name || 'thing')).replace(/\.js$/, '');
   outDir = outDir || join(ROOT, 'viewer', 'pixel', 'sprites');
   reportDir = reportDir || join(ROOT, 'frames', 'generated');
@@ -232,7 +240,7 @@ export async function makeSprite({ name = '', drawing = '', kind = '', move = ''
     throw new Error(report.error);
   }
   try {
-    const built = await build({ source: spriteSource(base + '.js', base, rows), base, outDir, pxlDir });
+    const built = await build({ source: spriteSource(base + '.js', base, rows), base, outDir, pxlDir, requireMode });
     report.rows = rows;
     report.source = built.source;
     report.png = built.png;
@@ -272,7 +280,8 @@ async function main() {
     }
     const outDir = a.out ? resolve(a.out) : join(ROOT, 'viewer', 'pixel', 'sprites');
     const reportDir = a.report ? dirname(resolve(a.report)) : join(ROOT, 'frames', 'generated');
-    const report = await makeSprite({ name, drawing, kind, move, file, outDir, reportDir, pxlDir: a.pxl || PXL_DIR });
+    const report = await makeSprite({ name, drawing, kind, move, file, outDir, reportDir, pxlDir: a.pxl || PXL_DIR,
+      requireMode: a['require-mode'] || null });
     console.log(JSON.stringify({ ok: true, file: base + '.js', source: report.source, png: report.png,
       bytes: report.bytes, seconds: report.seconds, buildMs: report.buildMs,
       model: report.calls.at(-1)?.model, cost: report.calls.reduce((n, c) => n + (Number(c.cost) || 0), 0),
