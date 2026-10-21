@@ -156,6 +156,7 @@ async function buildCheck(file, takenIds) {
     // a computed or reordered [x, z] is still the same position
     info.starts = actors.map(a => ({ id: a?.id, start: Array.isArray(a?.start) ? a.start.slice(0, 2) : null }));
     info.name = m.meta?.name;
+    info.drawing = m.meta?.drawing;
     info.paper = m.meta?.paper && { x: m.meta.paper.x, y: m.meta.paper.y };
     // every living figure is its own thing, so each can arrive, move and be erased on its own
     if (actors.length > 1) problems.push(`${actors.length} actors in one module: make each living figure its own NEW thing (one actor each), and the scenery a separate thing`);

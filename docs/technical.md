@@ -86,6 +86,26 @@ plays it on arrival and tap with the same pan/distance as the bank and ±5 % pla
 caches a 404: a thing without a sound keeps today's `arrival`/`tap`. Nothing is fetched or played
 before the first click. A new world archives the whole `viewer/sounds/` tree, thing sounds included.
 
+### Pixel sprites for each thing
+
+`scripts/thing_sprite.mjs` turns a thing's recognised `meta.drawing` into a 32×32 pixel-art sprite
+for Pixel mode. It asks the text model (Claude `claude-sonnet-5-5` by default, via
+`KRITZEL_TEXT_PROVIDER`/`KRITZEL_TEXT_MODEL`, never the frame model) for a strict 32-row grid:
+known palette keys, 15–90 % opaque coverage, a readable silhouette, selective dark outline,
+4–6 tones per material, one or two signature features, and a face only for living things. The
+grid is validated; one bad reply gets one fix with the exact error, then the job fails visibly
+and writes nothing.
+
+The grid is written as `viewer/pixel/sprites/<base>.px.js` and rendered with
+[claude-pxl](https://github.com/crsolver/claude-pxl) at pinned commit
+`21fee41f7ecce00bc868d7567f24ffd0f3acc8fa` into `<base>.png` (32×32, palette-only, hard edges,
+byte-identical on repeat). On first use the CLI is cloned into `.kritzel/claude-pxl` (gitignored);
+after that no network is needed. The generator enqueues the job after the 3D module is written
+(new, change, final or split), in the background: the thing never waits for its sprite. A
+failure is logged and leaves any existing sprite in place; `KRITZEL_THING_SPRITES=0` turns the
+stage off. Each attempt leaves a report at `frames/generated/<base>.sprite.json` with the exact
+prompt, reply, model, cost and grid.
+
 The viewer speaks German or English (the world is made for drawing with kids): the DE/EN
 button next to 📷 switches all UI texts and the characters' speech; the choice is kept in
 the browser, and without one the browser's language decides. UI texts live in
