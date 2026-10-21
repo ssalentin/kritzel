@@ -14,7 +14,9 @@ Camera selection (see scripts/camera_server.py for the remote side):
   POST /api/text-thing          → {text} → frames/requests/<id>.json, for the generate watcher to build
   GET /api/stamps               → mtime:size of every engine file and every thing, so the viewer's poll is one request
   POST /api/pixel-world         → rebuild the static pixel scene when the things changed
-  GET/POST /api/pixel-snapshot  → the 3D viewer's small world snapshot, for the pixel app
+  GET /api/world-mode           → the active render mode: 3d or pixel
+  GET /api/pixel-things         → the metadata for the current pixel world
+  POST /api/render-mode         → archive this world, start the other mode empty
   PUT /api/placement            → {file, d: [dx, dz] | null}: where the viewer moved a new thing (viewer/things/placement.json)
   GET  /api/think               → {on, model}: is the Jev director switched on (KRITZEL_THINK=1 and a key)?
   POST /api/think               → {scene, actors} → {goals, usage, ms}: a local director; {} when it is off or fails
@@ -92,11 +94,11 @@ def changelog_walk(n):
     return items
 CAMERA_PORT = int(os.environ.get("CAMERA_PORT", "8766"))   # where camera_server.py (or replay_camera.py) listens
 STATUS = ROOT / "frames" / "status"
-PIXEL_SNAPSHOT = STATUS / "pixel-world.json"   # the 3D viewer writes it; the pixel app only reads it
 PIXEL_SCENE = ROOT / "viewer" / "pixel" / "scenes" / "kritzel.png"
 PIXEL_BOOK = ROOT / "viewer" / "pixel" / "scenes" / "book.png"
 PIXEL_SOURCE = ROOT / "scripts" / "pixel-world.mjs"
 PIXEL_CODE = (PIXEL_SOURCE, ROOT / "viewer" / "pixel" / "art.js", ROOT / "viewer" / "pixel" / "layout.js")
+WORLD_MODE = ROOT / "world-mode.json"   # {"render": "3d" | "pixel"}
 PIXEL_LOCK = threading.Lock()
 PIXEL_TIMEOUT_S = 120
 PLACEMENT_LOCK = threading.Lock()
@@ -557,21 +559,32 @@ def can(actor, thing, meta=None):
         CAN_LOCK.release()
 
 
-def pixel_snapshot(body):
-    """Save the small shared world snapshot; never let a malformed viewer update replace it."""
-    if not isinstance(body, dict):
-        return {"ok": False, "error": "snapshot must be an object"}
+def read_world_mode():
     try:
-        raw = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
-        if len(raw.encode()) > 200_000:
-            return {"ok": False, "error": "snapshot too large"}
-        STATUS.mkdir(parents=True, exist_ok=True)
-        tmp = PIXEL_SNAPSHOT.with_suffix(".json.tmp")
-        tmp.write_text(raw + "\n")
-        tmp.replace(PIXEL_SNAPSHOT)
-        return {"ok": True, "bytes": len(raw.encode())}
-    except (OSError, TypeError, ValueError) as e:
-        return {"ok": False, "error": str(e)[:300]}
+        mode = json.loads(WORLD_MODE.read_text()).get("render")
+        return mode if mode in ("3d", "pixel") else "3d"
+    except (OSError, ValueError, AttributeError):
+        return "3d"
+
+
+def pixel_things():
+    """The pixel world's small metadata list; its JSON files and PNGs are the complete source."""
+    out = []
+    for p in sorted((ROOT / "viewer" / "pixel" / "things").glob("*.json")):
+        try:
+            t = json.loads(p.read_text())
+            if not isinstance(t, dict):
+                continue
+            sprite = t.get("sprite")
+            if sprite is not None and (not isinstance(sprite, str) or not re.fullmatch(r"[\w.-]+\.png", sprite)):
+                continue
+            out.append({"file": p.name, "name": str(t.get("name") or p.stem)[:80],
+                        "drawing": str(t.get("drawing") or "")[:500], "kind": str(t.get("kind") or "")[:40],
+                        "paper": t.get("paper") if isinstance(t.get("paper"), dict) else None,
+                        "sprite": sprite})
+        except (OSError, ValueError):
+            continue
+    return out[:200]
 
 
 def pixel_build():
@@ -580,7 +593,7 @@ def pixel_build():
         started = time.time()
         try:
             source_at = max(p.stat().st_mtime_ns for p in PIXEL_CODE)
-            for thing in (ROOT / "viewer" / "things").glob("*.js"):
+            for thing in (ROOT / "viewer" / "pixel" / "things").glob("*.json"):
                 source_at = max(source_at, thing.stat().st_mtime_ns)
             fallbacks = list((ROOT / "viewer" / "pixel" / "sprites").glob("fallback-*.png"))
             artifacts = [PIXEL_SCENE, PIXEL_BOOK, *fallbacks]
@@ -742,11 +755,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.json({"mode": read_mode()})
         if path == "/api/think":
             return self.json(think_config())
-        if path == "/api/pixel-snapshot":
-            try:
-                return self.json(json.loads(PIXEL_SNAPSHOT.read_text()))
-            except (OSError, ValueError):
-                return self.json({})
+        if path == "/api/world-mode":
+            return self.json({"render": read_world_mode()})
+        if path == "/api/pixel-things":
+            return self.json({"things": pixel_things()})
         if path == "/api/status":
             return self.json(self.status())
         if path == "/api/status/cutout.png":
@@ -846,16 +858,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self.json(pixel_build())
             except Exception as e:
                 return self.json({"ok": False, "error": str(e)[:300]})
-        if path == "/api/pixel-snapshot":
-            if self.headers.get("X-Kritzel") != "1":
-                return self.json({"ok": False, "error": "forbidden"}, 403)
-            try:
-                n = int(self.headers.get("Content-Length", ""))
-                assert 0 <= n <= 220_000
-                body = json.loads(self.rfile.read(n))
-            except (ValueError, AssertionError, TypeError):
-                return self.json({"ok": False, "error": "bad snapshot"}, 400)
-            return self.json(pixel_snapshot(body))
+        if path == "/api/render-mode":
+            return self.render_mode()
         if path not in ("/api/text-thing", "/api/newworld"):
             return self.json({"error": "not found"}, 404)
         # only the viewer itself: a page on another site can send a plain POST without asking first,
@@ -876,6 +880,37 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self.json({"error": (r.stderr or r.stdout)[-300:]}, 500)
             last_newworld[0] = time.time()
         return self.json({"archived": r.stdout.strip().split("worlds/")[-1]})
+
+    def render_mode(self):
+        """Archive the current world, then switch which empty folder future drawings use."""
+        if self.headers.get("X-Kritzel") != "1":
+            return self.json({"error": "forbidden"}, 403)
+        try:
+            n = int(self.headers.get("Content-Length", ""))
+            assert 0 <= n <= 128
+            mode = json.loads(self.rfile.read(n))["mode"]
+            assert mode in ("3d", "pixel")
+        except (ValueError, AssertionError, KeyError, TypeError):
+            return self.json({"error": "expected {mode: 3d | pixel}"}, 400)
+        if mode == read_world_mode():
+            return self.json({"error": "already in that mode"}, 400)
+        with NEWWORLD_LOCK:
+            tmp = WORLD_MODE.with_name(".world-mode.json.tmp")
+            tmp.write_text(json.dumps({"render": mode}) + "\n")
+            if time.time() - last_newworld[0] < NEWWORLD_GAP_S:
+                tmp.unlink(missing_ok=True)
+                return self.json({"error": "a new world was just started"}, 429)
+            try:
+                r = subprocess.run([str(ROOT / "scripts" / "newworld.sh")], capture_output=True, text=True, timeout=30)
+            except (OSError, subprocess.SubprocessError) as e:
+                tmp.unlink(missing_ok=True)
+                return self.json({"error": str(e)[:200]}, 500)
+            if r.returncode:
+                tmp.unlink(missing_ok=True)
+                return self.json({"error": (r.stderr or r.stdout)[-300:]}, 500)
+            tmp.replace(WORLD_MODE)
+            last_newworld[0] = time.time()
+        return self.json({"archive": r.stdout.strip().split("worlds/")[-1], "mode": mode})
 
     def text_thing(self):
         """A typed wish from the viewer: validate it and hand it to the generate watcher as a request file.

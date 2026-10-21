@@ -125,6 +125,7 @@
   #renderMode button { border: 0; border-radius: 7px; padding: 4px 7px; font: 600 12px system-ui, sans-serif;
     color: var(--fg); background: none; cursor: pointer; opacity: .7; }
   #renderMode button[aria-pressed=true] { background: #6aa65a; color: #fff; opacity: 1; }
+  #renderMode button.sure { background: #f6d3c8; color: var(--fg); opacity: 1; font-weight: 700; }
   /* world mode and 'new world' (issue #16): a second row under the buttons */
   #worldBar { position: fixed; right: 16px; top: 48px; display: flex; gap: 6px; }
   #worldBar button { font: 13px system-ui, sans-serif; color: var(--fg); background: var(--panel); border: 0;
@@ -157,7 +158,15 @@
 </script>
 </head>
 <body>
-<script>try { if (sessionStorage.getItem('kritzelPixelMode') === '1') location.replace('pixel/'); } catch {}</script>
+<script>
+(async () => {
+  try {
+    const at = location.pathname.startsWith('/worlds/') ? 'world-mode.json' : '../world-mode.json';
+    const r = await fetch(at, { cache: 'no-store' });
+    if (r.ok && (await r.json()).render === 'pixel') location.replace('pixel/');
+  } catch {}
+})();
+</script>
 <div id="hud"><div id="err"></div></div>
 <div id="arrive" aria-live="polite"></div>
 <div id="status" class="silent" data-tone="ok"><span class="dot"></span><span class="text"></span><span class="note" hidden></span><span class="gen" hidden>⚠ Generator aus</span></div>
@@ -208,7 +217,7 @@ import { createHand } from './hand.js';
 // the book's size now: world.js grows its own copy of the book module, so the page turn asks the world
 const bookSize = () => current?.book?.() ?? { w: BOOK_BASE.w, d: BOOK_BASE.d };
 import { createStyle } from './style.js';
-import { savePixelMode } from './pixel/mode.js';
+import { createModeSwitch } from './pixel/mode-switch.js';
 import { t, lang, setLang, onLang } from './i18n.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -455,27 +464,13 @@ onLang(() => {
   langBtn.title = t('langTitle');
 });
 langBtn.addEventListener('click', e => { e.stopPropagation(); setLang(lang() === 'de' ? 'en' : 'de'); });
-// 3D | Pixel: Pixel is its own app surface at viewer/pixel/; 3D is this page.
+// 3D | Pixel changes which world is active: the current one is archived, the other starts empty.
 const renderMode = document.getElementById('renderMode');
-const renderButtons = [...renderMode.querySelectorAll('button')];
-const showRenderMode = () => {
-  for (const b of renderButtons) b.setAttribute('aria-pressed', String(b.dataset.mode === 'pixel' ? false : true));
-};
-onLang(() => {
-  renderButtons[0].textContent = t('mode3d'); renderButtons[1].textContent = t('modePixel');
-  renderMode.setAttribute('aria-label', t('renderModeGroup'));
-  showRenderMode();
+createModeSwitch({
+  active: '3d', group: renderMode, archived: location.pathname.startsWith('/worlds/'),
+  go: () => { location.href = 'pixel/'; },
+  onError: () => note(t('modeFailed')),
 });
-renderButtons[0].addEventListener('click', e => { e.stopPropagation(); savePixelMode(sessionStorage, false); showRenderMode(); });
-renderButtons[1].addEventListener('click', e => {
-  e.stopPropagation();
-  savePixelMode(sessionStorage, true);
-  let snap = {};
-  try { snap = current?.pixelSnapshot?.() || {}; } catch {}
-  fetch('/api/pixel-snapshot', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Kritzel': '1' }, body: JSON.stringify(snap) })
-    .catch(() => {}).finally(() => { location.href = 'pixel/'; });
-});
-showRenderMode();
 
 // text → thing: say what to add ("eine Laterne"), Enter builds it in the book (POST /api/text-thing).
 // The 200 answer's id comes back for the tests; the generate watcher does the rest.

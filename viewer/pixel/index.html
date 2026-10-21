@@ -14,11 +14,21 @@
     #renderMode button { border: 0; border-radius: 7px; padding: 4px 7px; font: inherit; color: inherit;
       background: none; cursor: pointer; opacity: .7; }
     #renderMode button[aria-pressed=true] { background: #6aa65a; color: #fff; opacity: 1; }
+    #renderMode button.sure { background: #f6d3c8; color: var(--fg); opacity: 1; font-weight: 700; }
     #note { position: fixed; left: 16px; top: 12px; padding: 4px 9px; border-radius: 999px; background: var(--panel);
       color: var(--fg); font: 12px system-ui, sans-serif; opacity: .8; pointer-events: none; }
   </style>
 </head>
 <body>
+  <script>
+  (async () => {
+    try {
+      const archive = location.pathname.startsWith('/worlds/');
+      const r = await fetch(archive ? '../world-mode.json' : '/api/world-mode', { cache: 'no-store' });
+      if (!r.ok || (await r.json()).render !== 'pixel') location.replace('../');
+    } catch {}
+  })();
+  </script>
   <canvas id="scene" aria-label="Kritzel pixel world"></canvas>
   <div id="note">Pixel-Welt · wird gebaut …</div>
   <div id="renderMode" role="group" aria-label="3D oder Pixel">

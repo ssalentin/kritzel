@@ -5,6 +5,7 @@
 Real serve.py + headless viewer in a temp world with one drawn thing. The failure path stubs
 POST /api/newworld; the success path archives the temp world for real.
 """
+import json
 import os
 import shutil
 import socket
@@ -149,6 +150,7 @@ class NewWorld(unittest.TestCase):
         archive = sorted((self.world / "worlds").iterdir())[-1]
         self.assertTrue((archive / "pixel" / "index.html").is_file(), archive)
         self.assertTrue((archive / "pixel" / "scenes" / "kritzel.png").is_file(), archive)
+        self.assertEqual(json.loads((archive / "world-mode.json").read_text())["render"], "3d")
         self.assertEqual(self.errors, [])
 
 
