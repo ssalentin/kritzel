@@ -122,16 +122,25 @@ class RenderMode(unittest.TestCase):
         self.assertTrue((archive / "pixel" / "things" / "drache.json").exists())
         self.assertEqual(self.page.evaluate("() => window.__pixelApp.items.length"), 0)
         self.page.screenshot(path=str(SHOT_EMPTY_PIXEL), timeout=120000)
+        self.page.goto(f"http://127.0.0.1:{self.port}/worlds/{archive.name}/pixel/", wait_until="load")
+        self.page.wait_for_function("(p) => location.pathname === p", arg=f"/worlds/{archive.name}/", timeout=30000)
         self.assertEqual(self.errors, [])
 
         # A pixel-side pipeline result appears in the new, empty mode without touching 3D files.
+        self.page.goto(f"http://127.0.0.1:{self.port}/viewer/pixel/", wait_until="load")
+        self.page.wait_for_function("() => window.__pixelApp?.dynamic", timeout=30000)
+        self.assertEqual(self.page.evaluate("() => window.__pixelThings?.length"), 0)
         (self.pixel / "things" / "neu.json").write_text(json.dumps({**PIXEL_THING, "name": "Neuer Drache"}))
         shutil.copy(self.pixel / "sprites" / "fallback-dragon.png", self.pixel / "things" / "neu.png")
-        self.page.reload(wait_until="load")
         self.page.wait_for_function("() => window.__pixelThings?.length === 1", timeout=30000)
         self.page.wait_for_function("() => window.__pixelApp?.dynamic", timeout=30000)
         self.assertEqual(self.page.evaluate("() => window.__pixelApp.items[0].name"), "Neuer Drache")
         self.page.screenshot(path=str(SHOT_PIXEL_THING), timeout=120000)
+
+    def test_direct_live_pixel_route_redirects_in_3d_mode(self):
+        self.page.goto(f"http://127.0.0.1:{self.port}/viewer/pixel/", wait_until="load")
+        self.page.wait_for_function("() => location.pathname === '/viewer/'", timeout=30000)
+        self.page.wait_for_function("() => window.__paperWorld?.()?.feet", timeout=30000)
 
     def test_switch_back_archives_pixel_and_archived_page_reopens_pixel(self):
         (self.world / "world-mode.json").write_text('{"render":"pixel"}\n')

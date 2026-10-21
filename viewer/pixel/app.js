@@ -9,7 +9,14 @@ const canvas = document.getElementById('scene'), ctx = canvas.getContext('2d');
 const note = document.getElementById('note'), mode = document.getElementById('renderMode');
 const backdrop = new Image(), book = new Image();
 const archived = location.pathname.startsWith('/worlds/');
+const activeMode = await fetch(archived ? '../world-mode.json' : '/api/world-mode', { cache: 'no-store' })
+  .then(r => r.ok ? r.json() : { render: '3d' }).then(m => m.render).catch(() => '3d');
+if (activeMode !== 'pixel') {
+  location.replace('../');
+  await new Promise(() => {});
+}
 let sceneReady = false, bookReady = false, worldReady = false, expected = 0, dynamic = false, asked = false, items = [];
+let thingsVersion = '', loadingWorld = null;
 
 function draw() {
   canvas.width = Math.round(innerWidth * devicePixelRatio);
@@ -59,7 +66,13 @@ function imageAt(src) {
   });
 }
 
-async function loadWorld() {
+async function loadWorld(force = false) {
+  if (loadingWorld) return loadingWorld;
+  loadingWorld = loadWorldOnce(force).finally(() => { loadingWorld = null; });
+  return loadingWorld;
+}
+
+async function loadWorldOnce(force) {
   try {
     let things;
     if (archived) {
@@ -68,7 +81,12 @@ async function loadWorld() {
       if (!files.length) return;
       things = await Promise.all(files.map(f => fetch('things/' + f, { cache: 'no-store' })
         .then(r => r.json()).then(t => ({ ...t, file: f }))));
-    } else things = (await (await fetch('/api/pixel-things', { cache: 'no-store' })).json()).things || [];
+    } else {
+      const j = await (await fetch('/api/pixel-things', { cache: 'no-store' })).json();
+      if (!force && j.version && j.version === thingsVersion) return false;
+      thingsVersion = j.version || '';
+      things = j.things || [];
+    }
     window.__pixelThings = things;
     expected = things.length;
     const laidOut = layoutThings(things);
@@ -84,7 +102,9 @@ async function loadWorld() {
     worldReady = true;
     dynamic = bookReady && items.length === expected;
     draw();
+    return true;
   } catch { /* offline: the committed fallback scene remains visible */ }
+  return false;
 }
 
 function rebuild() {
@@ -117,3 +137,4 @@ window.__pixelApp = {
 load();
 loadWorld();
 if (!archived) rebuild();  // only the first new PNG costs a build; the server skips an unchanged scene
+if (!archived) setInterval(() => loadWorld(), 1000);

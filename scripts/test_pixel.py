@@ -110,7 +110,9 @@ class Pixel(unittest.TestCase):
         self.assertEqual(struct.unpack(">II", self.scene_bytes[16:24]), (320, 200))
         stale = self.api("/api/pixel-world", {})
         self.assertEqual(stale["built"], False, stale)
-        things = self.api("/api/pixel-things")["things"]
+        payload = self.api("/api/pixel-things")
+        things = payload["things"]
+        self.assertRegex(payload["version"], r"^[0-9a-f]{20}$")
         self.assertEqual(sorted(t["name"] for t in things), sorted(t["name"] for t in THINGS))
         self.assertEqual(self.api("/api/world-mode"), {"render": "pixel"})
 
